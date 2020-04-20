@@ -1,0 +1,18 @@
+[package]
+name = "cita_ng_controller"
+version = "0.1.0"
+authors = ["Rivtower Technologies <contact@rivtower.com>"]
+license = "Apache-2.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "*"
+log4rs = "*"
+clap = { git = "https://github.com/clap-rs/clap/" }
+git-version = "*"
+tonic = "0.2"
+prost = "0.6"
+tokio = { version = "0.2", features = ["macros"] }
+cita_ng_proto = { git = "https://github.com/rink1969/cita_ng_proto" }
