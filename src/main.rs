@@ -140,6 +140,24 @@ async fn register_network_msg_handler(
     Ok(response.into_inner().is_success)
 }
 
+use cita_ng_proto::consensus::{
+    consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
+};
+
+async fn reconfigure(consensus_port: String) -> Result<bool, Box<dyn std::error::Error>> {
+    let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
+    let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
+
+    // id of Network service is 0
+    let request = Request::new(ConsensusConfiguration {
+        block_interval: 3,
+        validators: vec![vec![0], vec![1]],
+    });
+
+    let response = client.reconfigure(request).await?;
+    Ok(response.into_inner().is_success)
+}
+
 use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
 use cita_ng_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
@@ -164,7 +182,16 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Flag>,
     ) -> Result<Response<BlockNumber>, Status> {
-        Err(Status::unimplemented(""))
+        info!("get_block_number request: {:?}", request);
+
+        let flag = request.into_inner();
+        let block_number = if flag.flag {
+            1 // latest block number
+        } else {
+            1 + 6 // pending block number
+        };
+        let reply = Response::new(BlockNumber { block_number });
+        Ok(reply)
     }
 }
 
@@ -185,16 +212,28 @@ impl Consensus2ControllerServer {
 #[tonic::async_trait]
 impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Hash>, Status> {
-        Err(Status::unimplemented(""))
+        info!("get_proposal request: {:?}", request);
+
+        let mut hash = Vec::new();
+        for i in 0..32 {
+            hash.push(i as u8)
+        }
+        let reply = Response::new(Hash { hash });
+        Ok(reply)
     }
     async fn check_proposal(
         &self,
         request: Request<Hash>,
     ) -> Result<Response<SimpleResponse>, Status> {
-        Err(Status::unimplemented(""))
+        info!("get_proposal request: {:?}", request);
+
+        let reply = Response::new(SimpleResponse { is_success: true });
+        Ok(reply)
     }
     async fn commit_block(&self, request: Request<Hash>) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented(""))
+        info!("commit_block request: {:?}", request);
+
+        Ok(Response::new(Empty {}))
     }
 }
 
@@ -218,7 +257,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
         &self,
         request: Request<NetworkMsg>,
     ) -> Result<Response<SimpleResponse>, Status> {
-        debug!("process_network_msg request: {:?}", request);
+        info!("process_network_msg request: {:?}", request);
 
         let msg = request.into_inner();
         if msg.module != "controller" {
@@ -295,6 +334,20 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("consensus port: {}", consensus_port);
 
+    // send configuration to consensus
+    let consensus_port_clone = consensus_port.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            // reconfigure consensus
+            {
+                info!("reconfigure consensus!");
+                let _ = reconfigure(consensus_port_clone.clone()).await;
+            }
+            interval.tick().await;
+        }
+    });
+
     let network_port;
     let config_port_clone = opts.config_port.clone();
     let mut interval = time::interval(Duration::from_secs(3));
@@ -334,6 +387,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     let addr_str = format!("127.0.0.1:{}", opts.grpc_port);
     let addr = addr_str.parse()?;
 
+    info!("start grpc server!");
     Server::builder()
         .add_service(RpcServiceServer::new(RPCServer::new()))
         .add_service(Consensus2ControllerServiceServer::new(
