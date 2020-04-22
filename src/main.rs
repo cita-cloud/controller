@@ -186,9 +186,9 @@ impl RpcService for RPCServer {
 
         let flag = request.into_inner();
         let block_number = if flag.flag {
-            1 // latest block number
-        } else {
             1 + 6 // pending block number
+        } else {
+            1 // latest block number
         };
         let reply = Response::new(BlockNumber { block_number });
         Ok(reply)
