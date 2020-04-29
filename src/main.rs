@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod controller;
+
 use clap::Clap;
 use git_version::git_version;
 use log::{debug, info, warn};
@@ -160,19 +162,24 @@ async fn reconfigure(consensus_port: String) -> Result<bool, Box<dyn std::error:
 
 use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
 use cita_ng_proto::controller::{
-    rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
+    rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag, RawTransaction
 };
+use cita_ng_proto::blockchain::{CompactBlock};
 use tonic::{transport::Server, Request, Response, Status};
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // grpc server of RPC
-pub struct RPCServer {}
+pub struct RPCServer {
+    controller: Controller
+}
 
 impl RPCServer {
-    fn new() -> Self {
-        RPCServer {}
+    fn new(controller: Controller) -> Self {
+        RPCServer {
+            controller
+        }
     }
 }
 
@@ -185,13 +192,87 @@ impl RpcService for RPCServer {
         info!("get_block_number request: {:?}", request);
 
         let flag = request.into_inner();
-        let block_number = if flag.flag {
-            1 + 6 // pending block number
-        } else {
-            1 // latest block number
-        };
-        let reply = Response::new(BlockNumber { block_number });
-        Ok(reply)
+        self.controller.rpc_get_block_number(flag.flag).await.map_or_else(
+            |e| {
+                Err(Status::internal(e))
+            },
+            |block_number| {
+                let reply = Response::new(BlockNumber { block_number });
+                Ok(reply)
+            }
+        )
+    }
+    async fn send_raw_transaction(
+        &self,
+        request: Request<RawTransaction>,
+    ) -> Result<Response<Hash>, Status> {
+        info!("send_raw_transaction request: {:?}", request);
+
+        let raw_tx = request.into_inner();
+
+        self.controller.rpc_send_raw_transaction(raw_tx).await.map_or_else(
+            |e| {
+                Err(Status::internal(e))
+            },
+            |tx_hash| {
+                let reply = Response::new(Hash { hash: tx_hash });
+                Ok(reply)
+            }
+        )
+    }
+    async fn get_block_by_hash(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<Response<CompactBlock>, Status> {
+        info!("send_raw_transaction request: {:?}", request);
+
+        let hash = request.into_inner();
+
+        self.controller.rpc_get_block_by_hash(hash.hash).await.map_or_else(
+            |e| {
+                Err(Status::internal(e))
+            },
+            |block| {
+                let reply = Response::new(block);
+                Ok(reply)
+            }
+        )
+    }
+    async fn get_block_by_number(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<tonic::Response<CompactBlock>, Status> {
+        info!("get_block_by_number request: {:?}", request);
+
+        let block_number = request.into_inner();
+
+        self.controller.rpc_get_block_by_number(block_number.block_number).await.map_or_else(
+            |e| {
+                Err(Status::internal(e))
+            },
+            |block| {
+                let reply = Response::new(block);
+                Ok(reply)
+            }
+        )
+    }
+    async fn get_transaction(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<tonic::Response<RawTransaction>, Status> {
+        info!("get_block_by_number request: {:?}", request);
+
+        let hash = request.into_inner();
+
+        self.controller.rpc_get_transaction(hash.hash).await.map_or_else(
+            |e| {
+                Err(Status::internal(e))
+            },
+            |raw_tx| {
+                let reply = Response::new(raw_tx);
+                Ok(reply)
+            }
+        )
     }
 }
 
@@ -201,11 +282,11 @@ use cita_ng_proto::controller::{
 };
 
 //grpc server for Consensus2ControllerService
-pub struct Consensus2ControllerServer {}
+pub struct Consensus2ControllerServer {controller: Controller}
 
 impl Consensus2ControllerServer {
-    fn new() -> Self {
-        Consensus2ControllerServer {}
+    fn new(controller: Controller) -> Self {
+        Consensus2ControllerServer {controller}
     }
 }
 
@@ -243,11 +324,11 @@ use cita_ng_proto::network::{
 };
 
 // grpc server of network msg handler
-pub struct ControllerNetworkMsgHandlerServer {}
+pub struct ControllerNetworkMsgHandlerServer {controller: Controller}
 
 impl ControllerNetworkMsgHandlerServer {
-    fn new() -> Self {
-        ControllerNetworkMsgHandlerServer {}
+    fn new(controller: Controller) -> Self {
+        ControllerNetworkMsgHandlerServer {controller}
     }
 }
 
@@ -272,6 +353,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 use std::time::Duration;
 use tokio::time;
+use crate::controller::Controller;
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
@@ -384,17 +466,37 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("storage port: {}", storage_port);
 
+    let kms_port;
+    let config_port_clone = opts.config_port.clone();
+    let mut interval = time::interval(Duration::from_secs(3));
+    loop {
+        {
+            // id of kms service is 5
+            let ret = get_endpoint(5, config_port_clone.clone()).await;
+            if let Ok(port) = ret {
+                info!("get kms endpoint success!");
+                kms_port = port;
+                break;
+            }
+        }
+        warn!("get kms endpoint failed! Retrying");
+        interval.tick().await;
+    }
+    info!("kms port: {}", kms_port);
+
+    let controller = Controller::new(consensus_port, network_port, storage_port, kms_port);
+
     let addr_str = format!("127.0.0.1:{}", opts.grpc_port);
     let addr = addr_str.parse()?;
 
     info!("start grpc server!");
     Server::builder()
-        .add_service(RpcServiceServer::new(RPCServer::new()))
+        .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
         .add_service(Consensus2ControllerServiceServer::new(
-            Consensus2ControllerServer::new(),
+            Consensus2ControllerServer::new(controller.clone()),
         ))
         .add_service(NetworkMsgHandlerServiceServer::new(
-            ControllerNetworkMsgHandlerServer::new(),
+            ControllerNetworkMsgHandlerServer::new(controller),
         ))
         .serve(addr)
         .await?;
