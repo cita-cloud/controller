@@ -17,3 +17,4 @@ prost = "0.6"
 tokio = { version = "0.2", features = ["macros"] }
 cita_ng_proto = { git = "https://github.com/rink1969/cita_ng_proto" }
 futures-util = "*"
+rand = "*"

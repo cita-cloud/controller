@@ -22,13 +22,21 @@ use cita_ng_proto::kms::{
 };
 use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
 use tonic::Request;
+use log::info;
+
+use std::time::Duration;
+
+pub fn unix_now() -> u64 {
+    let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
+    d.as_secs() * 1_000 + u64::from(d.subsec_millis())
+}
 
 pub async fn reconfigure(consensus_port: String) -> Result<bool, Box<dyn std::error::Error>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
     let request = Request::new(ConsensusConfiguration {
-        block_interval: 3,
+        block_interval: 6,
         validators: vec![vec![0], vec![1]],
     });
 
@@ -107,4 +115,11 @@ pub async fn hash_data(
 
     let response = client.hash_date(request).await?;
     Ok(response.into_inner().hash)
+}
+
+pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
+    info!("main chain:");
+    for (i, hash) in chain.iter().enumerate() {
+        info!("height: {} hash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}", i as u64 + block_number + 1,hash[0],hash[1],hash[2],hash[hash.len() - 2], hash[hash.len() - 1]);
+    }
 }

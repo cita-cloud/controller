@@ -304,7 +304,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         let hash = request.into_inner().hash;
 
         self.controller
-            .chain_check_proposal(hash)
+            .chain_check_proposal(&hash)
             .await
             .map_or_else(
                 |e| Err(Status::internal(e)),
@@ -319,7 +319,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
 
         let hash = request.into_inner().hash;
 
-        self.controller.chain_commit_block(hash).await.map_or_else(
+        self.controller.chain_commit_block(&hash).await.map_or_else(
             |e| Err(Status::internal(e)),
             |_| Ok(Response::new(Empty {})),
         )
@@ -366,7 +366,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 }
 
 use crate::controller::Controller;
-use crate::util::get_block_delay_number;
+use crate::util::{get_block_delay_number, reconfigure};
 use std::time::Duration;
 use tokio::time;
 
@@ -430,6 +430,20 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         interval.tick().await;
     }
     info!("consensus port: {}", consensus_port);
+
+    // send configuration to consensus
+    let consensus_port_clone = consensus_port.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            // reconfigure consensus
+            {
+                info!("reconfigure consensus!");
+                let _ = reconfigure(consensus_port_clone.clone()).await;
+            }
+            interval.tick().await;
+        }
+    });
 
     let network_port;
     let config_port_clone = opts.config_port.clone();

@@ -28,6 +28,7 @@ use futures_util::future::TryFutureExt;
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use log::{info, warn};
 
 #[derive(Clone)]
 pub struct Controller {
@@ -51,7 +52,7 @@ impl Controller {
     ) -> Self {
         let auth = Authentication::new(kms_port.clone());
         let pool = Pool::new(100);
-        let chain = Chain::new(kms_port.clone(), block_delay_number);
+        let chain = Chain::new(storage_port.clone(), network_port.clone(),kms_port.clone(), block_delay_number);
         Controller {
             consensus_port,
             network_port,
@@ -183,11 +184,15 @@ impl Controller {
         }
     }
 
-    pub async fn chain_check_proposal(&self, proposal: Vec<u8>) -> Result<bool, String> {
-        Ok(true)
+    pub async fn chain_check_proposal(&self, proposal: &[u8]) -> Result<bool, String> {
+        let chain = self.chain.read().await;
+        let ret = chain.check_proposal(proposal).await;
+        Ok(ret)
     }
 
-    pub async fn chain_commit_block(&self, proposal: Vec<u8>) -> Result<(), String> {
+    pub async fn chain_commit_block(&self, proposal: &[u8]) -> Result<(), String> {
+        let mut chain = self.chain.write().await;
+        chain.commit_block(proposal);
         Ok(())
     }
 
@@ -199,6 +204,36 @@ impl Controller {
                     self.rpc_send_raw_transaction(raw_tx).await.map(|_| ())
                 } else {
                     Err("Decode raw transaction failed".to_owned())
+                }
+            }
+            "block" => {
+                info!("get block from network");
+                let block_bytes = msg.msg;
+                if let Ok(block) = CompactBlock::decode(block_bytes.as_slice()) {
+                    if let Some(block_body) = block.clone().body {
+                        let tx_hash_list = block_body.tx_hashes;
+                        {
+                            let pool = self.pool.read().await;
+                            for hash in tx_hash_list.iter() {
+                                if pool.get_tx(hash).is_none() {
+                                    warn!("block is invalid");
+                                    return Err("block is invalid".to_owned());
+                                }
+                            }
+                        }
+                        {
+                            info!("add block");
+                            let mut chain = self.chain.write().await;
+                            chain.add_block(block).await;
+                        }
+                        Ok(())
+                    } else {
+                        warn!("block body is empty");
+                        Err("block body is empty".to_owned())
+                    }
+                } else {
+                    warn!("Decode block failed");
+                    Err("Decode block failed".to_owned())
                 }
             }
             _ => {
