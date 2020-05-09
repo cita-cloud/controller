@@ -547,11 +547,30 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     info!("current block number: {}", current_block_number);
     info!("current block hash: {:?}", current_block_hash);
 
+    let executor_port;
+    let config_port_clone = opts.config_port.clone();
+    let mut interval = time::interval(Duration::from_secs(3));
+    loop {
+        {
+            // id of executor service is 2
+            let ret = get_endpoint(2, config_port_clone.clone()).await;
+            if let Ok(port) = ret {
+                info!("get executor endpoint success!");
+                executor_port = port;
+                break;
+            }
+        }
+        warn!("get executor endpoint failed! Retrying");
+        interval.tick().await;
+    }
+    info!("executor port: {}", executor_port);
+
     let controller = Controller::new(
         consensus_port,
         network_port,
         storage_port,
         kms_port,
+        executor_port,
         block_delay_number,
         current_block_number,
         current_block_hash,

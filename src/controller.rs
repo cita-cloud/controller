@@ -15,7 +15,7 @@
 use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
-use crate::util::broadcast_message;
+use crate::util::{broadcast_message, genesis_block, load_data};
 use cita_ng_proto::blockchain::{
     BlockHeader, CompactBlock, CompactBlockBody, UnverifiedUtxoTransaction, UtxoTransaction,
     Witness,
@@ -36,6 +36,7 @@ pub struct Controller {
     network_port: String,
     storage_port: String,
     kms_port: String,
+    executor_port: String,
     block_delay_number: u32,
     auth: Authentication,
     pool: Arc<RwLock<Pool>>,
@@ -48,6 +49,7 @@ impl Controller {
         network_port: String,
         storage_port: String,
         kms_port: String,
+        executor_port: String,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -58,6 +60,7 @@ impl Controller {
             storage_port.clone(),
             network_port.clone(),
             kms_port.clone(),
+            executor_port.clone(),
             block_delay_number,
             current_block_number,
             current_block_hash,
@@ -68,6 +71,7 @@ impl Controller {
             network_port,
             storage_port,
             kms_port,
+            executor_port,
             block_delay_number,
             auth,
             pool,
@@ -75,22 +79,9 @@ impl Controller {
         }
     }
 
-    async fn load_genesis(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    async fn restore_from_storage(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
-        let latest_pending_block_number = 1u64;
-        let delay_block_number = 6u64;
-        let block_number = if is_pending {
-            latest_pending_block_number
-        } else {
-            latest_pending_block_number.saturating_sub(delay_block_number)
-        };
+        let chain = self.chain.read().await;
+        let block_number = chain.get_block_number(is_pending);
         Ok(block_number)
     }
 
@@ -119,22 +110,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {
-        let header = BlockHeader {
-            prevhash: vec![],
-            timestamp: 123456,
-            height: 100,
-            transactions_root: vec![],
-            proposer: vec![],
-            proof: vec![],
-            executed_block_hash: vec![],
-        };
-        let body = CompactBlockBody { tx_hashes: vec![] };
-        let block = CompactBlock {
-            version: 0,
-            header: Some(header),
-            body: Some(body),
-        };
-        Ok(block)
+        Ok(genesis_block())
     }
 
     async fn get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, String> {
@@ -142,32 +118,34 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, String> {
-        self.get_block_hash(block_number)
-            .and_then(|block_hash| self.rpc_get_block_by_hash(block_hash))
-            .await
+        let chain = self.chain.read().await;
+        let ret = chain.get_block_by_number(block_number).await;
+        if ret.is_none() {
+            Err("can't find block by number".to_owned())
+        } else {
+            Ok(ret.unwrap())
+        }
     }
 
     pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, String> {
-        let utxo_tx = UtxoTransaction {
-            version: 0,
-            pre_tx_hash: vec![],
-            output: vec![],
-            lock_id: 0,
-        };
-        let witness = Witness {
-            signature: vec![],
-            sender: vec![],
-        };
-        let unverified_utxo_tx = UnverifiedUtxoTransaction {
-            transaction: Some(utxo_tx),
-            transaction_hash: vec![],
-            witnesses: vec![witness],
-        };
-        let raw_tx = RawTransaction {
-            tx: Some(UtxoTx(unverified_utxo_tx)),
-        };
-
-        Ok(raw_tx)
+        let pool = self.pool.read().await;
+        let ret = pool.get_tx(&tx_hash);
+        if let Some(raw_tx) = ret {
+            Ok(raw_tx)
+        } else {
+            let ret = load_data(self.storage_port.clone(), 1, tx_hash).await;
+            if let Ok(raw_tx_bytes) = ret {
+                let ret = RawTransaction::decode(raw_tx_bytes.as_slice());
+                if ret.is_err() {
+                    Err("decode failed".to_owned())
+                } else {
+                    let raw_tx = ret.unwrap();
+                    Ok(raw_tx)
+                }
+            } else {
+                Err("can't get transaction".to_owned())
+            }
+        }
     }
 
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {

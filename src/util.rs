@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::common::{Empty, SimpleResponse};
+use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
 use cita_ng_proto::consensus::{
     consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
 };
+use cita_ng_proto::executor::executor_service_client::ExecutorServiceClient;
 use cita_ng_proto::kms::{
     kms_service_client::KmsServiceClient, HashDateRequest, RecoverSignatureRequest,
     RecoverSignatureResponse, VerifyDataHashRequest,
@@ -27,6 +28,7 @@ use cita_ng_proto::storage::{
 use log::info;
 use tonic::Request;
 
+use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use std::time::Duration;
 
 pub fn unix_now() -> u64 {
@@ -149,6 +151,19 @@ pub async fn load_data(
     Ok(response.into_inner().value)
 }
 
+pub async fn exec_block(
+    executor_port: String,
+    block: CompactBlock,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let executor_addr = format!("http://127.0.0.1:{}", executor_port);
+    let mut client = ExecutorServiceClient::connect(executor_addr).await?;
+
+    let request = Request::new(block);
+
+    let response = client.exec(request).await?;
+    Ok(response.into_inner().hash)
+}
+
 pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     info!("main chain:");
     for (i, hash) in chain.iter().enumerate() {
@@ -161,5 +176,23 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
             hash[hash.len() - 2],
             hash[hash.len() - 1]
         );
+    }
+}
+
+pub fn genesis_block() -> CompactBlock {
+    let header = BlockHeader {
+        prevhash: vec![],
+        timestamp: 123456,
+        height: 0,
+        transactions_root: vec![],
+        proposer: vec![],
+        proof: vec![],
+        executed_block_hash: vec![],
+    };
+    let body = CompactBlockBody { tx_hashes: vec![] };
+    CompactBlock {
+        version: 0,
+        header: Some(header),
+        body: Some(body),
     }
 }

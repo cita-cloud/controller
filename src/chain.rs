@@ -14,7 +14,8 @@
 
 use crate::pool::Pool;
 use crate::util::{
-    broadcast_message, hash_data, load_data, print_main_chain, store_data, unix_now,
+    broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain,
+    store_data, unix_now,
 };
 use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use cita_ng_proto::network::NetworkMsg;
@@ -29,6 +30,7 @@ pub struct Chain {
     kms_port: String,
     network_port: String,
     storage_port: String,
+    executor_port: String,
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
@@ -43,6 +45,7 @@ impl Chain {
         storage_port: String,
         network_port: String,
         kms_port: String,
+        executor_port: String,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -57,6 +60,7 @@ impl Chain {
             kms_port,
             network_port,
             storage_port,
+            executor_port,
             block_number: current_block_number,
             block_hash: current_block_hash,
             block_delay_number,
@@ -64,6 +68,70 @@ impl Chain {
             main_chain: Vec::new(),
             candidate_block: None,
             pool,
+        }
+    }
+
+    pub fn get_block_number(&self, is_pending: bool) -> u64 {
+        if is_pending {
+            self.block_number + self.main_chain.len() as u64
+        } else {
+            self.block_number
+        }
+    }
+
+    pub async fn get_block_by_number(&self, block_number: u64) -> Option<CompactBlock> {
+        if block_number > self.get_block_number(true) {
+            None
+        } else if block_number > self.get_block_number(false) {
+            let index = block_number - self.get_block_number(false) - 1;
+            let block_hash = self.main_chain[index as usize].to_owned();
+            let block = self.fork_tree[index as usize]
+                .get(&block_hash)
+                .unwrap()
+                .to_owned();
+            Some(block)
+        } else if block_number == 0 {
+            Some(genesis_block())
+        } else {
+            let block_header;
+            {
+                let ret = load_data(
+                    self.storage_port.clone(),
+                    2,
+                    block_number.to_be_bytes().to_vec(),
+                )
+                .await;
+                if ret.is_err() {
+                    return None;
+                }
+                let block_header_bytes = ret.unwrap();
+                let ret = BlockHeader::decode(block_header_bytes.as_slice());
+                if ret.is_err() {
+                    return None;
+                }
+                block_header = ret.unwrap();
+            }
+            let ret = load_data(
+                self.storage_port.clone(),
+                3,
+                block_number.to_be_bytes().to_vec(),
+            )
+            .await;
+            if ret.is_err() {
+                return None;
+            }
+            let block_body_bytes = ret.unwrap();
+            let ret = CompactBlockBody::decode(block_body_bytes.as_slice());
+            if ret.is_err() {
+                return None;
+            }
+            let block_body = ret.unwrap();
+            let block = CompactBlock {
+                version: 0,
+                header: Some(block_header),
+                body: Some(block_body),
+            };
+            Some(block)
         }
     }
 
@@ -239,20 +307,48 @@ impl Chain {
                         let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
                         // save finalized blocks / txs / current height / current hash
                         for (index, block_hash) in self.main_chain.iter().enumerate() {
-                            // region 4 : block_height - block hash
+                            // get block
+                            let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
                             let block_height = self.block_number + index as u64 + 1;
+
+                            // exec block
+                            let executed_block_hash =
+                                exec_block(self.executor_port.clone(), block.clone())
+                                    .await
+                                    .unwrap();
+                            // get block header and block body
+                            let mut block_header = block.header.unwrap();
+                            let block_body = block.body.unwrap();
+
+                            // complete block header
+                            block_header.executed_block_hash = executed_block_hash;
+                            // recompute block hash
+                            let mut block_header_bytes = Vec::new();
+                            block_header.encode(&mut block_header_bytes);
+                            let new_block_hash =
+                                hash_data(self.kms_port.clone(), 1, block_header_bytes)
+                                    .await
+                                    .unwrap();
+                            info!(
+                                "executed block {} hash: 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                                block_height,
+                                new_block_hash[0],
+                                new_block_hash[1],
+                                new_block_hash[2],
+                                new_block_hash[new_block_hash.len() - 2],
+                                new_block_hash[new_block_hash.len() - 1]
+                            );
+
+                            // region 4 : block_height - block hash
                             let key = block_height.to_be_bytes().to_vec();
                             store_data(
                                 self.storage_port.clone(),
                                 4,
                                 key.clone(),
-                                block_hash.to_owned(),
+                                new_block_hash.to_owned(),
                             )
                             .await;
-                            // get block header and block body
-                            let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
-                            let block_header = block.header.unwrap();
-                            let block_body = block.body.unwrap();
+
                             // region 3: block_height - block body
                             let mut block_body_bytes = Vec::new();
                             block_body.encode(&mut block_body_bytes);
@@ -297,7 +393,7 @@ impl Chain {
                                 self.storage_port.clone(),
                                 0,
                                 1u64.to_be_bytes().to_vec(),
-                                block_hash.to_owned(),
+                                new_block_hash.to_owned(),
                             )
                             .await;
                         }
