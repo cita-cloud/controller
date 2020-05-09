@@ -12,40 +12,58 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{hash_data, broadcast_message, print_main_chain, unix_now};
+use crate::pool::Pool;
+use crate::util::{
+    broadcast_message, hash_data, load_data, print_main_chain, store_data, unix_now,
+};
 use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use prost::Message;
-use std::collections::HashMap;
 use cita_ng_proto::network::NetworkMsg;
 use log::{info, warn};
+use prost::Message;
 use rand::Rng;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct Chain {
     kms_port: String,
     network_port: String,
     storage_port: String,
     block_number: u64,
+    block_hash: Vec<u8>,
     block_delay_number: u32,
     fork_tree: Vec<HashMap<Vec<u8>, CompactBlock>>,
     main_chain: Vec<Vec<u8>>,
     candidate_block: Option<(Vec<u8>, CompactBlock)>,
+    pool: Arc<RwLock<Pool>>,
 }
 
 impl Chain {
-    pub fn new(storage_port: String, network_port: String, kms_port: String, block_delay_number: u32) -> Self {
+    pub fn new(
+        storage_port: String,
+        network_port: String,
+        kms_port: String,
+        block_delay_number: u32,
+        current_block_number: u64,
+        current_block_hash: Vec<u8>,
+        pool: Arc<RwLock<Pool>>,
+    ) -> Self {
         let mut fork_tree = Vec::with_capacity(block_delay_number as usize * 2);
         for _ in 0..(block_delay_number as usize * 2) {
             fork_tree.push(HashMap::new());
         }
+
         Chain {
             kms_port,
             network_port,
             storage_port,
-            block_number: 0,
+            block_number: current_block_number,
+            block_hash: current_block_hash,
             block_delay_number,
             fork_tree,
             main_chain: Vec::new(),
             candidate_block: None,
+            pool,
         }
     }
 
@@ -74,8 +92,16 @@ impl Chain {
 
         let ret = hash_data(self.kms_port.clone(), 1, block_header_bytes).await;
         if let Ok(block_hash) = ret {
-            info!("add block 0x{:2x}{:2x}{:2x}..{:2x}{:2x}", block_hash[0],block_hash[1],block_hash[2],block_hash[block_hash.len() - 2], block_hash[block_hash.len() - 1]);
-            self.fork_tree[block_height as usize - self.block_number as usize - 1].insert(block_hash, block);
+            info!(
+                "add block 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                block_hash[0],
+                block_hash[1],
+                block_hash[2],
+                block_hash[block_hash.len() - 2],
+                block_hash[block_hash.len() - 1]
+            );
+            self.fork_tree[block_height as usize - self.block_number as usize - 1]
+                .insert(block_hash, block);
         } else {
             warn!("hash block failed {:?}", ret);
         }
@@ -98,8 +124,7 @@ impl Chain {
         }
 
         let prevhash = if self.main_chain.is_empty() {
-            // genesis block hash
-            vec![1, 2, 3, 4, 5, 6, 7, 8]
+            self.block_hash.clone()
         } else {
             self.main_chain
                 .get(self.main_chain.len() - 1)
@@ -107,7 +132,15 @@ impl Chain {
                 .to_owned()
         };
         let height = self.block_number + self.main_chain.len() as u64 + 1;
-        info!("proposal {} prevhash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}", height, prevhash[0],prevhash[1],prevhash[2],prevhash[prevhash.len() - 2], prevhash[prevhash.len() - 1]);
+        info!(
+            "proposal {} prevhash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+            height,
+            prevhash[0],
+            prevhash[1],
+            prevhash[2],
+            prevhash[prevhash.len() - 2],
+            prevhash[prevhash.len() - 1]
+        );
         let header = BlockHeader {
             prevhash,
             timestamp: unix_now(),
@@ -130,7 +163,14 @@ impl Chain {
         header.encode(&mut block_header_bytes);
 
         if let Ok(block_hash) = hash_data(self.kms_port.clone(), 1, block_header_bytes).await {
-            info!("add proposal 0x{:2x}{:2x}{:2x}..{:2x}{:2x}", block_hash[0],block_hash[1],block_hash[2],block_hash[block_hash.len() - 2], block_hash[block_hash.len() - 1]);
+            info!(
+                "add proposal 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                block_hash[0],
+                block_hash[1],
+                block_hash[2],
+                block_hash[block_hash.len() - 2],
+                block_hash[block_hash.len() - 1]
+            );
             self.candidate_block = Some((block_hash.clone(), block.clone()));
             self.fork_tree[self.main_chain.len()].insert(block_hash, block.clone());
         }
@@ -157,7 +197,7 @@ impl Chain {
         false
     }
 
-    pub fn commit_block(&mut self, proposal: &[u8]) {
+    pub async fn commit_block(&mut self, proposal: &[u8]) {
         let commit_block_index;
         let commit_block;
         for (index, map) in self.fork_tree.iter().enumerate() {
@@ -180,9 +220,11 @@ impl Chain {
                     }
                 }
                 // if candidate_chain longer than original main_chain
-                let coin : u64 = rand::thread_rng().gen();
+                let coin: u64 = rand::thread_rng().gen();
                 let coin_flag = coin % 100 > 50;
-                if candidate_chain.len() > self.main_chain.len() || (candidate_chain.len() == self.main_chain.len() && coin_flag)  {
+                if candidate_chain.len() > self.main_chain.len()
+                    || (candidate_chain.len() == self.main_chain.len() && coin_flag)
+                {
                     // replace the main_chain
                     candidate_chain.reverse();
                     self.main_chain = candidate_chain;
@@ -191,13 +233,80 @@ impl Chain {
                     self.candidate_block = None;
                     // check if any block has been finalized
                     if self.main_chain.len() > self.block_delay_number as usize {
-                        let finalized_blocks_number = self.main_chain.len() - self.block_delay_number as usize;
+                        let finalized_blocks_number =
+                            self.main_chain.len() - self.block_delay_number as usize;
                         info!("{} blocks finalized", finalized_blocks_number);
                         let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
+                        // save finalized blocks / txs / current height / current hash
+                        for (index, block_hash) in self.main_chain.iter().enumerate() {
+                            // region 4 : block_height - block hash
+                            let block_height = self.block_number + index as u64 + 1;
+                            let key = block_height.to_be_bytes().to_vec();
+                            store_data(
+                                self.storage_port.clone(),
+                                4,
+                                key.clone(),
+                                block_hash.to_owned(),
+                            )
+                            .await;
+                            // get block header and block body
+                            let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
+                            let block_header = block.header.unwrap();
+                            let block_body = block.body.unwrap();
+                            // region 3: block_height - block body
+                            let mut block_body_bytes = Vec::new();
+                            block_body.encode(&mut block_body_bytes);
+                            store_data(self.storage_port.clone(), 3, key.clone(), block_body_bytes)
+                                .await;
+                            // region 2: block_height - block header
+                            let mut block_header_bytes = Vec::new();
+                            block_header.encode(&mut block_header_bytes);
+                            store_data(
+                                self.storage_port.clone(),
+                                2,
+                                key.clone(),
+                                block_header_bytes,
+                            )
+                            .await;
+                            // region 1: tx_hash - tx
+                            let tx_hash_list = block_body.tx_hashes;
+                            {
+                                let pool = self.pool.read().await;
+                                for hash in tx_hash_list.clone() {
+                                    let raw_tx = pool.get_tx(&hash).unwrap();
+                                    let mut raw_tx_bytes = Vec::new();
+                                    raw_tx.encode(&mut raw_tx_bytes);
+                                    store_data(self.storage_port.clone(), 1, hash, raw_tx_bytes)
+                                        .await;
+                                }
+                            }
+                            // update pool
+                            {
+                                let mut pool = self.pool.write().await;
+                                pool.update(tx_hash_list);
+                            }
+                            // region 0: 0 - current height; 1 - current hash
+                            store_data(
+                                self.storage_port.clone(),
+                                0,
+                                0u64.to_be_bytes().to_vec(),
+                                key,
+                            )
+                            .await;
+                            store_data(
+                                self.storage_port.clone(),
+                                0,
+                                1u64.to_be_bytes().to_vec(),
+                                block_hash.to_owned(),
+                            )
+                            .await;
+                        }
+                        self.block_number += finalized_blocks_number as u64;
+                        self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
                         self.main_chain = new_main_chain;
                         self.fork_tree = self.fork_tree.split_off(finalized_blocks_number);
-                        self.fork_tree.resize(self.block_delay_number as usize * 2, HashMap::new());
-                        self.block_number += finalized_blocks_number as u64;
+                        self.fork_tree
+                            .resize(self.block_delay_number as usize * 2, HashMap::new());
                     }
                 }
                 break;

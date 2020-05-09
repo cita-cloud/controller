@@ -366,7 +366,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 }
 
 use crate::controller::Controller;
-use crate::util::{get_block_delay_number, reconfigure};
+use crate::util::{get_block_delay_number, load_data, reconfigure};
 use std::time::Duration;
 use tokio::time;
 
@@ -516,12 +516,45 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("block delay number: {}", block_delay_number);
 
+    let current_block_number;
+    let current_block_hash;
+    let storage_port_clone = storage_port.clone();
+    let mut interval = time::interval(Duration::from_secs(3));
+    loop {
+        {
+            let ret = load_data(storage_port_clone.clone(), 0, 0u64.to_be_bytes().to_vec()).await;
+            if let Ok(current_block_number_bytes) = ret {
+                info!("get current block number success!");
+                if current_block_number_bytes.is_empty() {
+                    info!("this is a new chain!");
+                    current_block_number = 0u64;
+                    current_block_hash = vec![0; 32];
+                } else {
+                    info!("this is an old chain!");
+                    let mut bytes: [u8; 8] = [0; 8];
+                    bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
+                    current_block_number = u64::from_be_bytes(bytes);
+                    let ret =
+                        load_data(storage_port_clone.clone(), 0, 1u64.to_be_bytes().to_vec()).await;
+                    current_block_hash = ret.unwrap();
+                }
+                break;
+            }
+        }
+        warn!("get current block number failed! Retrying");
+        interval.tick().await;
+    }
+    info!("current block number: {}", current_block_number);
+    info!("current block hash: {:?}", current_block_hash);
+
     let controller = Controller::new(
         consensus_port,
         network_port,
         storage_port,
         kms_port,
         block_delay_number,
+        current_block_number,
+        current_block_hash,
     );
 
     let addr_str = format!("127.0.0.1:{}", opts.grpc_port);

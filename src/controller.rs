@@ -25,10 +25,10 @@ use cita_ng_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
 use cita_ng_proto::controller::{raw_transaction::Tx, RawTransaction};
 use cita_ng_proto::network::NetworkMsg;
 use futures_util::future::TryFutureExt;
+use log::{info, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{info, warn};
 
 #[derive(Clone)]
 pub struct Controller {
@@ -49,10 +49,20 @@ impl Controller {
         storage_port: String,
         kms_port: String,
         block_delay_number: u32,
+        current_block_number: u64,
+        current_block_hash: Vec<u8>,
     ) -> Self {
         let auth = Authentication::new(kms_port.clone());
-        let pool = Pool::new(100);
-        let chain = Chain::new(storage_port.clone(), network_port.clone(),kms_port.clone(), block_delay_number);
+        let pool = Arc::new(RwLock::new(Pool::new(100)));
+        let chain = Chain::new(
+            storage_port.clone(),
+            network_port.clone(),
+            kms_port.clone(),
+            block_delay_number,
+            current_block_number,
+            current_block_hash,
+            pool.clone(),
+        );
         Controller {
             consensus_port,
             network_port,
@@ -60,7 +70,7 @@ impl Controller {
             kms_port,
             block_delay_number,
             auth,
-            pool: Arc::new(RwLock::new(pool)),
+            pool,
             chain: Arc::new(RwLock::new(chain)),
         }
     }
@@ -192,7 +202,7 @@ impl Controller {
 
     pub async fn chain_commit_block(&self, proposal: &[u8]) -> Result<(), String> {
         let mut chain = self.chain.write().await;
-        chain.commit_block(proposal);
+        chain.commit_block(proposal).await;
         Ok(())
     }
 

@@ -21,8 +21,11 @@ use cita_ng_proto::kms::{
     RecoverSignatureResponse, VerifyDataHashRequest,
 };
 use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
-use tonic::Request;
+use cita_ng_proto::storage::{
+    storage_service_client::StorageServiceClient, Content, ExtKey, Value,
+};
 use log::info;
+use tonic::Request;
 
 use std::time::Duration;
 
@@ -117,9 +120,46 @@ pub async fn hash_data(
     Ok(response.into_inner().hash)
 }
 
+pub async fn store_data(
+    storage_port: String,
+    region: u32,
+    key: Vec<u8>,
+    value: Vec<u8>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
+    let mut client = StorageServiceClient::connect(storage_addr).await?;
+
+    let request = Request::new(Content { region, key, value });
+
+    let response = client.store(request).await?;
+    Ok(response.into_inner().is_success)
+}
+
+pub async fn load_data(
+    storage_port: String,
+    region: u32,
+    key: Vec<u8>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
+    let mut client = StorageServiceClient::connect(storage_addr).await?;
+
+    let request = Request::new(ExtKey { region, key });
+
+    let response = client.load(request).await?;
+    Ok(response.into_inner().value)
+}
+
 pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     info!("main chain:");
     for (i, hash) in chain.iter().enumerate() {
-        info!("height: {} hash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}", i as u64 + block_number + 1,hash[0],hash[1],hash[2],hash[hash.len() - 2], hash[hash.len() - 1]);
+        info!(
+            "height: {} hash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+            i as u64 + block_number + 1,
+            hash[0],
+            hash[1],
+            hash[2],
+            hash[hash.len() - 2],
+            hash[hash.len() - 1]
+        );
     }
 }
