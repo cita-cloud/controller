@@ -18,7 +18,7 @@ use cita_ng_proto::consensus::{
 };
 use cita_ng_proto::executor::executor_service_client::ExecutorServiceClient;
 use cita_ng_proto::kms::{
-    kms_service_client::KmsServiceClient, HashDateRequest, RecoverSignatureRequest,
+    kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
     RecoverSignatureResponse, VerifyDataHashRequest,
 };
 use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
@@ -116,9 +116,9 @@ pub async fn hash_data(
     let kms_addr = format!("http://127.0.0.1:{}", kms_port);
     let mut client = KmsServiceClient::connect(kms_addr).await?;
 
-    let request = Request::new(HashDateRequest { key_id, data });
+    let request = Request::new(HashDataRequest { key_id, data });
 
-    let response = client.hash_date(request).await?;
+    let response = client.hash_data(request).await?;
     Ok(response.into_inner().hash)
 }
 

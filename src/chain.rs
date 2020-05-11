@@ -369,11 +369,16 @@ impl Chain {
                             {
                                 let pool = self.pool.read().await;
                                 for hash in tx_hash_list.clone() {
-                                    let raw_tx = pool.get_tx(&hash).unwrap();
-                                    let mut raw_tx_bytes = Vec::new();
-                                    raw_tx.encode(&mut raw_tx_bytes);
-                                    store_data(self.storage_port.clone(), 1, hash, raw_tx_bytes)
-                                        .await;
+                                    // get tx from pool maybe failed
+                                    // we didn't check txs dup with pre blocks
+                                    // so there will be dup tx in different blocks
+                                    // tx maybe has been removed by pre block
+                                    if let Some(raw_tx) = pool.get_tx(&hash) {
+                                        let mut raw_tx_bytes = Vec::new();
+                                        raw_tx.encode(&mut raw_tx_bytes);
+                                        store_data(self.storage_port.clone(), 1, hash, raw_tx_bytes)
+                                            .await;
+                                    }
                                 }
                             }
                             // update pool
