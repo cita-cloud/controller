@@ -36,6 +36,7 @@ pub struct Chain {
     block_delay_number: u32,
     fork_tree: Vec<HashMap<Vec<u8>, CompactBlock>>,
     main_chain: Vec<Vec<u8>>,
+    main_chain_tx_hash: Vec<Vec<u8>>,
     candidate_block: Option<(Vec<u8>, CompactBlock)>,
     pool: Arc<RwLock<Pool>>,
 }
@@ -66,6 +67,7 @@ impl Chain {
             block_delay_number,
             fork_tree,
             main_chain: Vec::new(),
+            main_chain_tx_hash: Vec::new(),
             candidate_block: None,
             pool,
         }
@@ -142,7 +144,6 @@ impl Chain {
     }
 
     pub async fn add_block(&mut self, block: CompactBlock) {
-        // todo check txs dup with blocks before
         let header = block.clone().header.unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
@@ -175,10 +176,29 @@ impl Chain {
         }
     }
 
-    pub async fn add_proposal(&mut self, tx_hash_list: Vec<Vec<u8>>) {
-        // todo filter dup txs with blocks before
+    pub async fn add_proposal(&mut self) {
+        let mut filtered_tx_hash_list = Vec::new();
+        // if we are no lucky, all tx is dup, try again
+        for _ in 0..6 {
+            let tx_hash_list = {
+                let mut pool = self.pool.write().await;
+                pool.package()
+            };
+
+            // remove dup tx
+            for hash in tx_hash_list.into_iter() {
+                if !self.main_chain_tx_hash.contains(&hash) {
+                    filtered_tx_hash_list.push(hash);
+                }
+            }
+
+            if !filtered_tx_hash_list.is_empty() {
+                break;
+            }
+        }
+
         let mut data = Vec::new();
-        for hash in tx_hash_list.iter() {
+        for hash in filtered_tx_hash_list.iter() {
             data.extend_from_slice(hash);
         }
         let transactions_root;
@@ -219,7 +239,7 @@ impl Chain {
             executed_block_hash: vec![],
         };
         let body = CompactBlockBody {
-            tx_hashes: tx_hash_list,
+            tx_hashes: filtered_tx_hash_list,
         };
         let block = CompactBlock {
             version: 0,
@@ -273,38 +293,51 @@ impl Chain {
             if let Some(block) = map.get(proposal) {
                 commit_block_index = index;
                 commit_block = block.clone();
+
                 // try to backwards found a candidate_chain
                 let mut candidate_chain = Vec::new();
+                let mut candidate_chain_tx_hash = Vec::new();
+
                 candidate_chain.push(proposal.to_owned());
+                candidate_chain_tx_hash.extend_from_slice(&commit_block.body.unwrap().tx_hashes);
+
                 let mut prevhash = commit_block.header.unwrap().prevhash;
                 for i in 0..commit_block_index {
                     let map = self.fork_tree.get(commit_block_index - i - 1).unwrap();
                     if let Some(block) = map.get(&prevhash) {
                         candidate_chain.push(prevhash.clone());
+                        for hash in block.to_owned().body.unwrap().tx_hashes {
+                            if candidate_chain_tx_hash.contains(&hash) {
+                                // candidate_chain has dup tx, so failed
+                                warn!("candidate_chain has dup tx");
+                                return;
+                            }
+                        }
+                        candidate_chain_tx_hash.extend_from_slice(&block.to_owned().body.unwrap().tx_hashes);
                         prevhash = block.to_owned().header.unwrap().prevhash;
                     } else {
-                        // if failed, return
+                        // candidate_chain interrupted, so failed
+                        warn!("candidate_chain interrupted");
                         return;
                     }
                 }
                 // if candidate_chain longer than original main_chain
-                let coin: u64 = rand::thread_rng().gen();
-                let coin_flag = coin % 100 > 50;
                 if candidate_chain.len() > self.main_chain.len()
-                    || (candidate_chain.len() == self.main_chain.len() && coin_flag)
                 {
                     // replace the main_chain
                     candidate_chain.reverse();
                     self.main_chain = candidate_chain;
+                    self.main_chain_tx_hash = candidate_chain_tx_hash;
                     print_main_chain(&self.main_chain, self.block_number);
                     // candidate_block need update
-                    self.candidate_block = None;
+                    self.add_proposal().await;
                     // check if any block has been finalized
                     if self.main_chain.len() > self.block_delay_number as usize {
                         let finalized_blocks_number =
                             self.main_chain.len() - self.block_delay_number as usize;
                         info!("{} blocks finalized", finalized_blocks_number);
                         let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
+                        let mut finalized_tx_hash_list = Vec::new();
                         // save finalized blocks / txs / current height / current hash
                         for (index, block_hash) in self.main_chain.iter().enumerate() {
                             // get block
@@ -381,11 +414,13 @@ impl Chain {
                                     }
                                 }
                             }
+                            finalized_tx_hash_list.extend_from_slice(&tx_hash_list);
                             // update pool
                             {
                                 let mut pool = self.pool.write().await;
                                 pool.update(tx_hash_list);
                             }
+
                             // region 0: 0 - current height; 1 - current hash
                             store_data(
                                 self.storage_port.clone(),
@@ -405,6 +440,13 @@ impl Chain {
                         self.block_number += finalized_blocks_number as u64;
                         self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
                         self.main_chain = new_main_chain;
+                        // update main_chain_tx_hash
+                        self.main_chain_tx_hash = self
+                            .main_chain_tx_hash
+                            .iter()
+                            .cloned()
+                            .filter(|hash| !finalized_tx_hash_list.contains(hash))
+                            .collect();
                         self.fork_tree = self.fork_tree.split_off(finalized_blocks_number);
                         self.fork_tree
                             .resize(self.block_delay_number as usize * 2, HashMap::new());

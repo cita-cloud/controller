@@ -13,44 +13,16 @@
 // limitations under the License.
 
 use cita_ng_proto::controller::RawTransaction;
-use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
-
-#[derive(Clone, Debug)]
-struct TxOrder {
-    hash: Vec<u8>,
-    order: u64,
-}
-
-impl TxOrder {
-    fn new(hash: Vec<u8>, order: u64) -> Self {
-        TxOrder { hash, order }
-    }
-}
-
-impl Eq for TxOrder {}
-
-impl PartialEq for TxOrder {
-    fn eq(&self, other: &TxOrder) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-impl PartialOrd for TxOrder {
-    fn partial_cmp(&self, other: &TxOrder) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TxOrder {
-    fn cmp(&self, b: &TxOrder) -> Ordering {
-        self.order.cmp(&b.order)
-    }
-}
+use std::collections::HashMap;
+use log::info;
+use rand::Rng;
+use std::cmp::Ord;
 
 pub struct Pool {
     package_limit: usize,
-    order_set: BTreeSet<TxOrder>,
+    order_set: HashMap<u64, Vec<u8>>,
     order: u64,
+    lower_bound: u64,
     txs: HashMap<Vec<u8>, RawTransaction>,
 }
 
@@ -58,8 +30,9 @@ impl Pool {
     pub fn new(package_limit: usize) -> Self {
         Pool {
             package_limit,
-            order_set: BTreeSet::new(),
+            order_set: HashMap::new(),
             order: 0,
+            lower_bound: 0,
             txs: HashMap::new(),
         }
     }
@@ -75,37 +48,55 @@ impl Pool {
         let is_ok = !self.txs.contains_key(&tx_hash);
         if is_ok {
             let order = self.get_order();
-            let tx_order = TxOrder::new(tx_hash.clone(), order);
-            self.order_set.insert(tx_order);
+            self.order_set.insert(order, tx_hash.clone());
             self.txs.insert(tx_hash, raw_tx);
         }
         is_ok
     }
 
+    fn update_low_bound(&mut self) {
+        let old_low_bound = self.lower_bound;
+        for i in old_low_bound..self.order {
+            if self.order_set.get(&i).is_some() {
+                break;
+            }
+            self.lower_bound += 1;
+        }
+    }
+
     pub fn update(&mut self, tx_hash_list: Vec<Vec<u8>>) {
+        info!("before update len of pool {}, will update {} tx", self.len(), tx_hash_list.len());
         for hash in tx_hash_list.iter() {
             self.txs.remove(hash);
         }
-        self.order_set = self
-            .order_set
-            .iter()
-            .cloned()
-            .filter(|order| !tx_hash_list.contains(&order.hash))
-            .collect();
+
+        let mut new_order_set = HashMap::new();
+        for (order, hash) in self.order_set.iter() {
+            if !tx_hash_list.contains(hash) {
+                new_order_set.insert(*order, hash.to_owned());
+            }
+        }
+        self.order_set = new_order_set;
+
+        info!("after update len of pool {}", self.len());
+        self.update_low_bound()
     }
 
     pub fn package(&mut self) -> Vec<Vec<u8>> {
         let mut tx_hash_list = Vec::new();
 
-        let mut iter = self.order_set.iter();
-        for _ in 0..self.package_limit {
-            let order = iter.next();
-            if let Some(order) = order {
-                let tx_hash = &order.hash;
-                if self.txs.get(tx_hash).is_some() {
-                    tx_hash_list.push(tx_hash.to_owned());
-                }
-            } else {
+        let max_begin = self.order.saturating_sub(self.package_limit as u64);
+        let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit * 2 {
+            self.lower_bound
+        } else {
+            rand::thread_rng().gen_range(self.lower_bound, max_begin)
+        };
+
+        for i in begin_order..self.order {
+            if let Some(tx_hash) = self.order_set.get(&i) {
+                tx_hash_list.push(tx_hash.to_owned());
+            }
+            if tx_hash_list.len() == self.package_limit {
                 break;
             }
         }

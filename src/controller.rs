@@ -55,7 +55,7 @@ impl Controller {
         current_block_hash: Vec<u8>,
     ) -> Self {
         let auth = Authentication::new(kms_port.clone());
-        let pool = Arc::new(RwLock::new(Pool::new(100)));
+        let pool = Arc::new(RwLock::new(Pool::new(500)));
         let chain = Chain::new(
             storage_port.clone(),
             network_port.clone(),
@@ -77,6 +77,11 @@ impl Controller {
             pool,
             chain: Arc::new(RwLock::new(chain)),
         }
+    }
+
+    pub async fn init(&self) {
+        let mut chain = self.chain.write().await;
+        chain.add_proposal().await
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
@@ -149,24 +154,9 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
-        {
-            let chain = self.chain.read().await;
-            if let Some(proposal) = chain.get_candidate_block_hash() {
-                return Ok(proposal);
-            }
-        }
-        let tx_hash_list = {
-            let mut pool = self.pool.write().await;
-            pool.package()
-        };
-        {
-            let mut chain = self.chain.write().await;
-            chain.add_proposal(tx_hash_list).await
-        }
-
         let chain = self.chain.read().await;
         if let Some(proposal) = chain.get_candidate_block_hash() {
-            Ok(proposal)
+            return Ok(proposal);
         } else {
             Err("get proposal error".to_owned())
         }

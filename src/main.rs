@@ -576,6 +576,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         current_block_hash,
     );
 
+    controller.init().await;
+
     let addr_str = format!("127.0.0.1:{}", opts.grpc_port);
     let addr = addr_str.parse()?;
 
