@@ -366,7 +366,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 }
 
 use crate::controller::Controller;
-use crate::util::{get_block_delay_number, load_data, reconfigure};
+use crate::util::{get_block_delay_number, load_data, reconfigure, genesis_block_hash};
 use std::time::Duration;
 use tokio::time;
 
@@ -528,7 +528,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                 if current_block_number_bytes.is_empty() {
                     info!("this is a new chain!");
                     current_block_number = 0u64;
-                    current_block_hash = vec![0; 32];
+                    current_block_hash = genesis_block_hash();
                 } else {
                     info!("this is an old chain!");
                     let mut bytes: [u8; 8] = [0; 8];
@@ -576,7 +576,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         current_block_hash,
     );
 
-    controller.init().await;
+    controller.init(current_block_number).await;
 
     let addr_str = format!("127.0.0.1:{}", opts.grpc_port);
     let addr = addr_str.parse()?;

@@ -196,3 +196,7 @@ pub fn genesis_block() -> CompactBlock {
         body: Some(body),
     }
 }
+
+pub fn genesis_block_hash() -> Vec<u8> {
+    vec![0u8; 32]
+}

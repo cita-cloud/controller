@@ -25,6 +25,7 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::auth::Authentication;
 
 pub struct Chain {
     kms_port: String,
@@ -39,6 +40,7 @@ pub struct Chain {
     main_chain_tx_hash: Vec<Vec<u8>>,
     candidate_block: Option<(Vec<u8>, CompactBlock)>,
     pool: Arc<RwLock<Pool>>,
+    auth: Arc<RwLock<Authentication>>,
 }
 
 impl Chain {
@@ -51,6 +53,7 @@ impl Chain {
         current_block_number: u64,
         current_block_hash: Vec<u8>,
         pool: Arc<RwLock<Pool>>,
+        auth: Arc<RwLock<Authentication>>,
     ) -> Self {
         let mut fork_tree = Vec::with_capacity(block_delay_number as usize * 2);
         for _ in 0..(block_delay_number as usize * 2) {
@@ -70,6 +73,7 @@ impl Chain {
             main_chain_tx_hash: Vec::new(),
             candidate_block: None,
             pool,
+            auth,
         }
     }
 
@@ -427,7 +431,11 @@ impl Chain {
                             // update pool
                             {
                                 let mut pool = self.pool.write().await;
-                                pool.update(tx_hash_list);
+                                pool.update(tx_hash_list.clone());
+                            }
+                            {
+                                let mut auth = self.auth.write().await;
+                                auth.insert_tx_hash(block_height, tx_hash_list);
                             }
 
                             // region 0: 0 - current height; 1 - current hash

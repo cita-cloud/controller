@@ -38,7 +38,7 @@ pub struct Controller {
     kms_port: String,
     executor_port: String,
     block_delay_number: u32,
-    auth: Authentication,
+    auth: Arc<RwLock<Authentication>>,
     pool: Arc<RwLock<Pool>>,
     chain: Arc<RwLock<Chain>>,
 }
@@ -54,9 +54,9 @@ impl Controller {
         current_block_number: u64,
         current_block_hash: Vec<u8>,
     ) -> Self {
-        let auth = Authentication::new(kms_port.clone());
+        let auth = Arc::new(RwLock::new(Authentication::new(kms_port.clone(), storage_port.clone())));
         let pool = Arc::new(RwLock::new(Pool::new(500)));
-        let chain = Chain::new(
+        let chain = Arc::new(RwLock::new(Chain::new(
             storage_port.clone(),
             network_port.clone(),
             kms_port.clone(),
@@ -65,7 +65,8 @@ impl Controller {
             current_block_number,
             current_block_hash,
             pool.clone(),
-        );
+            auth.clone(),
+        )));
         Controller {
             consensus_port,
             network_port,
@@ -75,13 +76,19 @@ impl Controller {
             block_delay_number,
             auth,
             pool,
-            chain: Arc::new(RwLock::new(chain)),
+            chain,
         }
     }
 
-    pub async fn init(&self) {
-        let mut chain = self.chain.write().await;
-        chain.add_proposal().await
+    pub async fn init(&self, init_block_number: u64) {
+        {
+            let mut chain = self.chain.write().await;
+            chain.add_proposal().await
+        }
+        {
+            let mut auth = self.auth.write().await;
+            auth.init(init_block_number).await;
+        }
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
@@ -94,7 +101,10 @@ impl Controller {
         &self,
         raw_tx: RawTransaction,
     ) -> Result<Vec<u8>, String> {
-        let tx_hash = self.auth.check_raw_tx(raw_tx.clone()).await?;
+        let tx_hash = {
+            let auth = self.auth.read().await;
+            auth.check_raw_tx(raw_tx.clone()).await?
+        };
 
         let mut pool = self.pool.write().await;
         let is_ok = pool.enqueue(raw_tx.clone(), tx_hash.clone());
