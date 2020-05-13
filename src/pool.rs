@@ -55,6 +55,7 @@ impl Pool {
     }
 
     fn update_low_bound(&mut self) {
+        info!("low_bound before update: {}", self.lower_bound);
         let old_low_bound = self.lower_bound;
         for i in old_low_bound..self.order {
             if self.order_set.get(&i).is_some() {
@@ -62,6 +63,7 @@ impl Pool {
             }
             self.lower_bound += 1;
         }
+        info!("low_bound after update: {}", self.lower_bound);
     }
 
     pub fn update(&mut self, tx_hash_list: Vec<Vec<u8>>) {
@@ -86,7 +88,7 @@ impl Pool {
         let mut tx_hash_list = Vec::new();
 
         let max_begin = self.order.saturating_sub(self.package_limit as u64);
-        let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit * 2 {
+        let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit {
             self.lower_bound
         } else {
             rand::thread_rng().gen_range(self.lower_bound, max_begin)

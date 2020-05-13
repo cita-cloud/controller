@@ -177,6 +177,7 @@ impl Chain {
     }
 
     pub async fn add_proposal(&mut self) {
+        info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
         let mut filtered_tx_hash_list = Vec::new();
         // if we are no lucky, all tx is dup, try again
         for _ in 0..6 {
@@ -185,6 +186,13 @@ impl Chain {
                 pool.package()
             };
 
+            info!("before filter tx hash list len {}", tx_hash_list.len());
+            // this means that pool is empty
+            // so don't need to retry
+            if tx_hash_list.is_empty() {
+                break;
+            }
+
             // remove dup tx
             for hash in tx_hash_list.into_iter() {
                 if !self.main_chain_tx_hash.contains(&hash) {
@@ -192,6 +200,7 @@ impl Chain {
                 }
             }
 
+            info!("after filter tx hash list len {}", filtered_tx_hash_list.len());
             if !filtered_tx_hash_list.is_empty() {
                 break;
             }

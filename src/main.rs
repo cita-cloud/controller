@@ -285,7 +285,7 @@ impl Consensus2ControllerServer {
 #[tonic::async_trait]
 impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Hash>, Status> {
-        info!("get_proposal request: {:?}", request);
+        debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
             |e| Err(Status::internal(e)),
@@ -348,7 +348,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
         &self,
         request: Request<NetworkMsg>,
     ) -> Result<Response<SimpleResponse>, Status> {
-        info!("process_network_msg request: {:?}", request);
+        debug!("process_network_msg request: {:?}", request);
 
         let msg = request.into_inner();
         if msg.module != "controller" {
