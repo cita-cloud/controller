@@ -41,15 +41,15 @@ impl SystemConfig {
     pub fn new() -> Self {
         let mut map = HashMap::new();
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
-            map.insert(id, vec![0u8, 33]);
+            map.insert(id, vec![0u8; 33]);
         }
 
         SystemConfig {
             version: 0,
-            chain_id: vec![0u8, 32],
-            admin: vec![0u8, 21],
+            chain_id: vec![0u8; 32],
+            admin: vec![0u8; 21],
             block_interval: 6,
-            validators: vec![vec![0], vec![1]],
+            validators: vec![vec![0; 21], vec![1; 21]],
             utxo_tx_hashes: map,
         }
     }

@@ -109,7 +109,7 @@ impl Authentication {
             return Err("Invalid version".to_owned());
         }
         let lock_id = utxo_tx.lock_id;
-        if lock_id < LOCK_ID_VERSION && lock_id >= LOCK_ID_BUTTON {
+        if lock_id < LOCK_ID_VERSION || lock_id >= LOCK_ID_BUTTON {
             return Err("Invalid lock_id".to_owned());
         }
         let hash = self.sys_config.utxo_tx_hashes.get(&lock_id).unwrap();
