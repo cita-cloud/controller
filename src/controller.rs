@@ -16,19 +16,14 @@ use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::util::{broadcast_message, genesis_block, load_data};
-use cita_ng_proto::blockchain::{
-    BlockHeader, CompactBlock, CompactBlockBody, UnverifiedUtxoTransaction, UtxoTransaction,
-    Witness,
-};
-use cita_ng_proto::common::Hash;
-use cita_ng_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_ng_proto::controller::{raw_transaction::Tx, RawTransaction};
+use cita_ng_proto::blockchain::CompactBlock;
+use cita_ng_proto::controller::RawTransaction;
 use cita_ng_proto::network::NetworkMsg;
-use futures_util::future::TryFutureExt;
 use log::{info, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::utxo_set::SystemConfig;
 
 #[derive(Clone)]
 pub struct Controller {
@@ -53,14 +48,16 @@ impl Controller {
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
+        sys_config: SystemConfig,
     ) -> Self {
-        let auth = Arc::new(RwLock::new(Authentication::new(kms_port.clone(), storage_port.clone())));
+        let auth = Arc::new(RwLock::new(Authentication::new(kms_port.clone(), storage_port.clone(), sys_config)));
         let pool = Arc::new(RwLock::new(Pool::new(500)));
         let chain = Arc::new(RwLock::new(Chain::new(
             storage_port.clone(),
             network_port.clone(),
             kms_port.clone(),
             executor_port.clone(),
+            consensus_port.clone(),
             block_delay_number,
             current_block_number,
             current_block_hash,
@@ -124,11 +121,11 @@ impl Controller {
         }
     }
 
-    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {
+    pub async fn rpc_get_block_by_hash(&self, _hash: Vec<u8>) -> Result<CompactBlock, String> {
         Ok(genesis_block())
     }
 
-    async fn get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, String> {
+    async fn get_block_hash(&self, _block_number: u64) -> Result<Vec<u8>, String> {
         Ok(vec![])
     }
 

@@ -17,6 +17,7 @@ mod chain;
 mod controller;
 mod pool;
 mod util;
+mod utxo_set;
 
 use clap::Clap;
 use git_version::git_version;
@@ -153,9 +154,6 @@ use cita_ng_proto::controller::{
     RawTransaction,
 };
 use tonic::{transport::Server, Request, Response, Status};
-
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 // grpc server of RPC
 pub struct RPCServer {
@@ -369,6 +367,9 @@ use crate::controller::Controller;
 use crate::util::{get_block_delay_number, load_data, reconfigure, genesis_block_hash};
 use std::time::Duration;
 use tokio::time;
+use crate::utxo_set::{LOCK_ID_VERSION, LOCK_ID_BUTTON, SystemConfig};
+use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
+use prost::Message;
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
@@ -430,20 +431,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         interval.tick().await;
     }
     info!("consensus port: {}", consensus_port);
-
-    // send configuration to consensus
-    let consensus_port_clone = consensus_port.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(30));
-        loop {
-            // reconfigure consensus
-            {
-                info!("reconfigure consensus!");
-                let _ = reconfigure(consensus_port_clone.clone()).await;
-            }
-            interval.tick().await;
-        }
-    });
 
     let network_port;
     let config_port_clone = opts.config_port.clone();
@@ -547,6 +534,43 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     info!("current block number: {}", current_block_number);
     info!("current block hash: {:?}", current_block_hash);
 
+    let mut sys_config = SystemConfig::new();
+    if current_block_number != 0 {
+        for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
+            let key = id.to_be_bytes().to_vec();
+            // region 0 global
+            let tx_hash = load_data(storage_port_clone.clone(), 0, key).await.unwrap();
+            if tx_hash.is_empty() {
+                continue;
+            }
+            // region 1: tx_hash - tx
+            let raw_tx_bytes = load_data(storage_port_clone.clone(), 1, tx_hash).await.unwrap();
+            let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
+            let tx = raw_tx.tx.unwrap();
+            if let UtxoTx(utxo_tx) = tx {
+                sys_config.update(&utxo_tx, true);
+            } else {
+                panic!("tx is not utxo_tx");
+            }
+        }
+    }
+    info!("sys_config: {:?}", sys_config);
+
+    // send configuration to consensus
+    let consensus_port_clone = consensus_port.clone();
+    let sys_config_clone = sys_config.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            // reconfigure consensus
+            {
+                info!("reconfigure consensus!");
+                let _ = reconfigure(consensus_port_clone.clone(), sys_config_clone.clone()).await;
+            }
+            interval.tick().await;
+        }
+    });
+
     let executor_port;
     let config_port_clone = opts.config_port.clone();
     let mut interval = time::interval(Duration::from_secs(3));
@@ -574,6 +598,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         block_delay_number,
         current_block_number,
         current_block_hash,
+        sys_config
     );
 
     controller.init(current_block_number).await;

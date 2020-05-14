@@ -16,7 +16,6 @@ use cita_ng_proto::controller::RawTransaction;
 use std::collections::HashMap;
 use log::info;
 use rand::Rng;
-use std::cmp::Ord;
 
 pub struct Pool {
     package_limit: usize,

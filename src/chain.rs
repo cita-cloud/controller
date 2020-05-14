@@ -13,25 +13,24 @@
 // limitations under the License.
 
 use crate::pool::Pool;
-use crate::util::{
-    broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain,
-    store_data, unix_now,
-};
+use crate::util::{broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain, store_data, unix_now, reconfigure};
 use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use cita_ng_proto::network::NetworkMsg;
 use log::{info, warn};
 use prost::Message;
-use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::auth::Authentication;
+use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
+use crate::utxo_set::{LOCK_ID_VALIDATORS, LOCK_ID_BLOCK_INTERVAL};
 
 pub struct Chain {
     kms_port: String,
     network_port: String,
     storage_port: String,
     executor_port: String,
+    consensus_port: String,
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
@@ -49,6 +48,7 @@ impl Chain {
         network_port: String,
         kms_port: String,
         executor_port: String,
+        consensus_port: String,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -65,6 +65,7 @@ impl Chain {
             network_port,
             storage_port,
             executor_port,
+            consensus_port,
             block_number: current_block_number,
             block_hash: current_block_hash,
             block_delay_number,
@@ -420,6 +421,31 @@ impl Chain {
                                     // so there will be dup tx in different blocks
                                     // tx maybe has been removed by pre block
                                     if let Some(raw_tx) = pool.get_tx(&hash) {
+                                        // if tx is utxo tx, update sys_config
+                                        {
+                                            if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
+                                                let ret = {
+                                                    let mut auth = self.auth.write().await;
+                                                    auth.update_system_config(&utxo_tx)
+                                                };
+                                                if ret {
+                                                    // if sys_config changed, store utxo tx hash into global region
+                                                    let lock_id = utxo_tx.transaction.unwrap().lock_id;
+                                                    let key = lock_id.to_be_bytes().to_vec();
+                                                    let tx_hash = utxo_tx.transaction_hash;
+                                                    store_data(self.storage_port.clone(), 0, key, tx_hash).await;
+
+                                                    if lock_id == LOCK_ID_VALIDATORS || lock_id == LOCK_ID_BLOCK_INTERVAL {
+                                                        let sys_config = {
+                                                            let auth = self.auth.read().await;
+                                                            auth.get_system_config()
+                                                        };
+                                                        reconfigure(self.consensus_port.clone(), sys_config).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         let mut raw_tx_bytes = Vec::new();
                                         raw_tx.encode(&mut raw_tx_bytes);
                                         store_data(self.storage_port.clone(), 1, hash, raw_tx_bytes)

@@ -12,37 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
+use cita_ng_proto::common::Empty;
 use cita_ng_proto::consensus::{
     consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
 };
 use cita_ng_proto::executor::executor_service_client::ExecutorServiceClient;
 use cita_ng_proto::kms::{
     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
-    RecoverSignatureResponse, VerifyDataHashRequest,
+    VerifyDataHashRequest,
 };
 use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
 use cita_ng_proto::storage::{
-    storage_service_client::StorageServiceClient, Content, ExtKey, Value,
+    storage_service_client::StorageServiceClient, Content, ExtKey,
 };
 use log::info;
 use tonic::Request;
 
 use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use std::time::Duration;
+use crate::utxo_set::SystemConfig;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
     d.as_secs() * 1_000 + u64::from(d.subsec_millis())
 }
 
-pub async fn reconfigure(consensus_port: String) -> Result<bool, Box<dyn std::error::Error>> {
+pub async fn reconfigure(consensus_port: String, sys_config: SystemConfig) -> Result<bool, Box<dyn std::error::Error>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
     let request = Request::new(ConsensusConfiguration {
-        block_interval: 6,
-        validators: vec![vec![0], vec![1]],
+        block_interval: sys_config.block_interval,
+        validators: sys_config.validators,
     });
 
     let response = client.reconfigure(request).await?;

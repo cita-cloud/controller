@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{verify_tx_hash, verify_tx_signature, genesis_block_hash, load_data};
+use crate::util::{verify_tx_hash, verify_tx_signature, load_data};
 use cita_ng_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_ng_proto::controller::{raw_transaction::Tx, RawTransaction};
-use cita_ng_proto::blockchain::{CompactBlockBody, Transaction, UtxoTransaction};
+use cita_ng_proto::controller::RawTransaction;
+use cita_ng_proto::blockchain::{CompactBlockBody, Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use prost::Message;
 use std::collections::HashMap;
+use crate::utxo_set::{SystemConfig, LOCK_ID_VERSION, LOCK_ID_BUTTON};
 
 pub const BLOCKLIMIT: u64 = 100;
 
@@ -27,16 +28,26 @@ pub struct Authentication {
     storage_port: String,
     history_hashes: HashMap<u64, Vec<Vec<u8>>>,
     current_block_number: u64,
+    sys_config: SystemConfig,
 }
 
 impl Authentication {
-    pub fn new(kms_port: String, storage_port: String) -> Self {
+    pub fn new(kms_port: String, storage_port: String, sys_config: SystemConfig,) -> Self {
         Authentication {
             kms_port,
             storage_port,
             history_hashes: HashMap::new(),
             current_block_number: 0,
+            sys_config,
         }
+    }
+
+    pub fn get_system_config(&self) -> SystemConfig {
+        self.sys_config.clone()
+    }
+
+    pub fn update_system_config(&mut self, tx: &UnverifiedUtxoTransaction) -> bool {
+        self.sys_config.update(tx, false)
     }
 
     pub async fn init(&mut self, init_block_number: u64) {
@@ -75,8 +86,7 @@ impl Authentication {
     }
 
     fn check_transaction(&self, tx: &Transaction) -> Result<(), String> {
-        // todo version and chain_id need utxo_set
-        if tx.version != 0 {
+        if tx.version != self.sys_config.version {
             return Err("Invalid version".to_owned());
         }
         if tx.nonce.len() > 128 {
@@ -88,8 +98,23 @@ impl Authentication {
         if tx.value.len() != 32 {
             return Err("Invalid value".to_owned());
         }
-        if tx.chain_id.len() != 32 || tx.chain_id != vec![0u8; 32] {
+        if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
             return Err("Invalid chain_id".to_owned());
+        }
+        Ok(())
+    }
+
+    fn check_utxo_transaction(&self, utxo_tx: &UtxoTransaction) -> Result<(), String> {
+        if utxo_tx.version != self.sys_config.version {
+            return Err("Invalid version".to_owned());
+        }
+        let lock_id = utxo_tx.lock_id;
+        if lock_id < LOCK_ID_VERSION && lock_id >= LOCK_ID_BUTTON {
+            return Err("Invalid lock_id".to_owned());
+        }
+        let hash = self.sys_config.utxo_tx_hashes.get(&lock_id).unwrap();
+        if hash != &utxo_tx.pre_tx_hash {
+            return Err("Invalid pre_tx_hash".to_owned());
         }
         Ok(())
     }
@@ -142,11 +167,11 @@ impl Authentication {
                     }
                 }
                 UtxoTx(utxo_tx) => {
-                    // todo check transaction
                     let witnesses = utxo_tx.witnesses;
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = utxo_tx.transaction {
+                        self.check_utxo_transaction(&tx)?;
                         let ret = tx.encode(&mut tx_bytes);
                         if ret.is_err() {
                             return Err("encode utxo tx failed".to_owned());
