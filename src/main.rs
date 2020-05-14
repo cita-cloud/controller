@@ -153,6 +153,7 @@ use cita_ng_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
     RawTransaction,
 };
+use cita_ng_proto::controller::SystemConfig as ProtoSystemConfig;
 use tonic::{transport::Server, Request, Response, Status};
 
 // grpc server of RPC
@@ -262,6 +263,31 @@ impl RpcService for RPCServer {
                 },
             )
     }
+    async fn get_system_config(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<ProtoSystemConfig>, Status> {
+        info!("get_system_config request: {:?}", request);
+
+        self.controller.rpc_get_system_config().await.map_or_else(
+            |e| Err(Status::internal(e)),
+            |sys_config| {
+                let reply = Response::new(ProtoSystemConfig {
+                    version: sys_config.version,
+                    chain_id: sys_config.chain_id,
+                    admin: sys_config.admin,
+                    block_interval: sys_config.block_interval,
+                    validators: sys_config.validators,
+                    version_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_VERSION).unwrap().to_owned(),
+                    chain_id_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_CHAIN_ID).unwrap().to_owned(),
+                    admin_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_ADMIN).unwrap().to_owned(),
+                    block_interval_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_BLOCK_INTERVAL).unwrap().to_owned(),
+                    validators_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_VALIDATORS).unwrap().to_owned(),
+                });
+                Ok(reply)
+            },
+        )
+    }
 }
 
 use cita_ng_proto::controller::{
@@ -367,7 +393,7 @@ use crate::controller::Controller;
 use crate::util::{get_block_delay_number, load_data, reconfigure, genesis_block_hash};
 use std::time::Duration;
 use tokio::time;
-use crate::utxo_set::{LOCK_ID_VERSION, LOCK_ID_BUTTON, SystemConfig};
+use crate::utxo_set::{LOCK_ID_VERSION, LOCK_ID_BUTTON, SystemConfig, LOCK_ID_CHAIN_ID, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
 use prost::Message;
 

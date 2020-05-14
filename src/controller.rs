@@ -160,6 +160,12 @@ impl Controller {
         }
     }
 
+    pub async fn rpc_get_system_config(&self) -> Result<SystemConfig, String> {
+        let auth = self.auth.read().await;
+        let sys_config = auth.get_system_config();
+        Ok(sys_config)
+    }
+
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
         let chain = self.chain.read().await;
         if let Some(proposal) = chain.get_candidate_block_hash() {
