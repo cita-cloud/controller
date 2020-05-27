@@ -12,27 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{verify_tx_hash, verify_tx_signature, load_data};
+use crate::util::{load_data, verify_tx_hash, verify_tx_signature};
+use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
+use cita_ng_proto::blockchain::{
+    CompactBlockBody, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
+};
 use cita_ng_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
 use cita_ng_proto::controller::RawTransaction;
-use cita_ng_proto::blockchain::{CompactBlockBody, Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use prost::Message;
 use std::collections::HashMap;
-use crate::utxo_set::{SystemConfig, LOCK_ID_VERSION, LOCK_ID_BUTTON};
 
 pub const BLOCKLIMIT: u64 = 100;
 
 #[derive(Clone)]
 pub struct Authentication {
-    kms_port: String,
-    storage_port: String,
+    kms_port: u16,
+    storage_port: u16,
     history_hashes: HashMap<u64, Vec<Vec<u8>>>,
     current_block_number: u64,
     sys_config: SystemConfig,
 }
 
 impl Authentication {
-    pub fn new(kms_port: String, storage_port: String, sys_config: SystemConfig,) -> Self {
+    pub fn new(kms_port: u16, storage_port: u16, sys_config: SystemConfig) -> Self {
         Authentication {
             kms_port,
             storage_port,
@@ -59,7 +61,9 @@ impl Authentication {
 
         for h in begin_block_number..(init_block_number + 1) {
             // region 3: block_height - block body
-            let block_body_bytes = load_data(self.storage_port.clone(), 3, h.to_be_bytes().to_vec()).await.unwrap();
+            let block_body_bytes = load_data(self.storage_port, 3, h.to_be_bytes().to_vec())
+                .await
+                .unwrap();
             let block_body = CompactBlockBody::decode(block_body_bytes.as_slice()).unwrap();
             self.history_hashes.insert(h, block_body.tx_hashes);
         }
@@ -92,7 +96,9 @@ impl Authentication {
         if tx.nonce.len() > 128 {
             return Err("Invalid nonce".to_owned());
         }
-        if tx.valid_until_block <= self.current_block_number || tx.valid_until_block > (self.current_block_number + BLOCKLIMIT) {
+        if tx.valid_until_block <= self.current_block_number
+            || tx.valid_until_block > (self.current_block_number + BLOCKLIMIT)
+        {
             return Err("Invalid valid_until_block".to_owned());
         }
         if tx.value.len() != 32 {
@@ -147,7 +153,7 @@ impl Authentication {
                     self.check_tx_hash(&tx_hash)?;
 
                     if let Ok(is_ok) =
-                        verify_tx_hash(self.kms_port.clone(), tx_hash.clone(), tx_bytes).await
+                        verify_tx_hash(self.kms_port, tx_hash.clone(), tx_bytes).await
                     {
                         if !is_ok {
                             return Err("Invalid tx_hash".to_owned());
@@ -155,7 +161,7 @@ impl Authentication {
                     }
 
                     if let Ok(address) =
-                        verify_tx_signature(self.kms_port.clone(), tx_hash.clone(), signature).await
+                        verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
                     {
                         if address == sender {
                             Ok(tx_hash)
@@ -182,7 +188,7 @@ impl Authentication {
 
                     let tx_hash = utxo_tx.transaction_hash;
                     if let Ok(is_ok) =
-                        verify_tx_hash(self.kms_port.clone(), tx_hash.clone(), tx_bytes).await
+                        verify_tx_hash(self.kms_port, tx_hash.clone(), tx_bytes).await
                     {
                         if !is_ok {
                             return Err("Invalid utxo tx hash".to_owned());
@@ -194,8 +200,7 @@ impl Authentication {
                         let sender = w.sender;
 
                         if let Ok(address) =
-                            verify_tx_signature(self.kms_port.clone(), tx_hash.clone(), signature)
-                                .await
+                            verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
                         {
                             if address != sender {
                                 let err_str = format!("Invalid sender index: {}", i);

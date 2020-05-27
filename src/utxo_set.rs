@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
 use cita_ng_proto::blockchain::UnverifiedUtxoTransaction;
 use log::warn;
+use std::collections::HashMap;
 
 // store related utxo tx hash into global region
 // begin from id 1000
@@ -124,14 +124,8 @@ impl SystemConfig {
     }
 }
 
-fn u32_encode(version: u32) -> Vec<u8> {
-    version.to_be_bytes().to_vec()
-}
-
 fn u32_decode(data: Vec<u8>) -> u32 {
     let mut bytes: [u8; 4] = [0; 4];
-    bytes[..8].clone_from_slice(&data[..4]);
+    bytes[..4].clone_from_slice(&data[..4]);
     u32::from_be_bytes(bytes)
 }
-
-

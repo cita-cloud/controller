@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::common::Empty;
 use cita_ng_proto::consensus::{
     consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
 };
@@ -22,21 +21,22 @@ use cita_ng_proto::kms::{
     VerifyDataHashRequest,
 };
 use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
-use cita_ng_proto::storage::{
-    storage_service_client::StorageServiceClient, Content, ExtKey,
-};
+use cita_ng_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
 use log::info;
 use tonic::Request;
 
-use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use crate::utxo_set::SystemConfig;
+use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
     d.as_secs() * 1_000 + u64::from(d.subsec_millis())
 }
 
-pub async fn reconfigure(consensus_port: String, sys_config: SystemConfig) -> Result<bool, Box<dyn std::error::Error>> {
+pub async fn reconfigure(
+    consensus_port: u16,
+    sys_config: SystemConfig,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
@@ -50,7 +50,7 @@ pub async fn reconfigure(consensus_port: String, sys_config: SystemConfig) -> Re
 }
 
 pub async fn verify_tx_signature(
-    kms_port: String,
+    kms_port: u16,
     tx_hash: Vec<u8>,
     signature: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -67,7 +67,7 @@ pub async fn verify_tx_signature(
 }
 
 pub async fn verify_tx_hash(
-    kms_port: String,
+    kms_port: u16,
     tx_hash: Vec<u8>,
     tx_bytes: Vec<u8>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -84,7 +84,7 @@ pub async fn verify_tx_hash(
 }
 
 pub async fn broadcast_message(
-    network_port: String,
+    network_port: u16,
     msg: NetworkMsg,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let network_addr = format!("http://127.0.0.1:{}", network_port);
@@ -96,20 +96,8 @@ pub async fn broadcast_message(
     Ok(())
 }
 
-pub async fn get_block_delay_number(
-    consensus_port: String,
-) -> Result<u32, Box<dyn std::error::Error>> {
-    let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
-    let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
-
-    let request = Request::new(Empty {});
-
-    let response = client.get_block_delay_number(request).await?;
-    Ok(response.into_inner().block_delay_number)
-}
-
 pub async fn hash_data(
-    kms_port: String,
+    kms_port: u16,
     key_id: u64,
     data: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -123,7 +111,7 @@ pub async fn hash_data(
 }
 
 pub async fn store_data(
-    storage_port: String,
+    storage_port: u16,
     region: u32,
     key: Vec<u8>,
     value: Vec<u8>,
@@ -138,7 +126,7 @@ pub async fn store_data(
 }
 
 pub async fn load_data(
-    storage_port: String,
+    storage_port: u16,
     region: u32,
     key: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -152,7 +140,7 @@ pub async fn load_data(
 }
 
 pub async fn exec_block(
-    executor_port: String,
+    executor_port: u16,
     block: CompactBlock,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let executor_addr = format!("http://127.0.0.1:{}", executor_port);
@@ -182,7 +170,7 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
 pub fn genesis_block() -> CompactBlock {
     let header = BlockHeader {
         prevhash: vec![],
-        timestamp: 123456,
+        timestamp: 123_456,
         height: 0,
         transactions_root: vec![],
         proposer: vec![],

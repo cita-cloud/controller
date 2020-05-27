@@ -16,6 +16,7 @@ use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::util::{broadcast_message, genesis_block, load_data};
+use crate::utxo_set::SystemConfig;
 use cita_ng_proto::blockchain::CompactBlock;
 use cita_ng_proto::controller::RawTransaction;
 use cita_ng_proto::network::NetworkMsg;
@@ -23,16 +24,11 @@ use log::{info, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::utxo_set::SystemConfig;
 
 #[derive(Clone)]
 pub struct Controller {
-    consensus_port: String,
-    network_port: String,
-    storage_port: String,
-    kms_port: String,
-    executor_port: String,
-    block_delay_number: u32,
+    network_port: u16,
+    storage_port: u16,
     auth: Arc<RwLock<Authentication>>,
     pool: Arc<RwLock<Pool>>,
     chain: Arc<RwLock<Chain>>,
@@ -40,24 +36,28 @@ pub struct Controller {
 
 impl Controller {
     pub fn new(
-        consensus_port: String,
-        network_port: String,
-        storage_port: String,
-        kms_port: String,
-        executor_port: String,
+        consensus_port: u16,
+        network_port: u16,
+        storage_port: u16,
+        kms_port: u16,
+        executor_port: u16,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
     ) -> Self {
-        let auth = Arc::new(RwLock::new(Authentication::new(kms_port.clone(), storage_port.clone(), sys_config)));
+        let auth = Arc::new(RwLock::new(Authentication::new(
+            kms_port,
+            storage_port,
+            sys_config,
+        )));
         let pool = Arc::new(RwLock::new(Pool::new(500)));
         let chain = Arc::new(RwLock::new(Chain::new(
-            storage_port.clone(),
-            network_port.clone(),
-            kms_port.clone(),
-            executor_port.clone(),
-            consensus_port.clone(),
+            storage_port,
+            network_port,
+            kms_port,
+            executor_port,
+            consensus_port,
             block_delay_number,
             current_block_number,
             current_block_hash,
@@ -65,12 +65,8 @@ impl Controller {
             auth.clone(),
         )));
         Controller {
-            consensus_port,
             network_port,
             storage_port,
-            kms_port,
-            executor_port,
-            block_delay_number,
             auth,
             pool,
             chain,
@@ -114,7 +110,7 @@ impl Controller {
                 origin: 0,
                 msg: raw_tx_bytes,
             };
-            let _ = broadcast_message(self.network_port.clone(), msg).await;
+            let _ = broadcast_message(self.network_port, msg).await;
             Ok(tx_hash)
         } else {
             Err("dup".to_owned())
@@ -123,10 +119,6 @@ impl Controller {
 
     pub async fn rpc_get_block_by_hash(&self, _hash: Vec<u8>) -> Result<CompactBlock, String> {
         Ok(genesis_block())
-    }
-
-    async fn get_block_hash(&self, _block_number: u64) -> Result<Vec<u8>, String> {
-        Ok(vec![])
     }
 
     pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, String> {
@@ -145,7 +137,7 @@ impl Controller {
         if let Some(raw_tx) = ret {
             Ok(raw_tx)
         } else {
-            let ret = load_data(self.storage_port.clone(), 1, tx_hash).await;
+            let ret = load_data(self.storage_port, 1, tx_hash).await;
             if let Ok(raw_tx_bytes) = ret {
                 let ret = RawTransaction::decode(raw_tx_bytes.as_slice());
                 if ret.is_err() {
@@ -169,7 +161,7 @@ impl Controller {
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
         let chain = self.chain.read().await;
         if let Some(proposal) = chain.get_candidate_block_hash() {
-            return Ok(proposal);
+            Ok(proposal)
         } else {
             Err("get proposal error".to_owned())
         }
@@ -206,7 +198,7 @@ impl Controller {
                         {
                             let pool = self.pool.read().await;
                             for hash in tx_hash_list.iter() {
-                                if pool.get_tx(hash).is_none() {
+                                if !pool.contains(hash) {
                                     warn!("block is invalid");
                                     return Err("block is invalid".to_owned());
                                 }

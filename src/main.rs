@@ -14,6 +14,7 @@
 
 mod auth;
 mod chain;
+mod config;
 mod controller;
 mod pool;
 mod util;
@@ -51,9 +52,6 @@ enum SubCommand {
 /// A subcommand for run
 #[derive(Clap)]
 struct RunOpts {
-    /// Sets grpc port of config service.
-    #[clap(short = "c", long = "config_port", default_value = "49999")]
-    config_port: String,
     /// Sets grpc port of this service.
     #[clap(short = "p", long = "port", default_value = "50004")]
     grpc_port: String,
@@ -74,66 +72,20 @@ fn main() {
         SubCommand::Run(opts) => {
             // init log4rs
             log4rs::init_file("controller-log4rs.yaml", Default::default()).unwrap();
-            info!("grpc port of config service: {}", opts.config_port);
             info!("grpc port of this service: {}", opts.grpc_port);
             let _ = run(opts);
         }
     }
 }
 
-use cita_ng_proto::config::{
-    config_service_client::ConfigServiceClient, Endpoint, RegisterEndpointInfo, ServiceId,
-};
-
-async fn register_endpoint(
-    config_port: String,
-    port: String,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_addr = format!("http://127.0.0.1:{}", config_port);
-    let mut client = ConfigServiceClient::connect(config_addr).await?;
-
-    // id of Controller service is 4
-    let request = Request::new(RegisterEndpointInfo {
-        id: 4,
-        endpoint: Some(Endpoint {
-            hostname: "127.0.0.1".to_owned(),
-            port,
-        }),
-    });
-
-    let response = client.register_endpoint(request).await?;
-
-    Ok(response.into_inner().is_success)
-}
-
-async fn get_endpoint(id: u64, config_port: String) -> Result<String, Box<dyn std::error::Error>> {
-    let config_addr = format!("http://127.0.0.1:{}", config_port);
-    let mut client = ConfigServiceClient::connect(config_addr).await?;
-
-    let request = Request::new(ServiceId { id });
-
-    let response = client.get_endpoint(request).await?;
-
-    Ok(response.into_inner().port)
-}
-
 use cita_ng_proto::network::network_service_client::NetworkServiceClient;
 use cita_ng_proto::network::RegisterInfo;
 
 async fn register_network_msg_handler(
-    config_port: String,
+    network_port: u16,
     port: String,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_addr = format!("http://127.0.0.1:{}", config_port);
-    let mut client = ConfigServiceClient::connect(config_addr).await?;
-
-    // id of Network service is 0
-    let request = Request::new(ServiceId { id: 0 });
-
-    let response = client.get_endpoint(request).await?;
-
-    let network_grpc_port = response.into_inner().port;
-    let network_addr = format!("http://127.0.0.1:{}", network_grpc_port);
+    let network_addr = format!("http://127.0.0.1:{}", network_port);
     let mut client = NetworkServiceClient::connect(network_addr).await?;
 
     let request = Request::new(RegisterInfo {
@@ -149,11 +101,11 @@ async fn register_network_msg_handler(
 
 use cita_ng_proto::blockchain::CompactBlock;
 use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
+use cita_ng_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_ng_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
     RawTransaction,
 };
-use cita_ng_proto::controller::SystemConfig as ProtoSystemConfig;
 use tonic::{transport::Server, Request, Response, Status};
 
 // grpc server of RPC
@@ -278,11 +230,31 @@ impl RpcService for RPCServer {
                     admin: sys_config.admin,
                     block_interval: sys_config.block_interval,
                     validators: sys_config.validators,
-                    version_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_VERSION).unwrap().to_owned(),
-                    chain_id_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_CHAIN_ID).unwrap().to_owned(),
-                    admin_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_ADMIN).unwrap().to_owned(),
-                    block_interval_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_BLOCK_INTERVAL).unwrap().to_owned(),
-                    validators_pre_hash: sys_config.utxo_tx_hashes.get(&LOCK_ID_VALIDATORS).unwrap().to_owned(),
+                    version_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_VERSION)
+                        .unwrap()
+                        .to_owned(),
+                    chain_id_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_CHAIN_ID)
+                        .unwrap()
+                        .to_owned(),
+                    admin_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_ADMIN)
+                        .unwrap()
+                        .to_owned(),
+                    block_interval_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_BLOCK_INTERVAL)
+                        .unwrap()
+                        .to_owned(),
+                    validators_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_VALIDATORS)
+                        .unwrap()
+                        .to_owned(),
                 });
                 Ok(reply)
             },
@@ -389,47 +361,43 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
     }
 }
 
+use crate::config::ControllerConfig;
 use crate::controller::Controller;
-use crate::util::{get_block_delay_number, load_data, reconfigure, genesis_block_hash};
-use std::time::Duration;
-use tokio::time;
-use crate::utxo_set::{LOCK_ID_VERSION, LOCK_ID_BUTTON, SystemConfig, LOCK_ID_CHAIN_ID, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
+use crate::util::{genesis_block_hash, load_data, reconfigure};
+use crate::utxo_set::{
+    SystemConfig, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
+    LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
+};
 use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
 use prost::Message;
+use std::fs::File;
+use std::io::Read;
+use std::time::Duration;
+use tokio::time;
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
-    let config_port_clone = opts.config_port.clone();
-    let grpc_port_clone = opts.grpc_port.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(3));
-        loop {
-            // register endpoint
-            {
-                let ret =
-                    register_endpoint(config_port_clone.clone(), grpc_port_clone.clone()).await;
-                if ret.is_ok() && ret.unwrap() {
-                    info!("register endpoint success!");
-                    break;
-                }
-            }
-            warn!("register endpoint failed! Retrying");
-            interval.tick().await;
-        }
-    });
+    // read consensus-config.toml
+    let mut buffer = String::new();
+    File::open("controller-config.toml")
+        .and_then(|mut f| f.read_to_string(&mut buffer))
+        .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
+    let config = ControllerConfig::new(&buffer);
 
-    let config_port_clone = opts.config_port.clone();
+    let network_port = config.network_port;
+    let consensus_port = config.consensus_port;
+    let storage_port = config.storage_port;
+    let kms_port = config.kms_port;
+    let executor_port = config.executor_port;
+    let block_delay_number = config.block_delay_number;
+
     let grpc_port_clone = opts.grpc_port.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(3));
         loop {
             // register endpoint
             {
-                let ret = register_network_msg_handler(
-                    config_port_clone.clone(),
-                    grpc_port_clone.clone(),
-                )
-                .await;
+                let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
                 if ret.is_ok() && ret.unwrap() {
                     info!("register network msg handler success!");
                     break;
@@ -440,102 +408,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let consensus_port;
-    let config_port_clone = opts.config_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            // id of consensus service is 1
-            let ret = get_endpoint(1, config_port_clone.clone()).await;
-            if let Ok(port) = ret {
-                info!("get consensus endpoint success!");
-                consensus_port = port;
-                break;
-            }
-        }
-        warn!("get consensus endpoint failed! Retrying");
-        interval.tick().await;
-    }
-    info!("consensus port: {}", consensus_port);
-
-    let network_port;
-    let config_port_clone = opts.config_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            // id of Network service is 0
-            let ret = get_endpoint(0, config_port_clone.clone()).await;
-            if let Ok(port) = ret {
-                info!("get network endpoint success!");
-                network_port = port;
-                break;
-            }
-        }
-        warn!("get network endpoint failed! Retrying");
-        interval.tick().await;
-    }
-    info!("network port: {}", network_port);
-
-    let storage_port;
-    let config_port_clone = opts.config_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            // id of Storage service is 3
-            let ret = get_endpoint(3, config_port_clone.clone()).await;
-            if let Ok(port) = ret {
-                info!("get storage endpoint success!");
-                storage_port = port;
-                break;
-            }
-        }
-        warn!("get storage endpoint failed! Retrying");
-        interval.tick().await;
-    }
-    info!("storage port: {}", storage_port);
-
-    let kms_port;
-    let config_port_clone = opts.config_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            // id of kms service is 5
-            let ret = get_endpoint(5, config_port_clone.clone()).await;
-            if let Ok(port) = ret {
-                info!("get kms endpoint success!");
-                kms_port = port;
-                break;
-            }
-        }
-        warn!("get kms endpoint failed! Retrying");
-        interval.tick().await;
-    }
-    info!("kms port: {}", kms_port);
-
-    let block_delay_number;
-    let consensus_port_clone = consensus_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            let ret = get_block_delay_number(consensus_port_clone.clone()).await;
-            if let Ok(number) = ret {
-                info!("get block delay number success!");
-                block_delay_number = number;
-                break;
-            }
-        }
-        warn!("get block delay number failed! Retrying");
-        interval.tick().await;
-    }
-    info!("block delay number: {}", block_delay_number);
-
     let current_block_number;
     let current_block_hash;
-    let storage_port_clone = storage_port.clone();
     let mut interval = time::interval(Duration::from_secs(3));
     loop {
         {
-            let ret = load_data(storage_port_clone.clone(), 0, 0u64.to_be_bytes().to_vec()).await;
+            let ret = load_data(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
             if let Ok(current_block_number_bytes) = ret {
                 info!("get current block number success!");
                 if current_block_number_bytes.is_empty() {
@@ -547,8 +425,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                     let mut bytes: [u8; 8] = [0; 8];
                     bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
                     current_block_number = u64::from_be_bytes(bytes);
-                    let ret =
-                        load_data(storage_port_clone.clone(), 0, 1u64.to_be_bytes().to_vec()).await;
+                    let ret = load_data(storage_port, 0, 1u64.to_be_bytes().to_vec()).await;
                     current_block_hash = ret.unwrap();
                 }
                 break;
@@ -565,12 +442,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
             // region 0 global
-            let tx_hash = load_data(storage_port_clone.clone(), 0, key).await.unwrap();
+            let tx_hash = load_data(storage_port, 0, key).await.unwrap();
             if tx_hash.is_empty() {
                 continue;
             }
             // region 1: tx_hash - tx
-            let raw_tx_bytes = load_data(storage_port_clone.clone(), 1, tx_hash).await.unwrap();
+            let raw_tx_bytes = load_data(storage_port, 1, tx_hash).await.unwrap();
             let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
             let tx = raw_tx.tx.unwrap();
             if let UtxoTx(utxo_tx) = tx {
@@ -583,7 +460,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     info!("sys_config: {:?}", sys_config);
 
     // send configuration to consensus
-    let consensus_port_clone = consensus_port.clone();
     let sys_config_clone = sys_config.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
@@ -591,29 +467,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
-                let _ = reconfigure(consensus_port_clone.clone(), sys_config_clone.clone()).await;
+                let _ = reconfigure(consensus_port, sys_config_clone.clone()).await;
             }
             interval.tick().await;
         }
     });
-
-    let executor_port;
-    let config_port_clone = opts.config_port.clone();
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        {
-            // id of executor service is 2
-            let ret = get_endpoint(2, config_port_clone.clone()).await;
-            if let Ok(port) = ret {
-                info!("get executor endpoint success!");
-                executor_port = port;
-                break;
-            }
-        }
-        warn!("get executor endpoint failed! Retrying");
-        interval.tick().await;
-    }
-    info!("executor port: {}", executor_port);
 
     let controller = Controller::new(
         consensus_port,
@@ -624,7 +482,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         block_delay_number,
         current_block_number,
         current_block_hash,
-        sys_config
+        sys_config,
     );
 
     controller.init(current_block_number).await;

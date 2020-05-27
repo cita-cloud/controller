@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use cita_ng_proto::controller::RawTransaction;
-use std::collections::HashMap;
 use log::info;
 use rand::Rng;
+use std::collections::HashMap;
 
 pub struct Pool {
     package_limit: usize,
@@ -66,7 +66,11 @@ impl Pool {
     }
 
     pub fn update(&mut self, tx_hash_list: Vec<Vec<u8>>) {
-        info!("before update len of pool {}, will update {} tx", self.len(), tx_hash_list.len());
+        info!(
+            "before update len of pool {}, will update {} tx",
+            self.len(),
+            tx_hash_list.len()
+        );
         for hash in tx_hash_list.iter() {
             self.txs.remove(hash);
         }
@@ -107,10 +111,6 @@ impl Pool {
 
     pub fn len(&self) -> usize {
         self.txs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     pub fn contains(&self, tx_hash: &[u8]) -> bool {

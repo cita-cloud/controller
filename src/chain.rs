@@ -12,25 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::auth::Authentication;
 use crate::pool::Pool;
-use crate::util::{broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain, store_data, unix_now, reconfigure};
+use crate::util::{
+    broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain,
+    reconfigure, store_data, unix_now,
+};
+use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
+use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
 use cita_ng_proto::network::NetworkMsg;
 use log::{info, warn};
 use prost::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::auth::Authentication;
-use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
-use crate::utxo_set::{LOCK_ID_VALIDATORS, LOCK_ID_BLOCK_INTERVAL};
 
 pub struct Chain {
-    kms_port: String,
-    network_port: String,
-    storage_port: String,
-    executor_port: String,
-    consensus_port: String,
+    kms_port: u16,
+    network_port: u16,
+    storage_port: u16,
+    executor_port: u16,
+    consensus_port: u16,
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
@@ -44,11 +47,11 @@ pub struct Chain {
 
 impl Chain {
     pub fn new(
-        storage_port: String,
-        network_port: String,
-        kms_port: String,
-        executor_port: String,
-        consensus_port: String,
+        storage_port: u16,
+        network_port: u16,
+        kms_port: u16,
+        executor_port: u16,
+        consensus_port: u16,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -102,12 +105,8 @@ impl Chain {
         } else {
             let block_header;
             {
-                let ret = load_data(
-                    self.storage_port.clone(),
-                    2,
-                    block_number.to_be_bytes().to_vec(),
-                )
-                .await;
+                let ret =
+                    load_data(self.storage_port, 2, block_number.to_be_bytes().to_vec()).await;
                 if ret.is_err() {
                     return None;
                 }
@@ -118,12 +117,7 @@ impl Chain {
                 }
                 block_header = ret.unwrap();
             }
-            let ret = load_data(
-                self.storage_port.clone(),
-                3,
-                block_number.to_be_bytes().to_vec(),
-            )
-            .await;
+            let ret = load_data(self.storage_port, 3, block_number.to_be_bytes().to_vec()).await;
             if ret.is_err() {
                 return None;
             }
@@ -164,7 +158,7 @@ impl Chain {
         let mut block_header_bytes = Vec::new();
         header.encode(&mut block_header_bytes);
 
-        let ret = hash_data(self.kms_port.clone(), 1, block_header_bytes).await;
+        let ret = hash_data(self.kms_port, 1, block_header_bytes).await;
         if let Ok(block_hash) = ret {
             info!(
                 "add block 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
@@ -205,7 +199,10 @@ impl Chain {
                 }
             }
 
-            info!("after filter tx hash list len {}", filtered_tx_hash_list.len());
+            info!(
+                "after filter tx hash list len {}",
+                filtered_tx_hash_list.len()
+            );
             if !filtered_tx_hash_list.is_empty() {
                 break;
             }
@@ -217,7 +214,7 @@ impl Chain {
         }
         let transactions_root;
         {
-            let ret = hash_data(self.kms_port.clone(), 1, data).await;
+            let ret = hash_data(self.kms_port, 1, data).await;
             if ret.is_err() {
                 return;
             } else {
@@ -228,10 +225,7 @@ impl Chain {
         let prevhash = if self.main_chain.is_empty() {
             self.block_hash.clone()
         } else {
-            self.main_chain
-                .get(self.main_chain.len() - 1)
-                .unwrap()
-                .to_owned()
+            self.main_chain.last().unwrap().to_owned()
         };
         let height = self.block_number + self.main_chain.len() as u64 + 1;
         info!(
@@ -248,7 +242,7 @@ impl Chain {
             timestamp: unix_now(),
             height,
             transactions_root,
-            proposer: self.kms_port.as_bytes().to_vec(),
+            proposer: self.kms_port.to_be_bytes().to_vec(),
             proof: vec![],
             executed_block_hash: vec![],
         };
@@ -264,7 +258,7 @@ impl Chain {
         let mut block_header_bytes = Vec::new();
         header.encode(&mut block_header_bytes);
 
-        if let Ok(block_hash) = hash_data(self.kms_port.clone(), 1, block_header_bytes).await {
+        if let Ok(block_hash) = hash_data(self.kms_port, 1, block_header_bytes).await {
             info!(
                 "add proposal 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
                 block_hash[0],
@@ -286,7 +280,7 @@ impl Chain {
                 origin: 0,
                 msg: block_bytes,
             };
-            let _ = broadcast_message(self.network_port.clone(), msg).await;
+            let _ = broadcast_message(self.network_port, msg).await;
         }
     }
 
@@ -327,7 +321,8 @@ impl Chain {
                                 return;
                             }
                         }
-                        candidate_chain_tx_hash.extend_from_slice(&block.to_owned().body.unwrap().tx_hashes);
+                        candidate_chain_tx_hash
+                            .extend_from_slice(&block.to_owned().body.unwrap().tx_hashes);
                         prevhash = block.to_owned().header.unwrap().prevhash;
                     } else {
                         // candidate_chain interrupted, so failed
@@ -336,8 +331,7 @@ impl Chain {
                     }
                 }
                 // if candidate_chain longer than original main_chain
-                if candidate_chain.len() > self.main_chain.len()
-                {
+                if candidate_chain.len() > self.main_chain.len() {
                     // replace the main_chain
                     candidate_chain.reverse();
                     self.main_chain = candidate_chain;
@@ -360,9 +354,7 @@ impl Chain {
 
                             // exec block
                             let executed_block_hash =
-                                exec_block(self.executor_port.clone(), block.clone())
-                                    .await
-                                    .unwrap();
+                                exec_block(self.executor_port, block.clone()).await.unwrap();
                             // get block header and block body
                             let mut block_header = block.header.unwrap();
                             let block_body = block.body.unwrap();
@@ -372,10 +364,9 @@ impl Chain {
                             // recompute block hash
                             let mut block_header_bytes = Vec::new();
                             block_header.encode(&mut block_header_bytes);
-                            let new_block_hash =
-                                hash_data(self.kms_port.clone(), 1, block_header_bytes)
-                                    .await
-                                    .unwrap();
+                            let new_block_hash = hash_data(self.kms_port, 1, block_header_bytes)
+                                .await
+                                .unwrap();
                             info!(
                                 "executed block {} hash: 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
                                 block_height,
@@ -389,7 +380,7 @@ impl Chain {
                             // region 4 : block_height - block hash
                             let key = block_height.to_be_bytes().to_vec();
                             store_data(
-                                self.storage_port.clone(),
+                                self.storage_port,
                                 4,
                                 key.clone(),
                                 new_block_hash.to_owned(),
@@ -399,18 +390,11 @@ impl Chain {
                             // region 3: block_height - block body
                             let mut block_body_bytes = Vec::new();
                             block_body.encode(&mut block_body_bytes);
-                            store_data(self.storage_port.clone(), 3, key.clone(), block_body_bytes)
-                                .await;
+                            store_data(self.storage_port, 3, key.clone(), block_body_bytes).await;
                             // region 2: block_height - block header
                             let mut block_header_bytes = Vec::new();
                             block_header.encode(&mut block_header_bytes);
-                            store_data(
-                                self.storage_port.clone(),
-                                2,
-                                key.clone(),
-                                block_header_bytes,
-                            )
-                            .await;
+                            store_data(self.storage_port, 2, key.clone(), block_header_bytes).await;
                             // region 1: tx_hash - tx
                             let tx_hash_list = block_body.tx_hashes;
                             {
@@ -430,17 +414,25 @@ impl Chain {
                                                 };
                                                 if ret {
                                                     // if sys_config changed, store utxo tx hash into global region
-                                                    let lock_id = utxo_tx.transaction.unwrap().lock_id;
+                                                    let lock_id =
+                                                        utxo_tx.transaction.unwrap().lock_id;
                                                     let key = lock_id.to_be_bytes().to_vec();
                                                     let tx_hash = utxo_tx.transaction_hash;
-                                                    store_data(self.storage_port.clone(), 0, key, tx_hash).await;
+                                                    store_data(self.storage_port, 0, key, tx_hash)
+                                                        .await;
 
-                                                    if lock_id == LOCK_ID_VALIDATORS || lock_id == LOCK_ID_BLOCK_INTERVAL {
+                                                    if lock_id == LOCK_ID_VALIDATORS
+                                                        || lock_id == LOCK_ID_BLOCK_INTERVAL
+                                                    {
                                                         let sys_config = {
                                                             let auth = self.auth.read().await;
                                                             auth.get_system_config()
                                                         };
-                                                        reconfigure(self.consensus_port.clone(), sys_config).await;
+                                                        reconfigure(
+                                                            self.consensus_port,
+                                                            sys_config,
+                                                        )
+                                                        .await;
                                                     }
                                                 }
                                             }
@@ -448,8 +440,7 @@ impl Chain {
 
                                         let mut raw_tx_bytes = Vec::new();
                                         raw_tx.encode(&mut raw_tx_bytes);
-                                        store_data(self.storage_port.clone(), 1, hash, raw_tx_bytes)
-                                            .await;
+                                        store_data(self.storage_port, 1, hash, raw_tx_bytes).await;
                                     }
                                 }
                             }
@@ -465,15 +456,10 @@ impl Chain {
                             }
 
                             // region 0: 0 - current height; 1 - current hash
+                            store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
+                                .await;
                             store_data(
-                                self.storage_port.clone(),
-                                0,
-                                0u64.to_be_bytes().to_vec(),
-                                key,
-                            )
-                            .await;
-                            store_data(
-                                self.storage_port.clone(),
+                                self.storage_port,
                                 0,
                                 1u64.to_be_bytes().to_vec(),
                                 new_block_hash.to_owned(),
