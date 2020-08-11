@@ -14,11 +14,11 @@
 
 use crate::util::{load_data, verify_tx_hash, verify_tx_signature};
 use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
-use cita_ng_proto::blockchain::{
+use cita_cloud_proto::blockchain::{
     CompactBlockBody, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
 };
-use cita_ng_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_ng_proto::controller::RawTransaction;
+use cita_cloud_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
+use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
 use std::collections::HashMap;
 

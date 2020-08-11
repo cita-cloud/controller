@@ -19,9 +19,9 @@ use crate::util::{
     reconfigure, store_data, unix_now,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
-use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
-use cita_ng_proto::network::NetworkMsg;
+use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
+use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::network::NetworkMsg;
 use log::{info, warn};
 use prost::Message;
 use std::collections::HashMap;

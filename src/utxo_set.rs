@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::blockchain::UnverifiedUtxoTransaction;
+use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use log::warn;
 use std::collections::HashMap;
 

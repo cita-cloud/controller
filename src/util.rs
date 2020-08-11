@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::consensus::{
+use cita_cloud_proto::consensus::{
     consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
 };
-use cita_ng_proto::executor::executor_service_client::ExecutorServiceClient;
-use cita_ng_proto::kms::{
+use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
+use cita_cloud_proto::kms::{
     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
     VerifyDataHashRequest,
 };
-use cita_ng_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
-use cita_ng_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
+use cita_cloud_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
+use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
 use log::info;
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_ng_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
+use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();

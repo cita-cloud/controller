@@ -28,7 +28,7 @@ const GIT_VERSION: &str = git_version!(
     args = ["--tags", "--always", "--dirty=-modified"],
     fallback = "unknown"
 );
-const GIT_HOMEPAGE: &str = "https://github.com/rink1969/cita_ng_controller";
+const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller_poc";
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -53,7 +53,7 @@ enum SubCommand {
 #[derive(Clap)]
 struct RunOpts {
     /// Sets grpc port of this service.
-    #[clap(short = "p", long = "port", default_value = "50004")]
+    #[clap(short = 'p', long = "port", default_value = "50004")]
     grpc_port: String,
 }
 
@@ -78,8 +78,8 @@ fn main() {
     }
 }
 
-use cita_ng_proto::network::network_service_client::NetworkServiceClient;
-use cita_ng_proto::network::RegisterInfo;
+use cita_cloud_proto::network::network_service_client::NetworkServiceClient;
+use cita_cloud_proto::network::RegisterInfo;
 
 async fn register_network_msg_handler(
     network_port: u16,
@@ -99,10 +99,10 @@ async fn register_network_msg_handler(
     Ok(response.into_inner().is_success)
 }
 
-use cita_ng_proto::blockchain::CompactBlock;
-use cita_ng_proto::common::{Empty, Hash, SimpleResponse};
-use cita_ng_proto::controller::SystemConfig as ProtoSystemConfig;
-use cita_ng_proto::controller::{
+use cita_cloud_proto::blockchain::CompactBlock;
+use cita_cloud_proto::common::{Empty, Hash, SimpleResponse};
+use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
+use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
     RawTransaction,
 };
@@ -262,7 +262,7 @@ impl RpcService for RPCServer {
     }
 }
 
-use cita_ng_proto::controller::{
+use cita_cloud_proto::controller::{
     consensus2_controller_service_server::Consensus2ControllerService,
     consensus2_controller_service_server::Consensus2ControllerServiceServer,
 };
@@ -322,7 +322,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     }
 }
 
-use cita_ng_proto::network::{
+use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
     network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
 };
@@ -368,7 +368,7 @@ use crate::utxo_set::{
     SystemConfig, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
-use cita_ng_proto::controller::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use prost::Message;
 use std::fs::File;
 use std::io::Read;

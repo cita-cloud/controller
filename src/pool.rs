@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_ng_proto::controller::RawTransaction;
+use cita_cloud_proto::controller::RawTransaction;
 use log::info;
 use rand::Rng;
 use std::collections::HashMap;
@@ -125,8 +125,8 @@ impl Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cita_ng_proto::blockchain::{Transaction, UnverifiedTransaction, Witness};
-    use cita_ng_proto::controller::{raw_transaction::Tx, RawTransaction};
+    use cita_cloud_proto::blockchain::{Transaction, UnverifiedTransaction, Witness};
+    use cita_cloud_proto::controller::{raw_transaction::Tx, RawTransaction};
 
     pub fn generate_tx(
         transaction_hash: Vec<u8>,
