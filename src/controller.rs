@@ -159,12 +159,17 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
-        let chain = self.chain.read().await;
-        if let Some(proposal) = chain.get_candidate_block_hash() {
-            Ok(proposal)
-        } else {
-            Err("get proposal error".to_owned())
+        {
+            let chain = self.chain.read().await;
+            if let Some(proposal) = chain.get_candidate_block_hash() {
+                return Ok(proposal);
+            }
         }
+
+        // there are no proposal, try to add it
+        let mut chain = self.chain.write().await;
+        chain.add_proposal().await;
+        Err("get proposal error".to_owned())
     }
 
     pub async fn chain_check_proposal(&self, proposal: &[u8]) -> Result<bool, String> {
