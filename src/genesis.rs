@@ -63,6 +63,7 @@ impl GenesisBlock {
         let genesis_block_hash;
         let mut interval = time::interval(Duration::from_secs(3));
         loop {
+            interval.tick().await;
             let ret = hash_data(kms_port, 1, block_header_bytes.clone()).await;
 
             if let Ok(block_hash) = ret {
@@ -70,7 +71,6 @@ impl GenesisBlock {
                 break;
             }
             warn!("hash block failed! Retrying");
-            interval.tick().await;
         }
         genesis_block_hash
     }

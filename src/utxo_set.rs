@@ -104,7 +104,7 @@ impl SystemConfig {
 
         if !is_init {
             if let Some(hash) = self.utxo_tx_hashes.get(&lock_id) {
-                if hash.to_owned() != pre_tx_hash {
+                if hash != &pre_tx_hash {
                     return false;
                 }
             } else {

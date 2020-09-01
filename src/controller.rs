@@ -36,6 +36,7 @@ pub struct Controller {
 }
 
 impl Controller {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         consensus_port: u16,
         network_port: u16,

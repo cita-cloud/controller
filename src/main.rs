@@ -397,6 +397,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(3));
         loop {
+            interval.tick().await;
             // register endpoint
             {
                 let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
@@ -406,7 +407,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             warn!("register network msg handler failed! Retrying");
-            interval.tick().await;
         }
     });
 
@@ -420,6 +420,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     let current_block_hash;
     let mut interval = time::interval(Duration::from_secs(3));
     loop {
+        interval.tick().await;
         {
             let ret = load_data(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
             if let Ok(current_block_number_bytes) = ret {
@@ -440,7 +441,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         warn!("get current block number failed! Retrying");
-        interval.tick().await;
     }
     info!("current block number: {}", current_block_number);
     info!("current block hash: {:?}", current_block_hash);
@@ -477,12 +477,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         loop {
+            interval.tick().await;
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
                 let _ = reconfigure(consensus_port, sys_config_clone.clone()).await;
             }
-            interval.tick().await;
         }
     });
 

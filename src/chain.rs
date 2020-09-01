@@ -48,6 +48,7 @@ pub struct Chain {
 }
 
 impl Chain {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         storage_port: u16,
         network_port: u16,
