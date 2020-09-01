@@ -15,10 +15,11 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    broadcast_message, exec_block, genesis_block, hash_data, load_data, print_main_chain,
-    reconfigure, store_data, unix_now,
+    broadcast_message, exec_block, hash_data, load_data, print_main_chain, reconfigure, store_data,
+    unix_now,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
+use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use cita_cloud_proto::network::NetworkMsg;
@@ -43,9 +44,11 @@ pub struct Chain {
     candidate_block: Option<(Vec<u8>, CompactBlock)>,
     pool: Arc<RwLock<Pool>>,
     auth: Arc<RwLock<Authentication>>,
+    genesis: GenesisBlock,
 }
 
 impl Chain {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         storage_port: u16,
         network_port: u16,
@@ -57,6 +60,7 @@ impl Chain {
         current_block_hash: Vec<u8>,
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
+        genesis: GenesisBlock,
     ) -> Self {
         let mut fork_tree = Vec::with_capacity(block_delay_number as usize * 2);
         for _ in 0..(block_delay_number as usize * 2) {
@@ -78,6 +82,7 @@ impl Chain {
             candidate_block: None,
             pool,
             auth,
+            genesis,
         }
     }
 
@@ -101,7 +106,8 @@ impl Chain {
                 .to_owned();
             Some(block)
         } else if block_number == 0 {
-            Some(genesis_block())
+            let genesis_block = self.genesis.genesis_block();
+            Some(genesis_block)
         } else {
             let block_header;
             {
@@ -156,12 +162,14 @@ impl Chain {
         }
 
         let mut block_header_bytes = Vec::new();
-        header.encode(&mut block_header_bytes);
+        header
+            .encode(&mut block_header_bytes)
+            .expect("encode block header failed");
 
         let ret = hash_data(self.kms_port, 1, block_header_bytes).await;
         if let Ok(block_hash) = ret {
             info!(
-                "add block 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                "add block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
                 block_hash[0],
                 block_hash[1],
                 block_hash[2],
@@ -229,7 +237,7 @@ impl Chain {
         };
         let height = self.block_number + self.main_chain.len() as u64 + 1;
         info!(
-            "proposal {} prevhash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+            "proposal {} prevhash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
             height,
             prevhash[0],
             prevhash[1],
@@ -256,11 +264,13 @@ impl Chain {
         };
 
         let mut block_header_bytes = Vec::new();
-        header.encode(&mut block_header_bytes);
+        header
+            .encode(&mut block_header_bytes)
+            .expect("encode block header failed");
 
         if let Ok(block_hash) = hash_data(self.kms_port, 1, block_header_bytes).await {
             info!(
-                "add proposal 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                "add proposal 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
                 block_hash[0],
                 block_hash[1],
                 block_hash[2],
@@ -273,7 +283,7 @@ impl Chain {
 
         {
             let mut block_bytes = Vec::new();
-            block.encode(&mut block_bytes);
+            block.encode(&mut block_bytes).expect("encode block failed");
             let msg = NetworkMsg {
                 module: "controller".to_owned(),
                 r#type: "block".to_owned(),
@@ -363,12 +373,14 @@ impl Chain {
                             block_header.executed_block_hash = executed_block_hash;
                             // recompute block hash
                             let mut block_header_bytes = Vec::new();
-                            block_header.encode(&mut block_header_bytes);
+                            block_header
+                                .encode(&mut block_header_bytes)
+                                .expect("encode block header failed");
                             let new_block_hash = hash_data(self.kms_port, 1, block_header_bytes)
                                 .await
                                 .unwrap();
                             info!(
-                                "executed block {} hash: 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+                                "executed block {} hash: 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
                                 block_height,
                                 new_block_hash[0],
                                 new_block_hash[1],
@@ -385,16 +397,25 @@ impl Chain {
                                 key.clone(),
                                 new_block_hash.to_owned(),
                             )
-                            .await;
+                            .await
+                            .expect("store_data failed");
 
                             // region 3: block_height - block body
                             let mut block_body_bytes = Vec::new();
-                            block_body.encode(&mut block_body_bytes);
-                            store_data(self.storage_port, 3, key.clone(), block_body_bytes).await;
+                            block_body
+                                .encode(&mut block_body_bytes)
+                                .expect("encode block body failed");
+                            store_data(self.storage_port, 3, key.clone(), block_body_bytes)
+                                .await
+                                .expect("store_data failed");
                             // region 2: block_height - block header
                             let mut block_header_bytes = Vec::new();
-                            block_header.encode(&mut block_header_bytes);
-                            store_data(self.storage_port, 2, key.clone(), block_header_bytes).await;
+                            block_header
+                                .encode(&mut block_header_bytes)
+                                .expect("encode block header failed");
+                            store_data(self.storage_port, 2, key.clone(), block_header_bytes)
+                                .await
+                                .expect("store_data failed");
                             // region 1: tx_hash - tx
                             let tx_hash_list = block_body.tx_hashes;
                             {
@@ -419,7 +440,8 @@ impl Chain {
                                                     let key = lock_id.to_be_bytes().to_vec();
                                                     let tx_hash = utxo_tx.transaction_hash;
                                                     store_data(self.storage_port, 0, key, tx_hash)
-                                                        .await;
+                                                        .await
+                                                        .expect("store_data failed");
 
                                                     if lock_id == LOCK_ID_VALIDATORS
                                                         || lock_id == LOCK_ID_BLOCK_INTERVAL
@@ -432,15 +454,20 @@ impl Chain {
                                                             self.consensus_port,
                                                             sys_config,
                                                         )
-                                                        .await;
+                                                        .await
+                                                        .expect("reconfigure failed");
                                                     }
                                                 }
                                             }
                                         }
 
                                         let mut raw_tx_bytes = Vec::new();
-                                        raw_tx.encode(&mut raw_tx_bytes);
-                                        store_data(self.storage_port, 1, hash, raw_tx_bytes).await;
+                                        raw_tx
+                                            .encode(&mut raw_tx_bytes)
+                                            .expect("encode raw_tx failed");
+                                        store_data(self.storage_port, 1, hash, raw_tx_bytes)
+                                            .await
+                                            .expect("store_data failed");
                                     }
                                 }
                             }
@@ -457,14 +484,16 @@ impl Chain {
 
                             // region 0: 0 - current height; 1 - current hash
                             store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
-                                .await;
+                                .await
+                                .expect("store_data failed");
                             store_data(
                                 self.storage_port,
                                 0,
                                 1u64.to_be_bytes().to_vec(),
                                 new_block_hash.to_owned(),
                             )
-                            .await;
+                            .await
+                            .expect("store_data failed");
                         }
                         self.block_number += finalized_blocks_number as u64;
                         self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();

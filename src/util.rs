@@ -26,7 +26,7 @@ use log::info;
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
+use cita_cloud_proto::blockchain::CompactBlock;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -156,7 +156,7 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     info!("main chain:");
     for (i, hash) in chain.iter().enumerate() {
         info!(
-            "height: {} hash 0x{:2x}{:2x}{:2x}..{:2x}{:2x}",
+            "height: {} hash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
             i as u64 + block_number + 1,
             hash[0],
             hash[1],
@@ -165,26 +165,4 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
             hash[hash.len() - 1]
         );
     }
-}
-
-pub fn genesis_block() -> CompactBlock {
-    let header = BlockHeader {
-        prevhash: vec![],
-        timestamp: 123_456,
-        height: 0,
-        transactions_root: vec![],
-        proposer: vec![],
-        proof: vec![],
-        executed_block_hash: vec![],
-    };
-    let body = CompactBlockBody { tx_hashes: vec![] };
-    CompactBlock {
-        version: 0,
-        header: Some(header),
-        body: Some(body),
-    }
-}
-
-pub fn genesis_block_hash() -> Vec<u8> {
-    vec![0u8; 32]
 }

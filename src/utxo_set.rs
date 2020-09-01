@@ -14,7 +14,42 @@
 
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use log::warn;
+use serde_derive::Deserialize;
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SystemConfigFile {
+    pub version: u32,
+    pub chain_id: String,
+    // address of admin
+    pub admin: String,
+    pub block_interval: u32,
+    pub validators: Vec<String>,
+}
+
+impl SystemConfigFile {
+    pub fn new(init_sys_config_str: &str) -> Self {
+        toml::from_str::<SystemConfigFile>(init_sys_config_str)
+            .expect("Error while parsing init_sys_config_str")
+    }
+
+    pub fn to_system_config(&self) -> SystemConfig {
+        let chain_id = hex::decode(&self.chain_id[2..]).expect("parsing chain_id failed!");
+        let admin = hex::decode(&self.admin[2..]).expect("parsing admin failed!");
+        let mut validators = Vec::new();
+        for validator_str in self.validators.iter() {
+            let validator = hex::decode(&validator_str[2..]).expect("parsing validator failed!");
+            validators.push(validator)
+        }
+        SystemConfig::new(
+            self.version,
+            chain_id,
+            admin,
+            self.block_interval,
+            validators,
+        )
+    }
+}
 
 // store related utxo tx hash into global region
 // begin from id 1000
@@ -38,18 +73,24 @@ pub const LOCK_ID_VALIDATORS: u64 = 1_004;
 pub const LOCK_ID_BUTTON: u64 = 1_005;
 
 impl SystemConfig {
-    pub fn new() -> Self {
+    pub fn new(
+        version: u32,
+        chain_id: Vec<u8>,
+        admin: Vec<u8>,
+        block_interval: u32,
+        validators: Vec<Vec<u8>>,
+    ) -> Self {
         let mut map = HashMap::new();
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             map.insert(id, vec![0u8; 33]);
         }
 
         SystemConfig {
-            version: 0,
-            chain_id: vec![0u8; 32],
-            admin: vec![0u8; 21],
-            block_interval: 6,
-            validators: vec![vec![0; 21], vec![1; 21]],
+            version,
+            chain_id,
+            admin,
+            block_interval,
+            validators,
             utxo_tx_hashes: map,
         }
     }
@@ -63,7 +104,7 @@ impl SystemConfig {
 
         if !is_init {
             if let Some(hash) = self.utxo_tx_hashes.get(&lock_id) {
-                if hash.to_owned() != pre_tx_hash {
+                if hash != &pre_tx_hash {
                     return false;
                 }
             } else {
@@ -128,4 +169,32 @@ fn u32_decode(data: Vec<u8>) -> u32 {
     let mut bytes: [u8; 4] = [0; 4];
     bytes[..4].clone_from_slice(&data[..4]);
     u32::from_be_bytes(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemConfigFile;
+
+    #[test]
+    fn basic_test() {
+        let toml_str = r#"
+        version = 0
+        chain_id = "0x010203040506"
+        admin = "0x060504030201"
+        block_interval = 6
+        validators = ["0x01010101", "0x02020202"]
+        "#;
+
+        let config = SystemConfigFile::new(toml_str);
+        let sys_config = config.to_system_config();
+
+        assert_eq!(sys_config.version, 0);
+        assert_eq!(sys_config.chain_id, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(sys_config.admin, vec![6, 5, 4, 3, 2, 1]);
+        assert_eq!(sys_config.block_interval, 6);
+        assert_eq!(
+            sys_config.validators,
+            vec![vec![1, 1, 1, 1], vec![2, 2, 2, 2]]
+        );
+    }
 }

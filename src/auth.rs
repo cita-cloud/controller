@@ -80,6 +80,7 @@ impl Authentication {
         }
     }
 
+    #[allow(clippy::ptr_arg)]
     fn check_tx_hash(&self, tx_hash: &Vec<u8>) -> Result<(), String> {
         for (_h, hash_list) in self.history_hashes.iter() {
             if hash_list.contains(tx_hash) {
