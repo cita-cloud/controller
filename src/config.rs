@@ -32,7 +32,7 @@ impl ControllerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::NetConfig;
+    use super::ControllerConfig;
 
     #[test]
     fn basic_test() {
