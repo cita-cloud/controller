@@ -101,7 +101,7 @@ async fn register_network_msg_handler(
 }
 
 use cita_cloud_proto::blockchain::CompactBlock;
-use cita_cloud_proto::common::{Empty, Hash, SimpleResponse};
+use cita_cloud_proto::common::{Empty, Hash, ProposalWithProof, SimpleResponse};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
@@ -311,15 +311,23 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 },
             )
     }
-    async fn commit_block(&self, request: Request<Hash>) -> Result<Response<Empty>, Status> {
+    async fn commit_block(
+        &self,
+        request: Request<ProposalWithProof>,
+    ) -> Result<Response<Empty>, Status> {
         info!("commit_block request: {:?}", request);
 
-        let hash = request.into_inner().hash;
+        let proposal_with_proof = request.into_inner();
+        let proposal = proposal_with_proof.proposal;
+        let proof = proposal_with_proof.proof;
 
-        self.controller.chain_commit_block(&hash).await.map_or_else(
-            |e| Err(Status::internal(e)),
-            |_| Ok(Response::new(Empty {})),
-        )
+        self.controller
+            .chain_commit_block(&proposal, &proof)
+            .await
+            .map_or_else(
+                |e| Err(Status::internal(e)),
+                |_| Ok(Response::new(Empty {})),
+            )
     }
 }
 

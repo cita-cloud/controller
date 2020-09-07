@@ -15,7 +15,7 @@ git-version = "*"
 tonic = "0.2"
 prost = "0.6"
 tokio = { version = "0.2", features = ["macros"] }
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "change_20200903" }
 futures-util = "*"
 rand = "*"
 toml = "*"

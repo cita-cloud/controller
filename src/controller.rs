@@ -182,9 +182,9 @@ impl Controller {
         Ok(ret)
     }
 
-    pub async fn chain_commit_block(&self, proposal: &[u8]) -> Result<(), String> {
+    pub async fn chain_commit_block(&self, proposal: &[u8], proof: &[u8]) -> Result<(), String> {
         let mut chain = self.chain.write().await;
-        chain.commit_block(proposal).await;
+        chain.commit_block(proposal, proof).await;
         Ok(())
     }
 

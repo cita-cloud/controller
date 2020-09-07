@@ -40,8 +40,6 @@ impl GenesisBlock {
             height: 0,
             transactions_root: vec![0u8; 32],
             proposer: vec![0u8; 32],
-            proof: vec![0u8; 32],
-            executed_block_hash: vec![0u8; 32],
         };
         let body = CompactBlockBody { tx_hashes: vec![] };
         CompactBlock {
