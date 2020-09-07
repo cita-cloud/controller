@@ -16,6 +16,7 @@ mod auth;
 mod chain;
 mod config;
 mod controller;
+mod genesis;
 mod pool;
 mod util;
 mod utxo_set;
@@ -100,7 +101,7 @@ async fn register_network_msg_handler(
 }
 
 use cita_cloud_proto::blockchain::CompactBlock;
-use cita_cloud_proto::common::{Empty, Hash, SimpleResponse};
+use cita_cloud_proto::common::{Empty, Hash, ProposalWithProof, SimpleResponse};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
@@ -310,15 +311,23 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 },
             )
     }
-    async fn commit_block(&self, request: Request<Hash>) -> Result<Response<Empty>, Status> {
+    async fn commit_block(
+        &self,
+        request: Request<ProposalWithProof>,
+    ) -> Result<Response<Empty>, Status> {
         info!("commit_block request: {:?}", request);
 
-        let hash = request.into_inner().hash;
+        let proposal_with_proof = request.into_inner();
+        let proposal = proposal_with_proof.proposal;
+        let proof = proposal_with_proof.proof;
 
-        self.controller.chain_commit_block(&hash).await.map_or_else(
-            |e| Err(Status::internal(e)),
-            |_| Ok(Response::new(Empty {})),
-        )
+        self.controller
+            .chain_commit_block(&proposal, &proof)
+            .await
+            .map_or_else(
+                |e| Err(Status::internal(e)),
+                |_| Ok(Response::new(Empty {})),
+            )
     }
 }
 
@@ -363,12 +372,13 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
-use crate::util::{genesis_block_hash, load_data, reconfigure};
+use crate::util::{load_data, reconfigure};
 use crate::utxo_set::{
-    SystemConfig, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
+    SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
 use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
+use genesis::GenesisBlock;
 use prost::Message;
 use std::fs::File;
 use std::io::Read;
@@ -395,6 +405,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(3));
         loop {
+            interval.tick().await;
             // register endpoint
             {
                 let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
@@ -404,14 +415,20 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             warn!("register network msg handler failed! Retrying");
-            interval.tick().await;
         }
     });
 
+    // load genesis.toml
+    let mut buffer = String::new();
+    File::open("genesis.toml")
+        .and_then(|mut f| f.read_to_string(&mut buffer))
+        .unwrap_or_else(|err| panic!("Error while loading genesis.toml: [{}]", err));
+    let genesis = GenesisBlock::new(&buffer);
     let current_block_number;
     let current_block_hash;
     let mut interval = time::interval(Duration::from_secs(3));
     loop {
+        interval.tick().await;
         {
             let ret = load_data(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
             if let Ok(current_block_number_bytes) = ret {
@@ -419,7 +436,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                 if current_block_number_bytes.is_empty() {
                     info!("this is a new chain!");
                     current_block_number = 0u64;
-                    current_block_hash = genesis_block_hash();
+                    current_block_hash = genesis.genesis_block_hash(kms_port).await;
                 } else {
                     info!("this is an old chain!");
                     let mut bytes: [u8; 8] = [0; 8];
@@ -432,12 +449,16 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         warn!("get current block number failed! Retrying");
-        interval.tick().await;
     }
     info!("current block number: {}", current_block_number);
     info!("current block hash: {:?}", current_block_hash);
 
-    let mut sys_config = SystemConfig::new();
+    // load initial sys_config
+    let mut buffer = String::new();
+    File::open("init_sys_config.toml")
+        .and_then(|mut f| f.read_to_string(&mut buffer))
+        .unwrap_or_else(|err| panic!("Error while loading init_sys_config.toml: [{}]", err));
+    let mut sys_config = SystemConfigFile::new(&buffer).to_system_config();
     if current_block_number != 0 {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
@@ -464,12 +485,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         loop {
+            interval.tick().await;
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
                 let _ = reconfigure(consensus_port, sys_config_clone.clone()).await;
             }
-            interval.tick().await;
         }
     });
 
@@ -483,6 +504,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         current_block_number,
         current_block_hash,
         sys_config,
+        genesis,
     );
 
     controller.init(current_block_number).await;

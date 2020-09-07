@@ -15,8 +15,9 @@
 use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
-use crate::util::{broadcast_message, genesis_block, load_data};
+use crate::util::{broadcast_message, load_data};
 use crate::utxo_set::SystemConfig;
+use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::CompactBlock;
 use cita_cloud_proto::controller::RawTransaction;
 use cita_cloud_proto::network::NetworkMsg;
@@ -35,6 +36,7 @@ pub struct Controller {
 }
 
 impl Controller {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         consensus_port: u16,
         network_port: u16,
@@ -45,6 +47,7 @@ impl Controller {
         current_block_number: u64,
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
+        genesis: GenesisBlock,
     ) -> Self {
         let auth = Arc::new(RwLock::new(Authentication::new(
             kms_port,
@@ -63,6 +66,7 @@ impl Controller {
             current_block_hash,
             pool.clone(),
             auth.clone(),
+            genesis,
         )));
         Controller {
             network_port,
@@ -118,7 +122,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, _hash: Vec<u8>) -> Result<CompactBlock, String> {
-        Ok(genesis_block())
+        Err("unimplemented".to_owned())
     }
 
     pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, String> {
@@ -178,9 +182,9 @@ impl Controller {
         Ok(ret)
     }
 
-    pub async fn chain_commit_block(&self, proposal: &[u8]) -> Result<(), String> {
+    pub async fn chain_commit_block(&self, proposal: &[u8], proof: &[u8]) -> Result<(), String> {
         let mut chain = self.chain.write().await;
-        chain.commit_block(proposal).await;
+        chain.commit_block(proposal, proof).await;
         Ok(())
     }
 
