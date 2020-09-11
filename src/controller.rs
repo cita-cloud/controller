@@ -228,6 +228,97 @@ impl Controller {
                     Err("Decode block failed".to_owned())
                 }
             }
+            "new_status" => {
+                let origin = msg.origin;
+                let bytes = msg.msg;
+
+                let bytes_len = bytes.len();
+                if bytes_len != 8 {
+                    return Err("new_status bad bytes length".to_owned());
+                }
+
+                let mut block_number_bytes: [u8; 8] = [0; 8];
+                block_number_bytes[..8].clone_from_slice(&bytes[..8]);
+                let block_number = u64::from_be_bytes(block_number_bytes);
+
+                info!(
+                    "get new status from {}, block number is {}",
+                    origin, block_number
+                );
+                {
+                    let mut chain = self.chain.write().await;
+                    chain.update_new_status(origin, block_number).await;
+                }
+                Ok(())
+            }
+            "sync_req" => {
+                let origin = msg.origin;
+                let bytes = msg.msg;
+
+                let bytes_len = bytes.len();
+                if bytes_len != 16 {
+                    return Err("sync_req bad bytes length".to_owned());
+                }
+
+                let mut temp_bytes: [u8; 8] = [0; 8];
+                // parse from_block_number
+                temp_bytes[..8].clone_from_slice(&bytes[..8]);
+                let from_block_number = u64::from_be_bytes(temp_bytes);
+                // parse to_block_number
+                temp_bytes[..8].clone_from_slice(&bytes[8..16]);
+                let to_block_number = u64::from_be_bytes(temp_bytes);
+
+                info!(
+                    "get sync req from {}, block number from {} to {}",
+                    origin, from_block_number, to_block_number
+                );
+                {
+                    let chain = self.chain.read().await;
+                    chain
+                        .proc_sync_req(origin, from_block_number, to_block_number)
+                        .await;
+                }
+                Ok(())
+            }
+            "sync_resp" => {
+                let origin = msg.origin;
+                let bytes = msg.msg;
+                let bytes_len = bytes.len();
+                if bytes_len <= 24 {
+                    return Err("sync_resp bad bytes length".to_owned());
+                }
+
+                let mut len_bytes: [u8; 8] = [0; 8];
+                // parse header_len
+                len_bytes[..8].clone_from_slice(&bytes[..8]);
+                let header_len = usize::from_be_bytes(len_bytes);
+                // parse body_len
+                len_bytes[..8].clone_from_slice(&bytes[8..16]);
+                let body_len = usize::from_be_bytes(len_bytes);
+                // parse proof_len
+                len_bytes[..8].clone_from_slice(&bytes[16..24]);
+                let proof_len = usize::from_be_bytes(len_bytes);
+
+                if bytes_len != 24 + header_len + body_len + proof_len {
+                    return Err("sync_resp bad bytes total length".to_owned());
+                }
+
+                let mut start: usize = 24;
+                let header_slice = &bytes[start..start + header_len];
+                start += header_len;
+                let body_slice = &bytes[start..start + body_len];
+                start += body_len;
+                let proof_slice = &bytes[start..start + proof_len];
+
+                info!("get sync resp from {}", origin);
+                {
+                    let mut chain = self.chain.write().await;
+                    chain
+                        .proc_sync_resp(header_slice, body_slice, proof_slice)
+                        .await;
+                }
+                Ok(())
+            }
             _ => {
                 panic!("unknown network message");
             }

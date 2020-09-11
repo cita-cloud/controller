@@ -27,6 +27,7 @@ use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::blockchain::CompactBlock;
+use cita_cloud_proto::common::ProposalWithProof;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -46,6 +47,20 @@ pub async fn reconfigure(
     });
 
     let response = client.reconfigure(request).await?;
+    Ok(response.into_inner().is_success)
+}
+
+pub async fn check_block(
+    consensus_port: u16,
+    proposal: Vec<u8>,
+    proof: Vec<u8>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
+    let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
+
+    let request = Request::new(ProposalWithProof { proposal, proof });
+
+    let response = client.check_block(request).await?;
     Ok(response.into_inner().is_success)
 }
 
@@ -93,6 +108,19 @@ pub async fn broadcast_message(
     let request = Request::new(msg);
 
     let _ = client.broadcast(request).await?;
+    Ok(())
+}
+
+pub async fn send_message(
+    network_port: u16,
+    msg: NetworkMsg,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let network_addr = format!("http://127.0.0.1:{}", network_port);
+    let mut client = NetworkServiceClient::connect(network_addr).await?;
+
+    let request = Request::new(msg);
+
+    let _ = client.send_msg(request).await?;
     Ok(())
 }
 
