@@ -66,8 +66,9 @@ impl Chain {
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
     ) -> Self {
-        let mut fork_tree = Vec::with_capacity(block_delay_number as usize * 2);
-        for _ in 0..(block_delay_number as usize * 2) {
+        let fork_tree_size = (block_delay_number + 2) as usize;
+        let mut fork_tree = Vec::with_capacity(fork_tree_size);
+        for _ in 0..=fork_tree_size {
             fork_tree.push(HashMap::new());
         }
 
@@ -408,7 +409,7 @@ impl Chain {
             return;
         }
 
-        if block_height - self.block_number > self.block_delay_number as u64 * 2 {
+        if block_height - self.block_number > (self.block_delay_number + 2) as u64 {
             warn!("block_height {} too high", block_height);
             return;
         }
@@ -441,7 +442,7 @@ impl Chain {
         // if we are no lucky, all tx is dup, try again
         for _ in 0..6 {
             let tx_hash_list = {
-                let mut pool = self.pool.write().await;
+                let pool = self.pool.read().await;
                 pool.package()
             };
 
@@ -529,6 +530,8 @@ impl Chain {
             );
             self.candidate_block = Some((block_hash.clone(), block.clone()));
             self.fork_tree[self.main_chain.len()].insert(block_hash, (block.clone(), None));
+        } else {
+            warn!("add proposal hash_data failed");
         }
 
         {
@@ -540,7 +543,9 @@ impl Chain {
                 origin: 0,
                 msg: block_bytes,
             };
-            let _ = broadcast_message(self.network_port, msg).await;
+            if let Err(e) = broadcast_message(self.network_port, msg).await {
+                warn!("broadcast block failed: `{}`", &e);
+            }
         }
     }
 

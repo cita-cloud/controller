@@ -103,8 +103,10 @@ impl Controller {
             auth.check_raw_tx(raw_tx.clone()).await?
         };
 
-        let mut pool = self.pool.write().await;
-        let is_ok = pool.enqueue(raw_tx.clone(), tx_hash.clone());
+        let is_ok = {
+            let mut pool = self.pool.write().await;
+            pool.enqueue(raw_tx.clone(), tx_hash.clone())
+        };
         if is_ok {
             let mut raw_tx_bytes: Vec<u8> = Vec::new();
             let _ = raw_tx.encode(&mut raw_tx_bytes);
@@ -114,7 +116,9 @@ impl Controller {
                 origin: 0,
                 msg: raw_tx_bytes,
             };
-            let _ = broadcast_message(self.network_port, msg).await;
+            if let Err(e) = broadcast_message(self.network_port, msg).await {
+                warn!("send raw tx broadcast failed: `{}`", e);
+            }
             Ok(tx_hash)
         } else {
             Err("dup".to_owned())

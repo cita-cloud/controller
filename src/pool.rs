@@ -87,7 +87,7 @@ impl Pool {
         self.update_low_bound()
     }
 
-    pub fn package(&mut self) -> Vec<Vec<u8>> {
+    pub fn package(&self) -> Vec<Vec<u8>> {
         let mut tx_hash_list = Vec::new();
 
         let max_begin = self.order.saturating_sub(self.package_limit as u64);
