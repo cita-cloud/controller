@@ -15,8 +15,8 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    broadcast_message, exec_block, hash_data, load_data, print_main_chain, reconfigure, store_data,
-    unix_now,
+    broadcast_message, check_block, exec_block, hash_data, load_data, print_main_chain,
+    reconfigure, send_message, store_data, unix_now,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -38,6 +38,9 @@ pub struct Chain {
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
+    // hashmap for each index
+    // key of hashmap is block_hash
+    // value of hashmap is (block, proof)
     #[allow(clippy::type_complexity)]
     fork_tree: Vec<HashMap<Vec<u8>, (CompactBlock, Option<Vec<u8>>)>>,
     main_chain: Vec<Vec<u8>>,
@@ -93,6 +96,254 @@ impl Chain {
             self.block_number + self.main_chain.len() as u64
         } else {
             self.block_number
+        }
+    }
+
+    pub async fn update_new_status(&mut self, origin: u64, block_number: u64) {
+        if block_number > (self.block_number + 3) {
+            // start to sync
+            // msg is two u64, means from self.block_number + 1 to block_number
+            info!(
+                "start sync from {} to {}",
+                self.block_number + 1,
+                block_number
+            );
+            let mut bytes = (self.block_number + 1).to_be_bytes().to_vec();
+            bytes.extend_from_slice(&block_number.to_be_bytes().to_vec());
+            let msg = NetworkMsg {
+                module: "controller".to_owned(),
+                r#type: "sync_req".to_owned(),
+                origin,
+                msg: bytes,
+            };
+            let _ = send_message(self.network_port, msg).await;
+        }
+    }
+
+    pub async fn proc_sync_req(&self, origin: u64, from: u64, to: u64) {
+        for i in from..(to + 1) {
+            let block_header_bytes = {
+                let ret = load_data(self.storage_port, 2, i.to_be_bytes().to_vec()).await;
+                if ret.is_err() {
+                    warn!("load block header failed");
+                    return;
+                }
+                ret.unwrap()
+            };
+
+            let block_body_bytes = {
+                let ret = load_data(self.storage_port, 3, i.to_be_bytes().to_vec()).await;
+                if ret.is_err() {
+                    warn!("load block body failed");
+                    return;
+                }
+                ret.unwrap()
+            };
+
+            let proof_bytes = {
+                let ret = load_data(self.storage_port, 5, i.to_be_bytes().to_vec()).await;
+                if ret.is_err() {
+                    warn!("load proof failed");
+                    return;
+                }
+                ret.unwrap()
+            };
+
+            let header_len = block_header_bytes.len();
+            let body_len = block_body_bytes.len();
+            let proof_len = proof_bytes.len();
+
+            let mut bytes = header_len.to_be_bytes().to_vec();
+            bytes.extend_from_slice(&body_len.to_be_bytes().to_vec());
+            bytes.extend_from_slice(&proof_len.to_be_bytes().to_vec());
+            bytes.extend_from_slice(&block_header_bytes);
+            bytes.extend_from_slice(&block_body_bytes);
+            bytes.extend_from_slice(&proof_bytes);
+
+            let msg = NetworkMsg {
+                module: "controller".to_owned(),
+                r#type: "sync_resp".to_owned(),
+                origin,
+                msg: bytes,
+            };
+            let _ = send_message(self.network_port, msg).await;
+        }
+    }
+
+    pub async fn proc_sync_resp(
+        &mut self,
+        header_slice: &[u8],
+        body_slice: &[u8],
+        proof_slice: &[u8],
+    ) {
+        let ret = BlockHeader::decode(header_slice);
+        if ret.is_err() {
+            return;
+        }
+        let block_header = ret.unwrap();
+
+        let ret = CompactBlockBody::decode(body_slice);
+        if ret.is_err() {
+            return;
+        }
+        let block_body = ret.unwrap();
+
+        let height = block_header.height;
+        let prevhash = block_header.prevhash;
+        if height != self.block_number + 1 || prevhash != self.block_hash {
+            return;
+        }
+
+        let block_hash = {
+            let ret = hash_data(self.kms_port, 1, header_slice.to_owned()).await;
+            if ret.is_err() {
+                return;
+            }
+            ret.unwrap()
+        };
+
+        {
+            let ret = check_block(
+                self.consensus_port,
+                block_hash.clone(),
+                proof_slice.to_owned(),
+            )
+            .await;
+            if ret.is_err() || !ret.unwrap() {
+                return;
+            }
+        }
+
+        // finalized block
+        let key = height.to_be_bytes().to_vec();
+
+        // region 5 : block_height - proof
+        store_data(self.storage_port, 5, key.clone(), proof_slice.to_owned())
+            .await
+            .expect("store proof failed");
+
+        // region 4 : block_height - block hash
+        store_data(self.storage_port, 4, key.clone(), block_hash.clone())
+            .await
+            .expect("store_data failed");
+
+        // region 3: block_height - block body
+        store_data(self.storage_port, 3, key.clone(), body_slice.to_owned())
+            .await
+            .expect("store_data failed");
+
+        // region 2: block_height - block header
+        store_data(self.storage_port, 2, key.clone(), header_slice.to_owned())
+            .await
+            .expect("store_data failed");
+
+        // region 1: tx_hash - tx
+        let tx_hash_list = block_body.tx_hashes;
+        {
+            let pool = self.pool.read().await;
+            for hash in tx_hash_list.clone() {
+                // get tx from pool maybe failed
+                // we didn't check txs dup with pre blocks
+                // so there will be dup tx in different blocks
+                // tx maybe has been removed by pre block
+                if let Some(raw_tx) = pool.get_tx(&hash) {
+                    // if tx is utxo tx, update sys_config
+                    {
+                        if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
+                            let ret = {
+                                let mut auth = self.auth.write().await;
+                                auth.update_system_config(&utxo_tx)
+                            };
+                            if ret {
+                                // if sys_config changed, store utxo tx hash into global region
+                                let lock_id = utxo_tx.transaction.unwrap().lock_id;
+                                let key = lock_id.to_be_bytes().to_vec();
+                                let tx_hash = utxo_tx.transaction_hash;
+                                store_data(self.storage_port, 0, key, tx_hash)
+                                    .await
+                                    .expect("store_data failed");
+
+                                if lock_id == LOCK_ID_VALIDATORS
+                                    || lock_id == LOCK_ID_BLOCK_INTERVAL
+                                {
+                                    let sys_config = {
+                                        let auth = self.auth.read().await;
+                                        auth.get_system_config()
+                                    };
+                                    reconfigure(self.consensus_port, sys_config)
+                                        .await
+                                        .expect("reconfigure failed");
+                                }
+                            }
+                        }
+                    }
+
+                    let mut raw_tx_bytes = Vec::new();
+                    raw_tx
+                        .encode(&mut raw_tx_bytes)
+                        .expect("encode raw_tx failed");
+                    store_data(self.storage_port, 1, hash, raw_tx_bytes)
+                        .await
+                        .expect("store_data failed");
+                } else {
+                    warn!("get tx from pool failed");
+                }
+            }
+        }
+
+        // update pool
+        {
+            let mut pool = self.pool.write().await;
+            pool.update(tx_hash_list.clone());
+        }
+        {
+            let mut auth = self.auth.write().await;
+            auth.insert_tx_hash(height, tx_hash_list.clone());
+        }
+
+        // region 0: 0 - current height; 1 - current hash
+        store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
+            .await
+            .expect("store_data failed");
+        store_data(
+            self.storage_port,
+            0,
+            1u64.to_be_bytes().to_vec(),
+            block_hash.clone(),
+        )
+        .await
+        .expect("store_data failed");
+
+        self.block_number += 1;
+        self.block_hash = block_hash;
+        if !self.main_chain.is_empty() {
+            self.main_chain = self.main_chain.split_off(1);
+        }
+        // update main_chain_tx_hash
+        self.main_chain_tx_hash = self
+            .main_chain_tx_hash
+            .iter()
+            .cloned()
+            .filter(|hash| !tx_hash_list.contains(hash))
+            .collect();
+        self.fork_tree = self.fork_tree.split_off(1);
+        self.fork_tree
+            .resize(self.block_delay_number as usize * 2, HashMap::new());
+
+        // broadcast new status
+        {
+            let block_number = self.block_number;
+            // let block_hash = &self.block_hash;
+
+            let bytes = block_number.to_be_bytes().to_vec();
+            // bytes.extend_from_slice(block_hash);
+            let msg = NetworkMsg {
+                module: "controller".to_owned(),
+                r#type: "new_status".to_owned(),
+                origin: 0,
+                msg: bytes,
+            };
+            let _ = broadcast_message(self.network_port, msg).await;
         }
     }
 
@@ -509,7 +760,23 @@ impl Chain {
                             .collect();
                         self.fork_tree = self.fork_tree.split_off(finalized_blocks_number);
                         self.fork_tree
-                            .resize((self.block_delay_number + 2) as usize, HashMap::new());
+                            .resize(self.block_delay_number as usize * 2, HashMap::new());
+
+                        // broadcast new status
+                        {
+                            let block_number = self.block_number;
+                            // let block_hash = &self.block_hash;
+
+                            let bytes = block_number.to_be_bytes().to_vec();
+                            // bytes.extend_from_slice(block_hash);
+                            let msg = NetworkMsg {
+                                module: "controller".to_owned(),
+                                r#type: "new_status".to_owned(),
+                                origin: 0,
+                                msg: bytes,
+                            };
+                            let _ = broadcast_message(self.network_port, msg).await;
+                        }
                     }
                 }
                 break;
