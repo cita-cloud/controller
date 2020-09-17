@@ -28,6 +28,10 @@ use tonic::Request;
 use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::blockchain::CompactBlock;
 use cita_cloud_proto::common::ProposalWithProof;
+use cita_cloud_proto::controller::RawTransaction;
+use prost::Message;
+use std::path::Path;
+use tokio::fs;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -193,4 +197,75 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
             hash[hash.len() - 1]
         );
     }
+}
+
+pub async fn write_tx(tx_hash: &[u8], data: &[u8]) {
+    let filename = hex::encode(tx_hash);
+
+    let root_path = Path::new(".");
+    let file_path = root_path.join("txs").join(filename);
+    let _ = fs::write(file_path, data).await;
+}
+
+pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
+    let filename = hex::encode(tx_hash);
+    let root_path = Path::new(".");
+    let file_path = root_path.join("txs").join(filename);
+
+    file_path.exists()
+}
+
+pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
+    let filename = hex::encode(tx_hash);
+    let root_path = Path::new(".");
+    let tx_path = root_path.join("txs").join(filename);
+
+    let ret = fs::read(tx_path).await;
+    if ret.is_err() {
+        return None;
+    }
+    let content = ret.unwrap();
+    let ret = RawTransaction::decode(content.as_slice());
+    if ret.is_err() {
+        return None;
+    }
+    Some(ret.unwrap())
+}
+
+pub async fn remove_tx(filename: &str) {
+    let root_path = Path::new(".");
+    let tx_path = root_path.join("txs").join(filename);
+    let _ = fs::remove_file(tx_path).await;
+}
+
+pub async fn write_block(block_hash: &[u8], data: &[u8]) {
+    let filename = hex::encode(block_hash);
+
+    let root_path = Path::new(".");
+    let block_path = root_path.join("blocks").join(filename);
+    let _ = fs::write(block_path, data).await;
+}
+
+pub async fn get_block(block_hash: &[u8]) -> Option<CompactBlock> {
+    let filename = hex::encode(block_hash);
+    let root_path = Path::new(".");
+    let block_path = root_path.join("blocks").join(filename);
+
+    let ret = fs::read(block_path).await;
+    if ret.is_err() {
+        return None;
+    }
+    let content = ret.unwrap();
+    let ret = CompactBlock::decode(content.as_slice());
+    if ret.is_err() {
+        return None;
+    }
+    Some(ret.unwrap())
+}
+
+pub async fn remove_block(filename: &str) {
+    let root_path = Path::new(".");
+    let block_path = root_path.join("blocks").join(filename);
+
+    let _ = fs::remove_file(block_path).await;
 }

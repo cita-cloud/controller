@@ -15,8 +15,8 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    broadcast_message, check_block, exec_block, hash_data, load_data, print_main_chain,
-    reconfigure, send_message, store_data, unix_now,
+    broadcast_message, check_block, exec_block, get_tx, hash_data, load_data, print_main_chain,
+    reconfigure, send_message, store_data, unix_now, write_block,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -240,13 +240,12 @@ impl Chain {
         // region 1: tx_hash - tx
         let tx_hash_list = block_body.tx_hashes;
         {
-            let pool = self.pool.read().await;
             for hash in tx_hash_list.clone() {
                 // get tx from pool maybe failed
                 // we didn't check txs dup with pre blocks
                 // so there will be dup tx in different blocks
                 // tx maybe has been removed by pre block
-                if let Some(raw_tx) = pool.get_tx(&hash) {
+                if let Some(raw_tx) = get_tx(&hash).await {
                     // if tx is utxo tx, update sys_config
                     {
                         if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
@@ -277,16 +276,8 @@ impl Chain {
                             }
                         }
                     }
-
-                    let mut raw_tx_bytes = Vec::new();
-                    raw_tx
-                        .encode(&mut raw_tx_bytes)
-                        .expect("encode raw_tx failed");
-                    store_data(self.storage_port, 1, hash, raw_tx_bytes)
-                        .await
-                        .expect("store_data failed");
                 } else {
-                    warn!("get tx from pool failed");
+                    panic!("get tx failed");
                 }
             }
         }
@@ -440,7 +431,7 @@ impl Chain {
         info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
         let mut filtered_tx_hash_list = Vec::new();
         // if we are no lucky, all tx is dup, try again
-        for _ in 0..6 {
+        for _ in 0..6usize {
             let tx_hash_list = {
                 let pool = self.pool.read().await;
                 pool.package()
@@ -519,33 +510,16 @@ impl Chain {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        if let Ok(block_hash) = hash_data(self.kms_port, 1, block_header_bytes).await {
-            info!(
-                "add proposal 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
-                block_hash[0],
-                block_hash[1],
-                block_hash[2],
-                block_hash[block_hash.len() - 2],
-                block_hash[block_hash.len() - 1]
-            );
-            self.candidate_block = Some((block_hash.clone(), block.clone()));
-            self.fork_tree[self.main_chain.len()].insert(block_hash, (block.clone(), None));
-        } else {
-            warn!("add proposal hash_data failed");
-        }
+        let block_hash = hash_data(self.kms_port, 1, block_header_bytes)
+            .await
+            .expect("hash data failed");
+        self.candidate_block = Some((block_hash.clone(), block.clone()));
+        self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
 
         {
             let mut block_bytes = Vec::new();
             block.encode(&mut block_bytes).expect("encode block failed");
-            let msg = NetworkMsg {
-                module: "controller".to_owned(),
-                r#type: "block".to_owned(),
-                origin: 0,
-                msg: block_bytes,
-            };
-            if let Err(e) = broadcast_message(self.network_port, msg).await {
-                warn!("broadcast block failed: `{}`", &e);
-            }
+            write_block(&block_hash, &block_bytes).await;
         }
     }
 
@@ -670,13 +644,12 @@ impl Chain {
                             // region 1: tx_hash - tx
                             let tx_hash_list = block_body.tx_hashes;
                             {
-                                let pool = self.pool.read().await;
                                 for hash in tx_hash_list.clone() {
                                     // get tx from pool maybe failed
                                     // we didn't check txs dup with pre blocks
                                     // so there will be dup tx in different blocks
                                     // tx maybe has been removed by pre block
-                                    if let Some(raw_tx) = pool.get_tx(&hash) {
+                                    if let Some(raw_tx) = get_tx(&hash).await {
                                         // if tx is utxo tx, update sys_config
                                         {
                                             if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
