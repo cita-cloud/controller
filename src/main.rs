@@ -380,17 +380,14 @@ use crate::utxo_set::{
 use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
 use prost::Message;
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 use std::time::Duration;
 use tokio::time;
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     // read consensus-config.toml
-    let mut buffer = String::new();
-    File::open("controller-config.toml")
-        .and_then(|mut f| f.read_to_string(&mut buffer))
+    let buffer = fs::read_to_string("controller-config.toml")
         .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
     let config = ControllerConfig::new(&buffer);
 
@@ -419,9 +416,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // load genesis.toml
-    let mut buffer = String::new();
-    File::open("genesis.toml")
-        .and_then(|mut f| f.read_to_string(&mut buffer))
+    let buffer = fs::read_to_string("genesis.toml")
         .unwrap_or_else(|err| panic!("Error while loading genesis.toml: [{}]", err));
     let genesis = GenesisBlock::new(&buffer);
     let current_block_number;
@@ -454,10 +449,9 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     info!("current block hash: {:?}", current_block_hash);
 
     // load initial sys_config
-    let mut buffer = String::new();
-    File::open("init_sys_config.toml")
-        .and_then(|mut f| f.read_to_string(&mut buffer))
+    let buffer = fs::read_to_string("init_sys_config.toml")
         .unwrap_or_else(|err| panic!("Error while loading init_sys_config.toml: [{}]", err));
+
     let mut sys_config = SystemConfigFile::new(&buffer).to_system_config();
     if current_block_number != 0 {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
