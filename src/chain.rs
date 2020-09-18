@@ -16,7 +16,7 @@ use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
     broadcast_message, check_block, check_tx_exists, exec_block, get_tx, hash_data, load_data,
-    print_main_chain, reconfigure, send_message, store_data, unix_now, write_block,
+    print_main_chain, reconfigure, remove_block, send_message, store_data, unix_now, write_block,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -317,7 +317,14 @@ impl Chain {
             .cloned()
             .filter(|hash| !tx_hash_list.contains(hash))
             .collect();
-        self.fork_tree = self.fork_tree.split_off(1);
+        let new_fork_tree = self.fork_tree.split_off(1);
+        for map in self.fork_tree.iter() {
+            for (block_hash, _) in map.iter() {
+                let filename = hex::encode(&block_hash);
+                remove_block(&filename).await;
+            }
+        }
+        self.fork_tree = new_fork_tree;
         self.fork_tree
             .resize(self.block_delay_number as usize * 2, HashMap::new());
 
@@ -732,7 +739,14 @@ impl Chain {
                             .cloned()
                             .filter(|hash| !finalized_tx_hash_list.contains(hash))
                             .collect();
-                        self.fork_tree = self.fork_tree.split_off(finalized_blocks_number);
+                        let new_fork_tree = self.fork_tree.split_off(finalized_blocks_number);
+                        for map in self.fork_tree.iter() {
+                            for (block_hash, _) in map.iter() {
+                                let filename = hex::encode(&block_hash);
+                                remove_block(&filename).await;
+                            }
+                        }
+                        self.fork_tree = new_fork_tree;
                         self.fork_tree
                             .resize(self.block_delay_number as usize * 2, HashMap::new());
 

@@ -144,9 +144,17 @@ impl Controller {
                                                 let mut chain = c.chain.write().await;
                                                 chain.add_block(block).await;
                                                 continue;
+                                            } else {
+                                                warn!("find tx failed");
                                             }
+                                        } else {
+                                            warn!("get block_body failed");
                                         }
+                                    } else {
+                                        warn!("get_block failed");
                                     }
+                                } else {
+                                    warn!("decode filename failed {}", &event.filename);
                                 }
                                 // any failed delete the block file
                                 warn!("sync block invalid");

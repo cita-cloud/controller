@@ -117,7 +117,7 @@ impl Notifier {
         let mut wds = Vec::new();
         for dir in SYNC_FOLDERS.iter() {
             let path = root_path.join(dir);
-            let wd = inotify.add_watch(path, WatchMask::CLOSE_WRITE).unwrap();
+            let wd = inotify.add_watch(path, WatchMask::MOVED_TO).unwrap();
             wds.push(wd);
         }
 

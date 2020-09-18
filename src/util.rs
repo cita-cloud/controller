@@ -22,7 +22,7 @@ use cita_cloud_proto::kms::{
 };
 use cita_cloud_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
 use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
-use log::info;
+use log::{info, warn};
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
@@ -222,11 +222,13 @@ pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
 
     let ret = fs::read(tx_path).await;
     if ret.is_err() {
+        warn!("read tx file failed: {:?}", ret);
         return None;
     }
     let content = ret.unwrap();
     let ret = RawTransaction::decode(content.as_slice());
     if ret.is_err() {
+        warn!("decode tx file failed: {:?}", ret);
         return None;
     }
     Some(ret.unwrap())
@@ -253,11 +255,13 @@ pub async fn get_block(block_hash: &[u8]) -> Option<CompactBlock> {
 
     let ret = fs::read(block_path).await;
     if ret.is_err() {
+        warn!("read block file failed: {:?}", ret);
         return None;
     }
     let content = ret.unwrap();
     let ret = CompactBlock::decode(content.as_slice());
     if ret.is_err() {
+        warn!("decode block file failed: {:?}", ret);
         return None;
     }
     Some(ret.unwrap())
