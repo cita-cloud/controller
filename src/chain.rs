@@ -25,6 +25,7 @@ use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use cita_cloud_proto::network::NetworkMsg;
 use log::{info, warn};
 use prost::Message;
+use std::cmp::max;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -66,7 +67,7 @@ impl Chain {
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
     ) -> Self {
-        let fork_tree_size = (block_delay_number + 2) as usize;
+        let fork_tree_size = (block_delay_number * 2 + 2) as usize;
         let mut fork_tree = Vec::with_capacity(fork_tree_size);
         for _ in 0..=fork_tree_size {
             fork_tree.push(HashMap::new());
@@ -100,7 +101,8 @@ impl Chain {
     }
 
     pub async fn update_new_status(&mut self, origin: u64, block_number: u64) {
-        if block_number > (self.block_number + 3) {
+        let sync_interval: u64 = max(3, self.block_delay_number as u64 / 2);
+        if block_number > (self.block_number + sync_interval) {
             // start to sync
             // msg is two u64, means from self.block_number + 1 to block_number
             info!(
@@ -326,7 +328,7 @@ impl Chain {
         }
         self.fork_tree = new_fork_tree;
         self.fork_tree
-            .resize(self.block_delay_number as usize * 2, HashMap::new());
+            .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
 
         // broadcast new status
         {
@@ -407,7 +409,7 @@ impl Chain {
             return;
         }
 
-        if block_height - self.block_number > (self.block_delay_number + 2) as u64 {
+        if block_height - self.block_number > (self.block_delay_number * 2 + 2) as u64 {
             warn!("block_height {} too high", block_height);
             return;
         }
@@ -748,7 +750,7 @@ impl Chain {
                         }
                         self.fork_tree = new_fork_tree;
                         self.fork_tree
-                            .resize(self.block_delay_number as usize * 2, HashMap::new());
+                            .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
 
                         // broadcast new status
                         {
