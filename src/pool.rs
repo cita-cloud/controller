@@ -15,12 +15,14 @@
 use log::info;
 use rand::Rng;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub struct Pool {
     package_limit: usize,
     order_set: HashMap<u64, Vec<u8>>,
     order: u64,
     lower_bound: u64,
+    txs: HashSet<Vec<u8>>,
 }
 
 impl Pool {
@@ -30,6 +32,7 @@ impl Pool {
             order_set: HashMap::new(),
             order: 0,
             lower_bound: 0,
+            txs: HashSet::new(),
         }
     }
 
@@ -40,9 +43,15 @@ impl Pool {
         order
     }
 
-    pub fn enqueue(&mut self, tx_hash: Vec<u8>) {
-        let order = self.get_order();
-        self.order_set.insert(order, tx_hash);
+    pub fn enqueue(&mut self, tx_hash: Vec<u8>) -> bool {
+        if self.txs.contains(&tx_hash) {
+            false
+        } else {
+            let order = self.get_order();
+            self.order_set.insert(order, tx_hash.clone());
+            self.txs.insert(tx_hash);
+            true
+        }
     }
 
     fn update_low_bound(&mut self) {
@@ -65,12 +74,15 @@ impl Pool {
         );
 
         let mut new_order_set = HashMap::new();
+        let mut new_txs = HashSet::new();
         for (order, hash) in self.order_set.iter() {
             if !tx_hash_list.contains(hash) {
                 new_order_set.insert(*order, hash.to_owned());
+                new_txs.insert(hash.to_owned());
             }
         }
         self.order_set = new_order_set;
+        self.txs = new_txs;
 
         info!("after update len of pool {}", self.len());
         self.update_low_bound()

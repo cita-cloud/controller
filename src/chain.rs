@@ -15,8 +15,8 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    broadcast_message, check_block, exec_block, get_tx, hash_data, load_data, print_main_chain,
-    reconfigure, send_message, store_data, unix_now, write_block,
+    broadcast_message, check_block, check_tx_exists, exec_block, get_tx, hash_data, load_data,
+    print_main_chain, reconfigure, send_message, store_data, unix_now, write_block,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -516,7 +516,8 @@ impl Chain {
         self.candidate_block = Some((block_hash.clone(), block.clone()));
         self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
 
-        {
+        let is_exists = check_tx_exists(block_hash.as_slice());
+        if !is_exists {
             let mut block_bytes = Vec::new();
             block.encode(&mut block_bytes).expect("encode block failed");
             write_block(&block_hash, &block_bytes).await;
