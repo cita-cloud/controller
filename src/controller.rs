@@ -110,7 +110,6 @@ impl Controller {
                 time::delay_for(Duration::new(1, 0)).await;
                 {
                     let events = notifier_clone.fetch_events();
-                    println!("get {:?} events", events);
                     for event in events {
                         match event.folder.as_str() {
                             "txs" => {

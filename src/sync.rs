@@ -75,7 +75,6 @@ impl Notifier {
         }
         let latest_e = ret.unwrap();
         let latest_elapsed = get_modify_elapsed(&latest_e);
-        println!("latest_e {:?}, latest_elapsed {}", latest_e, latest_elapsed);
 
         // walk dir to list files
         let ret = fs::read_dir(path);
@@ -105,7 +104,6 @@ impl Notifier {
     pub fn list(&self) {
         for dir in SYNC_FOLDERS.iter() {
             let msg = self.walk_dir(dir, 3600u64);
-            println!("list {} events", msg.len());
             for m in msg {
                 self.queue.push(m)
             }
@@ -123,7 +121,7 @@ impl Notifier {
             wds.push(wd);
         }
 
-        let mut buffer = [0; 32];
+        let mut buffer = vec![0u8; 4096];
         let mut stream = inotify.event_stream(&mut buffer).unwrap();
 
         while let Some(event_or_error) = stream.next().await {
