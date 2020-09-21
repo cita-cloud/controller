@@ -89,6 +89,9 @@ impl Notifier {
                     return false;
                 }
                 let e = e.as_ref().unwrap();
+                if e.file_name().into_string().unwrap().starts_with('.') {
+                    return false;
+                }
                 get_modify_elapsed(e) < latest_elapsed.saturating_add(before)
             })
             .map(|e| {

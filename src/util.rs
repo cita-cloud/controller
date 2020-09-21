@@ -279,14 +279,13 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 
     let ret = fs::read(block_path).await;
     if ret.is_err() {
-        warn!("read block file failed: {:?}", ret);
         return None;
     }
     let bytes = ret.unwrap();
 
     let bytes_len = bytes.len();
     if bytes_len <= 24 {
-        warn!("get_block bad bytes length");
+        warn!("get_block {} bad bytes length", height);
         return None;
     }
 
@@ -302,7 +301,7 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
     let proof_len = usize::from_be_bytes(len_bytes);
 
     if bytes_len != 24 + header_len + body_len + proof_len {
-        warn!("get_block bad bytes total length");
+        warn!("get_block {} bad bytes total length", height);
         return None;
     }
 
@@ -315,12 +314,14 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 
     let ret = BlockHeader::decode(header_slice);
     if ret.is_err() {
+        warn!("get_block {} decode BlockHeader failed", height);
         return None;
     }
     let block_header = ret.unwrap();
 
     let ret = CompactBlockBody::decode(body_slice);
     if ret.is_err() {
+        warn!("get_block {} decode CompactBlockBody failed", height);
         return None;
     }
     let block_body = ret.unwrap();

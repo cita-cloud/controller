@@ -181,7 +181,7 @@ impl Controller {
                                     }
                                 }
                                 // any failed delete the block file
-                                warn!("sync block invalid");
+                                warn!("sync block invalid {}", event.filename.as_str());
                                 remove_block(event.filename.as_str()).await;
                             }
                             _ => panic!("unexpected folder"),

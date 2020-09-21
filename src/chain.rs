@@ -105,11 +105,11 @@ impl Chain {
 
                 let height = block_header.height;
                 if height != h {
-                    panic!("invalid block height")
+                    panic!("proc_sync_block {} invalid block height", h)
                 }
                 let prevhash = block_header.prevhash.clone();
                 if prevhash != self.block_hash {
-                    panic!("invalid block prevhash")
+                    panic!("proc_sync_block {} invalid block prevhash", h)
                 }
 
                 let mut block_body_bytes = Vec::new();
@@ -238,6 +238,7 @@ impl Chain {
                 self.fork_tree = new_fork_tree;
                 self.fork_tree
                     .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
+                info!("sync block to {}", height);
             } else {
                 break;
             }
@@ -484,6 +485,12 @@ impl Chain {
                         warn!("candidate_chain interrupted");
                         return;
                     }
+                }
+
+                if prevhash != self.block_hash {
+                    // candidate_chain interrupted, so failed
+                    warn!("candidate_chain can't fit finalized block");
+                    return;
                 }
 
                 // if candidate_chain longer than original main_chain
