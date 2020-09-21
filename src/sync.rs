@@ -18,7 +18,7 @@ use std::fs::{self, DirEntry};
 use std::path::Path;
 use tokio::stream::StreamExt;
 
-pub static SYNC_FOLDERS: [&str; 2] = ["txs", "blocks"];
+pub static SYNC_FOLDERS: [&str; 3] = ["txs", "proposals", "blocks"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotifyMessage {

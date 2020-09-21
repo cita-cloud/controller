@@ -17,7 +17,8 @@ use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
 use crate::util::{
-    check_tx_exists, get_block, get_tx, load_data, remove_block, remove_tx, write_tx,
+    check_tx_exists, get_proposal, get_tx, load_data, remove_block, remove_proposal, remove_tx,
+    write_tx,
 };
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -64,7 +65,6 @@ impl Controller {
         let pool = Arc::new(RwLock::new(Pool::new(500)));
         let chain = Arc::new(RwLock::new(Chain::new(
             storage_port,
-            network_port,
             kms_port,
             executor_port,
             consensus_port,
@@ -135,9 +135,9 @@ impl Controller {
                                 warn!("sync tx invalid");
                                 remove_tx(event.filename.as_str()).await;
                             }
-                            "blocks" => {
+                            "proposals" => {
                                 if let Ok(block_hash) = hex::decode(&event.filename) {
-                                    if let Some(block) = get_block(&block_hash).await {
+                                    if let Some(block) = get_proposal(&block_hash).await {
                                         if let Some(block_body) = block.clone().body {
                                             let tx_hash_list = block_body.tx_hashes;
                                             let is_valid = {
@@ -149,7 +149,7 @@ impl Controller {
                                                 true
                                             };
                                             if is_valid {
-                                                info!("add block");
+                                                info!("add proposal");
                                                 let mut chain = c.chain.write().await;
                                                 if chain.add_block(block).await {
                                                     continue;
@@ -167,6 +167,18 @@ impl Controller {
                                     }
                                 } else {
                                     warn!("decode filename failed {}", &event.filename);
+                                }
+                                // any failed delete the proposal file
+                                warn!("sync proposal invalid");
+                                remove_proposal(event.filename.as_str()).await;
+                            }
+                            "blocks" => {
+                                if u64::from_str_radix(event.filename.as_str(), 10).is_ok() {
+                                    {
+                                        let mut chain = c.chain.write().await;
+                                        chain.proc_sync_block().await;
+                                        continue;
+                                    }
                                 }
                                 // any failed delete the block file
                                 warn!("sync block invalid");
@@ -276,102 +288,7 @@ impl Controller {
         Ok(())
     }
 
-    pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<(), String> {
-        match msg.r#type.as_str() {
-            "new_status" => {
-                let origin = msg.origin;
-                let bytes = msg.msg;
-
-                let bytes_len = bytes.len();
-                if bytes_len != 8 {
-                    return Err("new_status bad bytes length".to_owned());
-                }
-
-                let mut block_number_bytes: [u8; 8] = [0; 8];
-                block_number_bytes[..8].clone_from_slice(&bytes[..8]);
-                let block_number = u64::from_be_bytes(block_number_bytes);
-
-                info!(
-                    "get new status from {}, block number is {}",
-                    origin, block_number
-                );
-                {
-                    let mut chain = self.chain.write().await;
-                    chain.update_new_status(origin, block_number).await;
-                }
-                Ok(())
-            }
-            "sync_req" => {
-                let origin = msg.origin;
-                let bytes = msg.msg;
-
-                let bytes_len = bytes.len();
-                if bytes_len != 16 {
-                    return Err("sync_req bad bytes length".to_owned());
-                }
-
-                let mut temp_bytes: [u8; 8] = [0; 8];
-                // parse from_block_number
-                temp_bytes[..8].clone_from_slice(&bytes[..8]);
-                let from_block_number = u64::from_be_bytes(temp_bytes);
-                // parse to_block_number
-                temp_bytes[..8].clone_from_slice(&bytes[8..16]);
-                let to_block_number = u64::from_be_bytes(temp_bytes);
-
-                info!(
-                    "get sync req from {}, block number from {} to {}",
-                    origin, from_block_number, to_block_number
-                );
-                {
-                    let chain = self.chain.read().await;
-                    chain
-                        .proc_sync_req(origin, from_block_number, to_block_number)
-                        .await;
-                }
-                Ok(())
-            }
-            "sync_resp" => {
-                let origin = msg.origin;
-                let bytes = msg.msg;
-                let bytes_len = bytes.len();
-                if bytes_len <= 24 {
-                    return Err("sync_resp bad bytes length".to_owned());
-                }
-
-                let mut len_bytes: [u8; 8] = [0; 8];
-                // parse header_len
-                len_bytes[..8].clone_from_slice(&bytes[..8]);
-                let header_len = usize::from_be_bytes(len_bytes);
-                // parse body_len
-                len_bytes[..8].clone_from_slice(&bytes[8..16]);
-                let body_len = usize::from_be_bytes(len_bytes);
-                // parse proof_len
-                len_bytes[..8].clone_from_slice(&bytes[16..24]);
-                let proof_len = usize::from_be_bytes(len_bytes);
-
-                if bytes_len != 24 + header_len + body_len + proof_len {
-                    return Err("sync_resp bad bytes total length".to_owned());
-                }
-
-                let mut start: usize = 24;
-                let header_slice = &bytes[start..start + header_len];
-                start += header_len;
-                let body_slice = &bytes[start..start + body_len];
-                start += body_len;
-                let proof_slice = &bytes[start..start + proof_len];
-
-                info!("get sync resp from {}", origin);
-                {
-                    let mut chain = self.chain.write().await;
-                    chain
-                        .proc_sync_resp(header_slice, body_slice, proof_slice)
-                        .await;
-                }
-                Ok(())
-            }
-            _ => {
-                panic!("unknown network message");
-            }
-        }
+    pub async fn process_network_msg(&self, _msg: NetworkMsg) -> Result<(), String> {
+        Ok(())
     }
 }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use cita_cloud_proto::consensus::{
     consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
 };
@@ -20,13 +21,12 @@ use cita_cloud_proto::kms::{
     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
     VerifyDataHashRequest,
 };
-use cita_cloud_proto::network::{network_service_client::NetworkServiceClient, NetworkMsg};
 use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
+
 use log::{info, warn};
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_cloud_proto::blockchain::CompactBlock;
 use cita_cloud_proto::common::ProposalWithProof;
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
@@ -100,32 +100,6 @@ pub async fn verify_tx_hash(
 
     let response = client.verify_data_hash(request).await?;
     Ok(response.into_inner().is_success)
-}
-
-pub async fn broadcast_message(
-    network_port: u16,
-    msg: NetworkMsg,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let network_addr = format!("http://127.0.0.1:{}", network_port);
-    let mut client = NetworkServiceClient::connect(network_addr).await?;
-
-    let request = Request::new(msg);
-
-    let _ = client.broadcast(request).await?;
-    Ok(())
-}
-
-pub async fn send_message(
-    network_port: u16,
-    msg: NetworkMsg,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let network_addr = format!("http://127.0.0.1:{}", network_port);
-    let mut client = NetworkServiceClient::connect(network_addr).await?;
-
-    let request = Request::new(msg);
-
-    let _ = client.send_msg(request).await?;
-    Ok(())
 }
 
 pub async fn hash_data(
@@ -240,16 +214,66 @@ pub async fn remove_tx(filename: &str) {
     let _ = fs::remove_file(tx_path).await;
 }
 
-pub async fn write_block(block_hash: &[u8], data: &[u8]) {
+pub async fn write_proposal(block_hash: &[u8], data: &[u8]) {
     let filename = hex::encode(block_hash);
 
     let root_path = Path::new(".");
-    let block_path = root_path.join("blocks").join(filename);
+    let block_path = root_path.join("proposals").join(filename);
     let _ = fs::write(block_path, data).await;
 }
 
-pub async fn get_block(block_hash: &[u8]) -> Option<CompactBlock> {
+pub async fn get_proposal(block_hash: &[u8]) -> Option<CompactBlock> {
     let filename = hex::encode(block_hash);
+    let root_path = Path::new(".");
+    let block_path = root_path.join("proposals").join(filename);
+
+    let ret = fs::read(block_path).await;
+    if ret.is_err() {
+        warn!("read proposal file failed: {:?}", ret);
+        return None;
+    }
+    let content = ret.unwrap();
+    let ret = CompactBlock::decode(content.as_slice());
+    if ret.is_err() {
+        warn!("decode proposal file failed: {:?}", ret);
+        return None;
+    }
+    Some(ret.unwrap())
+}
+
+pub async fn remove_proposal(filename: &str) {
+    let root_path = Path::new(".");
+    let block_path = root_path.join("proposals").join(filename);
+
+    let _ = fs::remove_file(block_path).await;
+}
+
+pub async fn write_block(
+    height: u64,
+    block_header_bytes: &[u8],
+    block_body_bytes: &[u8],
+    proof_bytes: &[u8],
+) {
+    let filename = format!("{}", height);
+    let root_path = Path::new(".");
+    let block_path = root_path.join("blocks").join(filename);
+
+    let header_len = block_header_bytes.len();
+    let body_len = block_body_bytes.len();
+    let proof_len = proof_bytes.len();
+
+    let mut bytes = header_len.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&body_len.to_be_bytes().to_vec());
+    bytes.extend_from_slice(&proof_len.to_be_bytes().to_vec());
+    bytes.extend_from_slice(&block_header_bytes);
+    bytes.extend_from_slice(&block_body_bytes);
+    bytes.extend_from_slice(&proof_bytes);
+
+    let _ = fs::write(block_path, bytes).await;
+}
+
+pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
+    let filename = format!("{}", height);
     let root_path = Path::new(".");
     let block_path = root_path.join("blocks").join(filename);
 
@@ -258,13 +282,56 @@ pub async fn get_block(block_hash: &[u8]) -> Option<CompactBlock> {
         warn!("read block file failed: {:?}", ret);
         return None;
     }
-    let content = ret.unwrap();
-    let ret = CompactBlock::decode(content.as_slice());
-    if ret.is_err() {
-        warn!("decode block file failed: {:?}", ret);
+    let bytes = ret.unwrap();
+
+    let bytes_len = bytes.len();
+    if bytes_len <= 24 {
+        warn!("get_block bad bytes length");
         return None;
     }
-    Some(ret.unwrap())
+
+    let mut len_bytes: [u8; 8] = [0; 8];
+    // parse header_len
+    len_bytes[..8].clone_from_slice(&bytes[..8]);
+    let header_len = usize::from_be_bytes(len_bytes);
+    // parse body_len
+    len_bytes[..8].clone_from_slice(&bytes[8..16]);
+    let body_len = usize::from_be_bytes(len_bytes);
+    // parse proof_len
+    len_bytes[..8].clone_from_slice(&bytes[16..24]);
+    let proof_len = usize::from_be_bytes(len_bytes);
+
+    if bytes_len != 24 + header_len + body_len + proof_len {
+        warn!("get_block bad bytes total length");
+        return None;
+    }
+
+    let mut start: usize = 24;
+    let header_slice = &bytes[start..start + header_len];
+    start += header_len;
+    let body_slice = &bytes[start..start + body_len];
+    start += body_len;
+    let proof_slice = &bytes[start..start + proof_len];
+
+    let ret = BlockHeader::decode(header_slice);
+    if ret.is_err() {
+        return None;
+    }
+    let block_header = ret.unwrap();
+
+    let ret = CompactBlockBody::decode(body_slice);
+    if ret.is_err() {
+        return None;
+    }
+    let block_body = ret.unwrap();
+
+    let block = CompactBlock {
+        version: 0,
+        header: Some(block_header),
+        body: Some(block_body),
+    };
+
+    Some((block, proof_slice.to_vec()))
 }
 
 pub async fn remove_block(filename: &str) {
