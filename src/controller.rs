@@ -94,7 +94,7 @@ impl Controller {
             let mut auth = self.auth.write().await;
             auth.init(init_block_number).await;
         }
-        self.notifier.list();
+        self.notifier.list(3600u64);
         self.proc_sync_notify().await;
     }
 
@@ -103,6 +103,15 @@ impl Controller {
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             notifier_clone.watch().await;
+        });
+        let notifier_clone = c.notifier.clone();
+        tokio::spawn(async move {
+            loop {
+                time::delay_for(Duration::new(60, 0)).await;
+                {
+                    notifier_clone.list(120);
+                }
+            }
         });
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
@@ -142,8 +151,11 @@ impl Controller {
                                             if is_valid {
                                                 info!("add block");
                                                 let mut chain = c.chain.write().await;
-                                                chain.add_block(block).await;
-                                                continue;
+                                                if chain.add_block(block).await {
+                                                    continue;
+                                                } else {
+                                                    warn!("add_block failed");
+                                                }
                                             } else {
                                                 warn!("find tx failed");
                                             }

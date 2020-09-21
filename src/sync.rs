@@ -101,9 +101,9 @@ impl Notifier {
             .collect()
     }
 
-    pub fn list(&self) {
+    pub fn list(&self, interval: u64) {
         for dir in SYNC_FOLDERS.iter() {
-            let msg = self.walk_dir(dir, 3600u64);
+            let msg = self.walk_dir(dir, interval);
             for m in msg {
                 self.queue.push(m)
             }

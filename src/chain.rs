@@ -401,17 +401,17 @@ impl Chain {
             .map(|(hash, _)| hash.to_owned())
     }
 
-    pub async fn add_block(&mut self, block: CompactBlock) {
+    pub async fn add_block(&mut self, block: CompactBlock) -> bool {
         let header = block.clone().header.unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
             warn!("block_height {} too low", block_height);
-            return;
+            return false;
         }
 
         if block_height - self.block_number > (self.block_delay_number * 2 + 2) as u64 {
             warn!("block_height {} too high", block_height);
-            return;
+            return false;
         }
 
         let mut block_header_bytes = Vec::new();
@@ -430,10 +430,12 @@ impl Chain {
                 block_hash[block_hash.len() - 1]
             );
             self.fork_tree[block_height as usize - self.block_number as usize - 1]
-                .insert(block_hash, (block, None));
+                .entry(block_hash)
+                .or_insert((block, None));
         } else {
             warn!("hash block failed {:?}", ret);
         }
+        true
     }
 
     pub async fn add_proposal(&mut self) {
