@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::controller::RawTransaction;
 use log::info;
 use rand::Rng;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub struct Pool {
     package_limit: usize,
     order_set: HashMap<u64, Vec<u8>>,
     order: u64,
     lower_bound: u64,
-    txs: HashMap<Vec<u8>, RawTransaction>,
+    txs: HashSet<Vec<u8>>,
 }
 
 impl Pool {
@@ -32,7 +32,7 @@ impl Pool {
             order_set: HashMap::new(),
             order: 0,
             lower_bound: 0,
-            txs: HashMap::new(),
+            txs: HashSet::new(),
         }
     }
 
@@ -43,14 +43,15 @@ impl Pool {
         order
     }
 
-    pub fn enqueue(&mut self, raw_tx: RawTransaction, tx_hash: Vec<u8>) -> bool {
-        let is_ok = !self.txs.contains_key(&tx_hash);
-        if is_ok {
+    pub fn enqueue(&mut self, tx_hash: Vec<u8>) -> bool {
+        if self.txs.contains(&tx_hash) {
+            false
+        } else {
             let order = self.get_order();
             self.order_set.insert(order, tx_hash.clone());
-            self.txs.insert(tx_hash, raw_tx);
+            self.txs.insert(tx_hash);
+            true
         }
-        is_ok
     }
 
     fn update_low_bound(&mut self) {
@@ -71,17 +72,17 @@ impl Pool {
             self.len(),
             tx_hash_list.len()
         );
-        for hash in tx_hash_list.iter() {
-            self.txs.remove(hash);
-        }
 
         let mut new_order_set = HashMap::new();
+        let mut new_txs = HashSet::new();
         for (order, hash) in self.order_set.iter() {
             if !tx_hash_list.contains(hash) {
                 new_order_set.insert(*order, hash.to_owned());
+                new_txs.insert(hash.to_owned());
             }
         }
         self.order_set = new_order_set;
+        self.txs = new_txs;
 
         info!("after update len of pool {}", self.len());
         self.update_low_bound()
@@ -110,82 +111,6 @@ impl Pool {
     }
 
     pub fn len(&self) -> usize {
-        self.txs.len()
-    }
-
-    pub fn contains(&self, tx_hash: &[u8]) -> bool {
-        self.txs.get(tx_hash).is_some()
-    }
-
-    pub fn get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {
-        self.txs.get(tx_hash).map(|tx| tx.to_owned())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cita_cloud_proto::blockchain::{Transaction, UnverifiedTransaction, Witness};
-    use cita_cloud_proto::controller::{raw_transaction::Tx, RawTransaction};
-
-    pub fn generate_tx(
-        transaction_hash: Vec<u8>,
-        valid_until_block: u64,
-        version: u32,
-    ) -> RawTransaction {
-        let tx = Transaction {
-            version,
-            to: Vec::new(),
-            nonce: "".to_owned(),
-            quota: 21000,
-            valid_until_block,
-            data: Vec::new(),
-            value: Vec::new(),
-            chain_id: Vec::new(),
-        };
-        let witness = Witness {
-            signature: Vec::new(),
-            sender: Vec::new(),
-        };
-        let unverified_tx = UnverifiedTransaction {
-            transaction: Some(tx),
-            transaction_hash,
-            witness: Some(witness),
-        };
-
-        RawTransaction {
-            tx: Some(Tx::NormalTx(unverified_tx)),
-        }
-    }
-
-    #[test]
-    fn basic() {
-        let mut p = Pool::new(1);
-
-        let tx1_hash = vec![1];
-        let tx1 = generate_tx(tx1_hash.clone(), 99, 0);
-        let tx2_hash = vec![1];
-        let tx2 = generate_tx(tx2_hash.clone(), 99, 0);
-        let tx3_hash = vec![2];
-        let tx3 = generate_tx(tx3_hash.clone(), 99, 0);
-        let tx4_hash = vec![3];
-        let tx4 = generate_tx(tx4_hash.clone(), 5, 0);
-
-        assert_eq!(p.enqueue(tx1.clone(), tx1_hash.clone()), true);
-        assert_eq!(p.enqueue(tx2.clone(), tx2_hash.clone()), false);
-        assert_eq!(p.enqueue(tx3.clone(), tx3_hash.clone()), true);
-        assert_eq!(p.enqueue(tx4.clone(), tx4_hash.clone()), true);
-
-        assert_eq!(p.len(), 3);
-        assert!(p.contains(&tx1_hash));
-        assert!(p.contains(&tx3_hash));
-        assert!(p.contains(&tx4_hash));
-
-        p.update(vec![tx1_hash]);
-        assert_eq!(p.len(), 2);
-        assert_eq!(p.package(), vec![tx3_hash.clone()]);
-        p.update(vec![tx3_hash]);
-        assert_eq!(p.package(), vec![tx4_hash]);
-        assert_eq!(p.len(), 1);
+        self.order_set.len()
     }
 }

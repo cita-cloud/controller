@@ -14,7 +14,7 @@ clap = { git = "https://github.com/clap-rs/clap/" }
 git-version = "*"
 tonic = "0.2"
 prost = "0.6"
-tokio = { version = "0.2", features = ["macros"] }
+tokio = { version = "0.2", features = ["macros", "fs"] }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
 futures-util = "*"
 rand = "*"
@@ -22,3 +22,9 @@ toml = "*"
 serde = "*"
 serde_derive = "*"
 hex = "*"
+inotify = "*"
+crossbeam = "*"
+backtrace = "*"
+
+[dev-dependencies]
+tempdir = "*"

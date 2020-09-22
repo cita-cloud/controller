@@ -17,10 +17,13 @@ mod chain;
 mod config;
 mod controller;
 mod genesis;
+mod panic_hook;
 mod pool;
+mod sync;
 mod util;
 mod utxo_set;
 
+use crate::panic_hook::set_panic_handler;
 use clap::Clap;
 use git_version::git_version;
 use log::{debug, info, warn};
@@ -60,6 +63,7 @@ struct RunOpts {
 
 fn main() {
     ::std::env::set_var("RUST_BACKTRACE", "full");
+    set_panic_handler();
 
     let opts: Opts = Opts::parse();
 
@@ -372,6 +376,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
+use crate::sync::Notifier;
 use crate::util::{load_data, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
@@ -381,6 +386,7 @@ use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
 use prost::Message;
 use std::fs;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
@@ -499,6 +505,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         current_block_hash,
         sys_config,
         genesis,
+        Arc::new(Notifier::new(".".to_string())),
     );
 
     controller.init(current_block_number).await;
