@@ -508,10 +508,10 @@ impl Chain {
                 if prevhash != self.block_hash {
                     warn!("candidate_chain can't fit finalized block");
                     // break this invalid chain
-                    self.fork_tree
-                        .get_mut(0)
-                        .unwrap()
-                        .remove(candidate_chain.last().unwrap());
+                    let proposal = candidate_chain.last().unwrap();
+                    self.fork_tree.get_mut(0).unwrap().remove(proposal);
+                    let filename = hex::encode(proposal);
+                    remove_proposal(filename.as_str()).await;
                     return;
                 }
 
