@@ -24,6 +24,7 @@ serde_derive = "*"
 hex = "*"
 inotify = "*"
 crossbeam = "*"
+backtrace = "*"
 
 [dev-dependencies]
 tempdir = "*"

@@ -334,10 +334,3 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 
     Some((block, proof_slice.to_vec()))
 }
-
-pub async fn remove_block(filename: &str) {
-    let root_path = Path::new(".");
-    let block_path = root_path.join("blocks").join(filename);
-
-    let _ = fs::remove_file(block_path).await;
-}

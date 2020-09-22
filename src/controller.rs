@@ -17,8 +17,7 @@ use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
 use crate::util::{
-    check_tx_exists, get_proposal, get_tx, load_data, remove_block, remove_proposal, remove_tx,
-    write_tx,
+    check_tx_exists, get_proposal, get_tx, load_data, remove_proposal, remove_tx, write_tx,
 };
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -180,9 +179,7 @@ impl Controller {
                                         continue;
                                     }
                                 }
-                                // any failed delete the block file
                                 warn!("sync block invalid {}", event.filename.as_str());
-                                remove_block(event.filename.as_str()).await;
                             }
                             _ => panic!("unexpected folder"),
                         }

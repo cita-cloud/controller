@@ -422,6 +422,15 @@ impl Chain {
         let block_hash = hash_data(self.kms_port, 1, block_header_bytes)
             .await
             .expect("hash data failed");
+        info!(
+            "proposal {} block_hash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            height,
+            block_hash[0],
+            block_hash[1],
+            block_hash[2],
+            block_hash[block_hash.len() - 2],
+            block_hash[block_hash.len() - 1]
+        );
         self.candidate_block = Some((block_hash.clone(), block.clone()));
         self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
 
@@ -443,6 +452,15 @@ impl Chain {
     }
 
     pub async fn commit_block(&mut self, proposal: &[u8], proof: &[u8]) {
+        info!(
+            "commit_block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            proposal[0],
+            proposal[1],
+            proposal[2],
+            proposal[proposal.len() - 2],
+            proposal[proposal.len() - 1]
+        );
+
         let commit_block_index;
         let commit_block;
         for (index, map) in self.fork_tree.iter_mut().enumerate() {
@@ -488,8 +506,12 @@ impl Chain {
                 }
 
                 if prevhash != self.block_hash {
-                    // candidate_chain interrupted, so failed
                     warn!("candidate_chain can't fit finalized block");
+                    // break this invalid chain
+                    self.fork_tree
+                        .get_mut(0)
+                        .unwrap()
+                        .remove(candidate_chain.last().unwrap());
                     return;
                 }
 

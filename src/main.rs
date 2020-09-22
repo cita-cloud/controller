@@ -17,11 +17,13 @@ mod chain;
 mod config;
 mod controller;
 mod genesis;
+mod panic_hook;
 mod pool;
 mod sync;
 mod util;
 mod utxo_set;
 
+use crate::panic_hook::set_panic_handler;
 use clap::Clap;
 use git_version::git_version;
 use log::{debug, info, warn};
@@ -61,6 +63,7 @@ struct RunOpts {
 
 fn main() {
     ::std::env::set_var("RUST_BACKTRACE", "full");
+    set_panic_handler();
 
     let opts: Opts = Opts::parse();
 
