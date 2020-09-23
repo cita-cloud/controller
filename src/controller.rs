@@ -123,9 +123,17 @@ impl Controller {
                             "txs" => {
                                 if let Ok(tx_hash) = hex::decode(&event.filename) {
                                     if let Some(raw_tx) = get_tx(&tx_hash).await {
-                                        if let Ok(hash) = c.rpc_send_raw_transaction(raw_tx).await {
-                                            if hash == tx_hash {
-                                                continue;
+                                        let ret = c.rpc_send_raw_transaction(raw_tx).await;
+                                        match ret {
+                                            Ok(hash) => {
+                                                if hash == tx_hash {
+                                                    continue;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                if e == "dup" {
+                                                    continue;
+                                                }
                                             }
                                         }
                                     }
