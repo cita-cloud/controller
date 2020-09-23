@@ -222,6 +222,14 @@ pub async fn write_proposal(block_hash: &[u8], data: &[u8]) {
     let _ = fs::write(block_path, data).await;
 }
 
+pub fn check_proposal_exists(block_hash: &[u8]) -> bool {
+    let filename = hex::encode(block_hash);
+    let root_path = Path::new(".");
+    let file_path = root_path.join("proposals").join(filename);
+
+    file_path.exists()
+}
+
 pub async fn get_proposal(block_hash: &[u8]) -> Option<CompactBlock> {
     let filename = hex::encode(block_hash);
     let root_path = Path::new(".");
@@ -270,6 +278,14 @@ pub async fn write_block(
     bytes.extend_from_slice(&proof_bytes);
 
     let _ = fs::write(block_path, bytes).await;
+}
+
+pub fn check_block_exists(height: u64) -> bool {
+    let filename = format!("{}", height);
+    let root_path = Path::new(".");
+    let file_path = root_path.join("blocks").join(filename);
+
+    file_path.exists()
 }
 
 pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
