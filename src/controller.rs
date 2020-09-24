@@ -91,7 +91,7 @@ impl Controller {
             let mut auth = self.auth.write().await;
             auth.init(init_block_number).await;
         }
-        self.notifier.list(3600u64);
+        self.notifier.list(150u64);
         self.proc_sync_notify().await;
     }
 
@@ -104,9 +104,9 @@ impl Controller {
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             loop {
-                time::delay_for(Duration::new(60, 0)).await;
+                time::delay_for(Duration::new(15, 0)).await;
                 {
-                    notifier_clone.list(120);
+                    notifier_clone.list(20);
                 }
             }
         });
