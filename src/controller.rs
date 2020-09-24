@@ -16,9 +16,7 @@ use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
-use crate::util::{
-    check_tx_exists, get_proposal, get_tx, load_data, remove_proposal, remove_tx, write_tx,
-};
+use crate::util::{check_tx_exists, get_proposal, get_tx, remove_proposal, remove_tx, write_tx};
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::CompactBlock;
@@ -239,18 +237,7 @@ impl Controller {
         if let Some(raw_tx) = ret {
             Ok(raw_tx)
         } else {
-            let ret = load_data(self.storage_port, 1, tx_hash).await;
-            if let Ok(raw_tx_bytes) = ret {
-                let ret = RawTransaction::decode(raw_tx_bytes.as_slice());
-                if ret.is_err() {
-                    Err("decode failed".to_owned())
-                } else {
-                    let raw_tx = ret.unwrap();
-                    Ok(raw_tx)
-                }
-            } else {
-                Err("can't get transaction".to_owned())
-            }
+            Err("can't get transaction".to_owned())
         }
     }
 

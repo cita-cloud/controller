@@ -16,8 +16,8 @@ use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
     check_block, check_block_exists, check_proposal_exists, exec_block, get_block, get_tx,
-    hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data, unix_now,
-    write_block, write_proposal,
+    hash_data, print_main_chain, reconfigure, remove_proposal, store_data, unix_now, write_block,
+    write_proposal,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -246,50 +246,11 @@ impl Chain {
     }
 
     pub async fn get_block_by_number(&self, block_number: u64) -> Option<CompactBlock> {
-        if block_number > self.get_block_number(true) {
-            None
-        } else if block_number > self.get_block_number(false) {
-            let index = block_number - self.get_block_number(false) - 1;
-            let block_hash = self.main_chain[index as usize].to_owned();
-            let (block, _) = self.fork_tree[index as usize]
-                .get(&block_hash)
-                .unwrap()
-                .to_owned();
-            Some(block)
-        } else if block_number == 0 {
+        if block_number == 0 {
             let genesis_block = self.genesis.genesis_block();
             Some(genesis_block)
         } else {
-            let block_header;
-            {
-                let ret =
-                    load_data(self.storage_port, 2, block_number.to_be_bytes().to_vec()).await;
-                if ret.is_err() {
-                    return None;
-                }
-                let block_header_bytes = ret.unwrap();
-                let ret = BlockHeader::decode(block_header_bytes.as_slice());
-                if ret.is_err() {
-                    return None;
-                }
-                block_header = ret.unwrap();
-            }
-            let ret = load_data(self.storage_port, 3, block_number.to_be_bytes().to_vec()).await;
-            if ret.is_err() {
-                return None;
-            }
-            let block_body_bytes = ret.unwrap();
-            let ret = CompactBlockBody::decode(block_body_bytes.as_slice());
-            if ret.is_err() {
-                return None;
-            }
-            let block_body = ret.unwrap();
-            let block = CompactBlock {
-                version: 0,
-                header: Some(block_header),
-                body: Some(block_body),
-            };
-            Some(block)
+            get_block(block_number).await.map(|t| t.0)
         }
     }
 
