@@ -192,7 +192,8 @@ impl Chain {
                                 }
                             }
                         } else {
-                            panic!("get tx failed");
+                            warn!("proc_sync_block get tx failed");
+                            break;
                         }
                     }
                 }
@@ -483,8 +484,6 @@ impl Chain {
                     self.main_chain = candidate_chain;
                     self.main_chain_tx_hash = candidate_chain_tx_hash;
                     print_main_chain(&self.main_chain, self.block_number);
-                    // candidate_block need update
-                    self.add_proposal().await;
                     // check if any block has been finalized
                     if self.main_chain.len() > self.block_delay_number as usize {
                         let finalized_blocks_number =
@@ -654,6 +653,8 @@ impl Chain {
                         self.fork_tree
                             .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
                     }
+                    // candidate_block need update
+                    self.add_proposal().await;
                 }
                 break;
             }

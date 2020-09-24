@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{load_data, verify_tx_hash, verify_tx_signature};
+use crate::util::{get_block, verify_tx_hash, verify_tx_signature};
 use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
-use cita_cloud_proto::blockchain::{
-    CompactBlockBody, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
-};
+use cita_cloud_proto::blockchain::{Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use cita_cloud_proto::controller::raw_transaction::Tx::{NormalTx, UtxoTx};
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
@@ -60,11 +58,8 @@ impl Authentication {
         };
 
         for h in begin_block_number..(init_block_number + 1) {
-            // region 3: block_height - block body
-            let block_body_bytes = load_data(self.storage_port, 3, h.to_be_bytes().to_vec())
-                .await
-                .unwrap();
-            let block_body = CompactBlockBody::decode(block_body_bytes.as_slice()).unwrap();
+            let block = get_block(h).await.unwrap().0;
+            let block_body = block.body.unwrap();
             self.history_hashes.insert(h, block_body.tx_hashes);
         }
         self.current_block_number = init_block_number;
