@@ -101,6 +101,7 @@ impl Controller {
         tokio::spawn(async move {
             notifier_clone.watch().await;
         });
+        /*
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             loop {
@@ -110,6 +111,7 @@ impl Controller {
                 }
             }
         });
+         */
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             loop {
