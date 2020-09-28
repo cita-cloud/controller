@@ -140,14 +140,14 @@ impl Controller {
                                     if let Some(block) = get_proposal(&block_hash).await {
                                         if let Some(block_body) = block.clone().body {
                                             let tx_hash_list = block_body.tx_hashes;
-                                            let is_valid = {
-                                                for hash in tx_hash_list.iter() {
-                                                    if !check_tx_exists(hash) {
-                                                        return false;
-                                                    }
+                                            // check tx in proposal
+                                            let mut is_valid = true;
+                                            for hash in tx_hash_list.iter() {
+                                                if !check_tx_exists(hash) {
+                                                    is_valid = false;
+                                                    break;
                                                 }
-                                                true
-                                            };
+                                            }
                                             if is_valid {
                                                 info!("add proposal");
                                                 let mut chain = c.chain.write().await;
