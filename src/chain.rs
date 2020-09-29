@@ -198,14 +198,15 @@ impl Chain {
                     }
                 }
 
-                // update pool
-                {
-                    let mut pool = self.pool.write().await;
-                    pool.update(tx_hash_list.clone());
-                }
+                // this must be before update pool
                 {
                     let mut auth = self.auth.write().await;
                     auth.insert_tx_hash(height, tx_hash_list.clone());
+                }
+                // update pool
+                {
+                    let mut pool = self.pool.write().await;
+                    pool.update(tx_hash_list);
                 }
 
                 // region 0: 0 - current height; 1 - current hash
@@ -609,14 +610,15 @@ impl Chain {
                                 }
                             }
                             finalized_tx_hash_list.extend_from_slice(&tx_hash_list);
+                            // this must be before update pool
+                            {
+                                let mut auth = self.auth.write().await;
+                                auth.insert_tx_hash(block_height, tx_hash_list.clone());
+                            }
                             // update pool
                             {
                                 let mut pool = self.pool.write().await;
-                                pool.update(tx_hash_list.clone());
-                            }
-                            {
-                                let mut auth = self.auth.write().await;
-                                auth.insert_tx_hash(block_height, tx_hash_list);
+                                pool.update(tx_hash_list);
                             }
 
                             // region 0: 0 - current height; 1 - current hash
