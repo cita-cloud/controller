@@ -41,7 +41,7 @@ impl Notifier {
 
     pub fn fetch_events(&self) -> Vec<NotifyMessage> {
         let mut events = Vec::new();
-        while let Ok(msg) = self.queue.pop() {
+        while let Some(msg) = self.queue.pop() {
             events.push(msg);
         }
         events

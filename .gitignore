@@ -12,10 +12,6 @@
 target/
 */target/
 
-# Cargo lock in subs
-**/Cargo.lock
-
-
 # editor specific
 # vim stuff
 *.swp
