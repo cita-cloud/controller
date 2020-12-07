@@ -88,8 +88,8 @@ impl Pool {
         self.update_low_bound()
     }
 
-    pub fn package(&self) -> HashSet<Vec<u8>> {
-        let mut tx_hash_list = HashSet::new();
+    pub fn package(&self) -> Vec<Vec<u8>> {
+        let mut tx_hash_list = vec![];
 
         let max_begin = self.order.saturating_sub(self.package_limit as u64);
         let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit {
@@ -100,7 +100,7 @@ impl Pool {
 
         for i in begin_order..self.order {
             if let Some(tx_hash) = self.order_set.get(&i) {
-                tx_hash_list.insert(tx_hash.to_owned());
+                tx_hash_list.push(tx_hash.to_owned());
             }
             if tx_hash_list.len() == self.package_limit {
                 break;
