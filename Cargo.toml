@@ -8,23 +8,23 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "*"
-log4rs = "*"
+log = "0.4"
+log4rs = "0.13"
 clap = "3.0.0-beta.2"
-git-version = "*"
+git-version = "0.3"
 tonic = "0.2"
 prost = "0.6"
 tokio = { version = "0.2", features = ["macros", "fs"] }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
-futures-util = "*"
-rand = "*"
-toml = "*"
-serde = "*"
-serde_derive = "*"
-hex = "*"
-inotify = "*"
-crossbeam = "*"
-backtrace = "*"
+futures-util = "0.3"
+rand = "0.7"
+toml = "0.5"
+serde = "1.0"
+serde_derive = "1.0"
+hex = "0.4"
+inotify = "0.8"
+crossbeam = "0.8"
+backtrace = "0.3"
 
 [dev-dependencies]
-tempdir = "*"
+tempdir = "0.3"
