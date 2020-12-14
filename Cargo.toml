@@ -22,7 +22,7 @@ toml = "*"
 serde = "*"
 serde_derive = "*"
 hex = "*"
-inotify = "*"
+inotify = "0.8.3"
 crossbeam = "*"
 backtrace = "*"
 
