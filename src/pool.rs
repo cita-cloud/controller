@@ -95,7 +95,7 @@ impl Pool {
         let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit {
             self.lower_bound
         } else {
-            rand::thread_rng().gen_range(self.lower_bound, max_begin)
+            rand::thread_rng().gen_range(self.lower_bound..max_begin)
         };
 
         for i in begin_order..self.order {

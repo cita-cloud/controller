@@ -115,7 +115,7 @@ impl Controller {
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             loop {
-                time::delay_for(Duration::new(1, 0)).await;
+                time::sleep(Duration::from_secs(1)).await;
                 {
                     let events = notifier_clone.fetch_events();
                     for event in events {
@@ -173,7 +173,7 @@ impl Controller {
                                 remove_proposal(event.filename.as_str()).await;
                             }
                             "blocks" => {
-                                if u64::from_str_radix(event.filename.as_str(), 10).is_ok() {
+                                if event.filename.as_str().parse::<u64>().is_ok() {
                                     {
                                         let mut chain = c.chain.write().await;
                                         chain.proc_sync_block().await;
