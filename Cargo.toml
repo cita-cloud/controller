@@ -9,7 +9,7 @@ edition = "2018"
 
 [dependencies]
 log = "*"
-log4rs = "*"
+log4rs = { version = "*", features = ["gzip"] }
 clap = "3.0.0-beta.2"
 git-version = "*"
 tonic = "*"

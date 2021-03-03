@@ -1,6 +1,7 @@
 FROM rust:slim-buster AS buildstage
 WORKDIR /build
 RUN /bin/sh -c set -eux;\
+    rustup component add rustfmt;\
     apt-get update;\
     apt-get install -y --no-install-recommends git;\
     rm -rf /var/lib/apt/lists/*;
