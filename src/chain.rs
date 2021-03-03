@@ -123,7 +123,7 @@ impl Chain {
                     .expect("encode block header failed");
 
                 let block_hash = {
-                    let ret = hash_data(self.kms_port, 1, block_header_bytes).await;
+                    let ret = hash_data(self.kms_port, block_header_bytes).await;
                     if ret.is_err() {
                         return;
                     }
@@ -280,7 +280,7 @@ impl Chain {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        let ret = hash_data(self.kms_port, 1, block_header_bytes).await;
+        let ret = hash_data(self.kms_port, block_header_bytes).await;
         if let Ok(block_hash) = ret {
             info!(
                 "add block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
@@ -338,7 +338,7 @@ impl Chain {
         }
         let transactions_root;
         {
-            let ret = hash_data(self.kms_port, 1, data).await;
+            let ret = hash_data(self.kms_port, data).await;
             if ret.is_err() {
                 return;
             } else {
@@ -382,7 +382,7 @@ impl Chain {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        let block_hash = hash_data(self.kms_port, 1, block_header_bytes)
+        let block_hash = hash_data(self.kms_port, block_header_bytes)
             .await
             .expect("hash data failed");
         info!(

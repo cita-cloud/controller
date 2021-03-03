@@ -16,7 +16,7 @@ use crossbeam::queue::SegQueue;
 use inotify::{Inotify, WatchMask};
 use std::fs::{self, DirEntry};
 use std::path::Path;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 pub static SYNC_FOLDERS: [&str; 3] = ["txs", "proposals", "blocks"];
 

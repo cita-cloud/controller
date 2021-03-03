@@ -12,9 +12,10 @@ log = "*"
 log4rs = "*"
 clap = "3.0.0-beta.2"
 git-version = "*"
-tonic = "0.2"
-prost = "0.6"
-tokio = { version = "0.2", features = ["macros", "fs"] }
+tonic = "*"
+prost = "*"
+tokio = { version = "*", features = ["full"] }
+tokio-stream = "*"
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
 futures-util = "*"
 rand = "*"

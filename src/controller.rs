@@ -115,7 +115,7 @@ impl Controller {
         let notifier_clone = c.notifier.clone();
         tokio::spawn(async move {
             loop {
-                time::delay_for(Duration::new(1, 0)).await;
+                time::sleep(Duration::from_secs(1)).await;
                 {
                     let events = notifier_clone.fetch_events();
                     for event in events {

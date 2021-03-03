@@ -104,13 +104,12 @@ pub async fn verify_tx_hash(
 
 pub async fn hash_data(
     kms_port: u16,
-    key_id: u64,
     data: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let kms_addr = format!("http://127.0.0.1:{}", kms_port);
     let mut client = KmsServiceClient::connect(kms_addr).await?;
 
-    let request = Request::new(HashDataRequest { key_id, data });
+    let request = Request::new(HashDataRequest { data });
 
     let response = client.hash_data(request).await?;
     Ok(response.into_inner().hash)
