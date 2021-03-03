@@ -173,7 +173,7 @@ impl Controller {
                                 remove_proposal(event.filename.as_str()).await;
                             }
                             "blocks" => {
-                                if u64::from_str_radix(event.filename.as_str(), 10).is_ok() {
+                                if event.filename.as_str().parse::<u64>().is_ok() {
                                     {
                                         let mut chain = c.chain.write().await;
                                         chain.proc_sync_block().await;
