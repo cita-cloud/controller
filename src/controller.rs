@@ -53,6 +53,8 @@ impl Controller {
         sys_config: SystemConfig,
         genesis: GenesisBlock,
         notifier: Arc<Notifier>,
+        key_id: u64,
+        node_address: Vec<u8>,
     ) -> Self {
         let auth = Arc::new(RwLock::new(Authentication::new(
             kms_port,
@@ -71,6 +73,8 @@ impl Controller {
             pool.clone(),
             auth.clone(),
             genesis,
+            key_id,
+            node_address,
         )));
         Controller {
             network_port,

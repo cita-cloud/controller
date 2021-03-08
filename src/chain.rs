@@ -48,6 +48,8 @@ pub struct Chain {
     pool: Arc<RwLock<Pool>>,
     auth: Arc<RwLock<Authentication>>,
     genesis: GenesisBlock,
+    key_id: u64,
+    node_address: Vec<u8>,
 }
 
 impl Chain {
@@ -63,6 +65,8 @@ impl Chain {
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
+        key_id: u64,
+        node_address: Vec<u8>,
     ) -> Self {
         let fork_tree_size = (block_delay_number * 2 + 2) as usize;
         let mut fork_tree = Vec::with_capacity(fork_tree_size);
@@ -85,6 +89,8 @@ impl Chain {
             pool,
             auth,
             genesis,
+            key_id,
+            node_address,
         }
     }
 
@@ -366,7 +372,7 @@ impl Chain {
             timestamp: unix_now(),
             height,
             transactions_root,
-            proposer: self.kms_port.to_be_bytes().to_vec(),
+            proposer: self.node_address.clone(),
         };
         let body = CompactBlockBody {
             tx_hashes: filtered_tx_hash_list,
