@@ -421,6 +421,21 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // load key_id
+    let buffer = fs::read_to_string("key_id")
+        .unwrap_or_else(|err| panic!("Error while loading key_id: [{}]", err));
+    let key_id = u64::from_str_radix(&buffer, 10)
+        .unwrap_or_else(|err| panic!("Error while parsing key_id: [{}]", err));
+    info!("key_id: {}", key_id);
+
+    // load node_address
+    let buffer = fs::read_to_string("node_address")
+        .unwrap_or_else(|err| panic!("Error while loading node_address: [{}]", err));
+    // skip 0x prefix
+    let node_address = hex::decode(&buffer[2..])
+        .unwrap_or_else(|err| panic!("Error while parsing node_address: [{}]", err));
+    info!("node_address: {:?}", buffer);
+
     // load genesis.toml
     let buffer = fs::read_to_string("genesis.toml")
         .unwrap_or_else(|err| panic!("Error while loading genesis.toml: [{}]", err));
@@ -506,6 +521,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         sys_config,
         genesis,
         Arc::new(Notifier::new(".".to_string())),
+        key_id,
+        node_address,
     );
 
     controller.init(current_block_number).await;
