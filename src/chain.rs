@@ -516,8 +516,12 @@ impl Chain {
                             }
 
                             // exec block
-                            let executed_block_hash =
-                                exec_block(self.executor_port, block_clone).await.unwrap();
+                            // if exec_block after consensus, we should ignore the error, because all node will have same error.
+                            // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
+                            // TODO: get length of hash from kms
+                            let executed_block_hash = exec_block(self.executor_port, block_clone)
+                                .await
+                                .unwrap_or_else(|_| vec![0u8; 32]);
                             // region 6 : block_height - executed_block_hash
                             store_data(self.storage_port, 6, key.clone(), executed_block_hash)
                                 .await
