@@ -109,7 +109,7 @@ use cita_cloud_proto::common::{Empty, Hash, ProposalWithProof, SimpleResponse};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-    RawTransaction,
+    PeerCount, RawTransaction, SoftwareVersion, TransactionIndex,
 };
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -130,7 +130,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Flag>,
     ) -> Result<Response<BlockNumber>, Status> {
-        info!("get_block_number request: {:?}", request);
+        debug!("get_block_number request: {:?}", request);
 
         let flag = request.into_inner();
         self.controller
@@ -148,7 +148,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<RawTransaction>,
     ) -> Result<Response<Hash>, Status> {
-        info!("send_raw_transaction request: {:?}", request);
+        debug!("send_raw_transaction request: {:?}", request);
 
         let raw_tx = request.into_inner();
 
@@ -167,7 +167,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Hash>,
     ) -> Result<Response<CompactBlock>, Status> {
-        info!("send_raw_transaction request: {:?}", request);
+        debug!("send_raw_transaction request: {:?}", request);
 
         let hash = request.into_inner();
 
@@ -186,7 +186,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<CompactBlock>, Status> {
-        info!("get_block_by_number request: {:?}", request);
+        debug!("get_block_by_number request: {:?}", request);
 
         let block_number = request.into_inner();
 
@@ -205,7 +205,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Hash>,
     ) -> Result<tonic::Response<RawTransaction>, Status> {
-        info!("get_block_by_number request: {:?}", request);
+        debug!("get_block_by_number request: {:?}", request);
 
         let hash = request.into_inner();
 
@@ -224,7 +224,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Empty>,
     ) -> Result<Response<ProtoSystemConfig>, Status> {
-        info!("get_system_config request: {:?}", request);
+        debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
             |e| Err(Status::internal(e)),
@@ -261,6 +261,89 @@ impl RpcService for RPCServer {
                         .unwrap()
                         .to_owned(),
                 });
+                Ok(reply)
+            },
+        )
+    }
+
+    async fn get_version(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<SoftwareVersion>, Status> {
+        debug!("get_version request: {:?}", request);
+        let reply = Response::new(SoftwareVersion {
+            version: "4.0.0".to_owned(),
+        });
+        Ok(reply)
+    }
+
+    async fn get_block_hash(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<Response<Hash>, Status> {
+        debug!("get_block_hash request: {:?}", request);
+
+        let block_number = request.into_inner();
+
+        self.controller
+            .rpc_get_block_hash(block_number.block_number)
+            .await
+            .map_or_else(
+                |e| Err(Status::internal(e)),
+                |block_hash| {
+                    let reply = Response::new(Hash { hash: block_hash });
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_transaction_block_number(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<Response<BlockNumber>, Status> {
+        debug!("get_transaction_block_number request: {:?}", request);
+
+        let tx_hash = request.into_inner();
+
+        self.controller
+            .rpc_get_tx_block_number(tx_hash.hash)
+            .await
+            .map_or_else(
+                |e| Err(Status::internal(e)),
+                |block_number| {
+                    let reply = Response::new(BlockNumber { block_number });
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_transaction_index(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<Response<TransactionIndex>, Status> {
+        debug!("get_transaction_index request: {:?}", request);
+
+        let tx_hash = request.into_inner();
+
+        self.controller
+            .rpc_get_tx_index(tx_hash.hash)
+            .await
+            .map_or_else(
+                |e| Err(Status::internal(e)),
+                |tx_index| {
+                    let reply = Response::new(TransactionIndex { tx_index });
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_peer_count(&self, request: Request<Empty>) -> Result<Response<PeerCount>, Status> {
+        debug!("get_peer_count request: {:?}", request);
+
+        self.controller.rpc_get_peer_count().await.map_or_else(
+            |e| Err(Status::internal(e)),
+            |peer_count| {
+                let reply = Response::new(PeerCount { peer_count });
                 Ok(reply)
             },
         )

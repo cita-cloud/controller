@@ -16,7 +16,10 @@ use crate::auth::Authentication;
 use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
-use crate::util::{check_tx_exists, get_proposal, get_tx, remove_proposal, remove_tx, write_tx};
+use crate::util::{
+    check_tx_exists, get_network_status, get_proposal, get_tx, load_data, remove_proposal,
+    remove_tx, write_tx,
+};
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::CompactBlock;
@@ -226,6 +229,41 @@ impl Controller {
 
     pub async fn rpc_get_block_by_hash(&self, _hash: Vec<u8>) -> Result<CompactBlock, String> {
         Err("unimplemented".to_owned())
+    }
+
+    pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, String> {
+        load_data(self.storage_port, 4, block_number.to_be_bytes().to_vec())
+            .await
+            .map_err(|_| "load block hash failed".to_owned())
+    }
+
+    pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
+        load_data(self.storage_port, 7, tx_hash)
+            .await
+            .map_err(|_| "load block hash failed".to_owned())
+            .map(|v| {
+                let mut bytes: [u8; 8] = [0; 8];
+                bytes[..8].clone_from_slice(&v[..8]);
+                u64::from_be_bytes(bytes)
+            })
+    }
+
+    pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
+        load_data(self.storage_port, 9, tx_hash)
+            .await
+            .map_err(|_| "load tx index failed".to_owned())
+            .map(|v| {
+                let mut bytes: [u8; 8] = [0; 8];
+                bytes[..8].clone_from_slice(&v[..8]);
+                u64::from_be_bytes(bytes)
+            })
+    }
+
+    pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
+        get_network_status(self.network_port)
+            .await
+            .map_err(|_| "get network status failed".to_owned())
+            .map(|status| status.peer_count)
     }
 
     pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, String> {

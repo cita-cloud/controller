@@ -154,6 +154,11 @@ impl Chain {
                     .await
                     .expect("store_data failed");
 
+                // region 8 : block hash - block_height
+                store_data(self.storage_port, 8, block_hash.to_owned(), key.clone())
+                    .await
+                    .expect("store_data failed");
+
                 // region 3: block_height - block body
 
                 // region 2: block_height - block header
@@ -161,7 +166,7 @@ impl Chain {
                 // region 1: tx_hash - tx
                 let tx_hash_list = block_body.tx_hashes;
                 {
-                    for hash in tx_hash_list.clone() {
+                    for (tx_index, hash) in tx_hash_list.iter().enumerate() {
                         // get tx from pool maybe failed
                         // we didn't check txs dup with pre blocks
                         // so there will be dup tx in different blocks
@@ -197,6 +202,19 @@ impl Chain {
                                     }
                                 }
                             }
+                            // region 7 : tx_hash - block_height
+                            store_data(self.storage_port, 7, hash.to_vec(), key.clone())
+                                .await
+                                .expect("store tx_hash_2_block_height failed");
+                            // region 9 : tx_hash - tx_index
+                            store_data(
+                                self.storage_port,
+                                9,
+                                hash.to_vec(),
+                                (tx_index as u64).to_be_bytes().to_vec(),
+                            )
+                            .await
+                            .expect("store tx_hash_2_block_height failed");
                         } else {
                             warn!("proc_sync_block get tx failed");
                             break;
@@ -537,6 +555,11 @@ impl Chain {
                                 .await
                                 .expect("store_data failed");
 
+                            // region 8 : block hash - block_height
+                            store_data(self.storage_port, 8, block_hash.to_owned(), key.clone())
+                                .await
+                                .expect("store_data failed");
+
                             // region 3: block_height - block body
                             let mut block_body_bytes = Vec::new();
                             block_body
@@ -566,7 +589,7 @@ impl Chain {
                             // region 1: tx_hash - tx
                             let tx_hash_list = block_body.tx_hashes;
                             {
-                                for hash in tx_hash_list.clone() {
+                                for (tx_index, hash) in tx_hash_list.iter().enumerate() {
                                     // get tx from pool maybe failed
                                     // we didn't check txs dup with pre blocks
                                     // so there will be dup tx in different blocks
@@ -607,13 +630,32 @@ impl Chain {
                                             }
                                         }
 
-                                    // let mut raw_tx_bytes = Vec::new();
-                                    // raw_tx
-                                    //    .encode(&mut raw_tx_bytes)
-                                    //    .expect("encode raw_tx failed");
-                                    // store_data(self.storage_port, 1, hash, raw_tx_bytes)
-                                    //    .await
-                                    //    .expect("store_data failed");
+                                        // let mut raw_tx_bytes = Vec::new();
+                                        // raw_tx
+                                        //    .encode(&mut raw_tx_bytes)
+                                        //    .expect("encode raw_tx failed");
+                                        // store_data(self.storage_port, 1, hash, raw_tx_bytes)
+                                        //    .await
+                                        //    .expect("store_data failed");
+
+                                        // region 7 : tx_hash - block_height
+                                        store_data(
+                                            self.storage_port,
+                                            7,
+                                            hash.to_vec(),
+                                            key.clone(),
+                                        )
+                                        .await
+                                        .expect("store tx_hash_2_block_height failed");
+                                        // region 9 : tx_hash - tx_index
+                                        store_data(
+                                            self.storage_port,
+                                            9,
+                                            hash.to_vec(),
+                                            (tx_index as u64).to_be_bytes().to_vec(),
+                                        )
+                                        .await
+                                        .expect("store tx_hash_2_block_height failed");
                                     } else {
                                         warn!("get tx from pool failed");
                                     }
