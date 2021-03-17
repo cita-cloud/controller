@@ -21,13 +21,15 @@ use cita_cloud_proto::kms::{
     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
     VerifyDataHashRequest,
 };
+use cita_cloud_proto::network::{
+    network_service_client::NetworkServiceClient, NetworkStatusResponse,
+};
 use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
-
 use log::{info, warn};
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_cloud_proto::common::ProposalWithProof;
+use cita_cloud_proto::common::{Empty, ProposalWithProof};
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
 use std::path::Path;
@@ -155,6 +157,18 @@ pub async fn exec_block(
 
     let response = client.exec(request).await?;
     Ok(response.into_inner().hash)
+}
+
+pub async fn get_network_status(
+    network_port: u16,
+) -> Result<NetworkStatusResponse, Box<dyn std::error::Error>> {
+    let network_addr = format!("http://127.0.0.1:{}", network_port);
+    let mut client = NetworkServiceClient::connect(network_addr).await?;
+
+    let request = Request::new(Empty {});
+
+    let response = client.get_network_status(request).await?;
+    Ok(response.into_inner())
 }
 
 pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
