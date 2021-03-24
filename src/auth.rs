@@ -89,6 +89,9 @@ impl Authentication {
         if tx.version != self.sys_config.version {
             return Err("Invalid version".to_owned());
         }
+        if tx.to.len() != 20 {
+            return Err("Invalid to".to_owned());
+        }
         if tx.nonce.len() > 128 {
             return Err("Invalid nonce".to_owned());
         }
