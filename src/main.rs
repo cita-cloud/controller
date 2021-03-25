@@ -610,7 +610,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
 
     controller.init(current_block_number).await;
 
-    let addr_str = format!("127.0.0.1:{}", opts.grpc_port);
+    let addr_str = format!("0.0.0.0:{}", opts.grpc_port);
     let addr = addr_str.parse()?;
 
     info!("start grpc server!");
