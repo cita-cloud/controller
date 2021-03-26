@@ -132,9 +132,20 @@ impl Controller {
                                     if let Some(raw_tx) = get_tx(&tx_hash).await {
                                         let ret = c.rpc_send_raw_transaction(raw_tx).await;
                                         match ret {
-                                            Ok(hash) if hash == tx_hash => continue,
-                                            Err(e) if e == "dup" => continue,
-                                            _ => {}
+                                            Ok(hash) => {
+                                                if hash == tx_hash {
+                                                    continue;
+                                                } else {
+                                                    warn!("tx hash mismatch");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                if e == "dup" {
+                                                    continue;
+                                                } else {
+                                                    warn!("add sync tx failed: {:?}", e);
+                                                }
+                                            }
                                         }
                                     }
                                 }
