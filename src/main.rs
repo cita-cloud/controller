@@ -561,7 +561,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
             // region 0 global
-            let tx_hash = load_data(storage_port, 0, key).await.unwrap();
+            let tx_hash = load_data_maybe_empty(storage_port, 0, key).await.unwrap();
             if tx_hash.is_empty() {
                 continue;
             }
