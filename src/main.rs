@@ -460,7 +460,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::sync::Notifier;
-use crate::util::{load_data, reconfigure};
+use crate::util::{load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
@@ -529,7 +529,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         interval.tick().await;
         {
-            let ret = load_data(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
+            let ret = load_data_maybe_empty(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
             if let Ok(current_block_number_bytes) = ret {
                 info!("get current block number success!");
                 if current_block_number_bytes.is_empty() {
