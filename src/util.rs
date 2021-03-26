@@ -32,6 +32,7 @@ use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::common::{Empty, ProposalWithProof};
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use tokio::fs;
 
@@ -143,7 +144,12 @@ pub async fn load_data(
     let request = Request::new(ExtKey { region, key });
 
     let response = client.load(request).await?;
-    Ok(response.into_inner().value)
+    let value = response.into_inner().value;
+    if value.is_empty() {
+        Err(Box::new(Error::new(ErrorKind::Other, "empty value")))
+    } else {
+        Ok(value)
+    }
 }
 
 pub async fn exec_block(
