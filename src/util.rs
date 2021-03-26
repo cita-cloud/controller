@@ -152,6 +152,20 @@ pub async fn load_data(
     }
 }
 
+pub async fn load_data_maybe_empty(
+    storage_port: u16,
+    region: u32,
+    key: Vec<u8>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
+    let mut client = StorageServiceClient::connect(storage_addr).await?;
+
+    let request = Request::new(ExtKey { region, key });
+
+    let response = client.load(request).await?;
+    Ok(response.into_inner().value)
+}
+
 pub async fn exec_block(
     executor_port: u16,
     block: CompactBlock,
