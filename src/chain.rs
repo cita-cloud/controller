@@ -106,8 +106,9 @@ impl Chain {
         loop {
             let h = self.block_number + 1;
             if let Some((block, proof)) = get_block(h).await {
-                let block_header = block.header.unwrap();
-                let block_body = block.body.unwrap();
+                let block_clone = block.clone();
+                let block_header = block_clone.header.unwrap();
+                let block_body = block_clone.body.unwrap();
 
                 let height = block_header.height;
                 if height != h {
@@ -143,108 +144,8 @@ impl Chain {
                     }
                 }
                 // finalized block
-                let key = height.to_be_bytes().to_vec();
-                // region 5 : block_height - proof
-                // store_data(self.storage_port, 5, key.clone(), proof_slice.to_owned())
-                //    .await
-                //    .expect("store proof failed");
-
-                // region 4 : block_height - block hash
-                store_data(self.storage_port, 4, key.clone(), block_hash.clone())
-                    .await
-                    .expect("store_data failed");
-
-                // region 8 : block hash - block_height
-                store_data(self.storage_port, 8, block_hash.to_owned(), key.clone())
-                    .await
-                    .expect("store_data failed");
-
-                // region 3: block_height - block body
-
-                // region 2: block_height - block header
-
-                // region 1: tx_hash - tx
-                let tx_hash_list = block_body.tx_hashes;
-                {
-                    for (tx_index, hash) in tx_hash_list.iter().enumerate() {
-                        // get tx from pool maybe failed
-                        // we didn't check txs dup with pre blocks
-                        // so there will be dup tx in different blocks
-                        // tx maybe has been removed by pre block
-                        if let Some(raw_tx) = get_tx(&hash).await {
-                            // if tx is utxo tx, update sys_config
-                            {
-                                if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
-                                    let ret = {
-                                        let mut auth = self.auth.write().await;
-                                        auth.update_system_config(&utxo_tx)
-                                    };
-                                    if ret {
-                                        // if sys_config changed, store utxo tx hash into global region
-                                        let lock_id = utxo_tx.transaction.unwrap().lock_id;
-                                        let key = lock_id.to_be_bytes().to_vec();
-                                        let tx_hash = utxo_tx.transaction_hash;
-                                        store_data(self.storage_port, 0, key, tx_hash)
-                                            .await
-                                            .expect("store_data failed");
-
-                                        if lock_id == LOCK_ID_VALIDATORS
-                                            || lock_id == LOCK_ID_BLOCK_INTERVAL
-                                        {
-                                            let sys_config = {
-                                                let auth = self.auth.read().await;
-                                                auth.get_system_config()
-                                            };
-                                            reconfigure(self.consensus_port, sys_config)
-                                                .await
-                                                .expect("reconfigure failed");
-                                        }
-                                    }
-                                }
-                            }
-                            // region 7 : tx_hash - block_height
-                            store_data(self.storage_port, 7, hash.to_vec(), key.clone())
-                                .await
-                                .expect("store tx_hash_2_block_height failed");
-                            // region 9 : tx_hash - tx_index
-                            store_data(
-                                self.storage_port,
-                                9,
-                                hash.to_vec(),
-                                (tx_index as u64).to_be_bytes().to_vec(),
-                            )
-                            .await
-                            .expect("store tx_hash_2_block_height failed");
-                        } else {
-                            warn!("proc_sync_block get tx failed");
-                            break;
-                        }
-                    }
-                }
-
-                // this must be before update pool
-                {
-                    let mut auth = self.auth.write().await;
-                    auth.insert_tx_hash(height, tx_hash_list.clone());
-                }
-                // update pool
-                {
-                    let mut pool = self.pool.write().await;
-                    pool.update(tx_hash_list);
-                }
-
-                // region 0: 0 - current height; 1 - current hash
-                store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
-                    .await
-                    .expect("store_data failed");
-                store_data(
-                    self.storage_port,
-                    0,
-                    1u64.to_be_bytes().to_vec(),
-                    block_hash.clone(),
-                )
-                .await
-                .expect("store_data failed");
+                self.finalize_block(block, proof, block_hash.clone(), true)
+                    .await;
 
                 self.block_number += 1;
                 self.block_hash = block_hash;
@@ -438,6 +339,162 @@ impl Chain {
         false
     }
 
+    async fn finalize_block(
+        &self,
+        block: CompactBlock,
+        proof: Vec<u8>,
+        block_hash: Vec<u8>,
+        is_sync: bool,
+    ) {
+        let block_clone = block.clone();
+        let block_header = block.header.unwrap();
+        let block_body = block.body.unwrap();
+        let block_height = block_header.height;
+        let key = block_height.to_be_bytes().to_vec();
+
+        if !is_sync && check_block_exists(block_height) {
+            warn!("finalized block has synced");
+            return;
+        }
+
+        // exec block
+        // if exec_block after consensus, we should ignore the error, because all node will have same error.
+        // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
+        // TODO: get length of hash from kms
+        let executed_block_hash = exec_block(self.executor_port, block_clone)
+            .await
+            .unwrap_or_else(|_| vec![0u8; 32]);
+        // region 6 : block_height - executed_block_hash
+        store_data(self.storage_port, 6, key.clone(), executed_block_hash)
+            .await
+            .expect("store result failed");
+
+        // region 5 : block_height - proof
+        // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
+        //    .await
+        //    .expect("store proof failed");
+
+        // region 4 : block_height - block hash
+        store_data(self.storage_port, 4, key.clone(), block_hash.clone())
+            .await
+            .expect("store_data failed");
+
+        // region 8 : block hash - block_height
+        store_data(self.storage_port, 8, block_hash.clone(), key.clone())
+            .await
+            .expect("store_data failed");
+
+        if !is_sync {
+            // region 3: block_height - block body
+            let mut block_body_bytes = Vec::new();
+            block_body
+                .encode(&mut block_body_bytes)
+                .expect("encode block body failed");
+            // store_data(self.storage_port, 3, key.clone(), block_body_bytes)
+            //    .await
+            //    .expect("store_data failed");
+
+            // region 2: block_height - block header
+            let mut block_header_bytes = Vec::new();
+            block_header
+                .encode(&mut block_header_bytes)
+                .expect("encode block header failed");
+            // store_data(self.storage_port, 2, key.clone(), block_header_bytes)
+            //    .await
+            //    .expect("store_data failed");
+
+            // store block with proof in sync folder.
+            write_block(
+                block_height,
+                block_header_bytes.as_slice(),
+                block_body_bytes.as_slice(),
+                proof.as_slice(),
+            )
+            .await;
+        }
+
+        // region 1: tx_hash - tx
+        let tx_hash_list = block_body.tx_hashes;
+        {
+            for (tx_index, hash) in tx_hash_list.iter().enumerate() {
+                let raw_tx = get_tx(&hash).await.expect("get tx failed");
+                // if tx is utxo tx, update sys_config
+                {
+                    if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
+                        let ret = {
+                            let mut auth = self.auth.write().await;
+                            auth.update_system_config(&utxo_tx)
+                        };
+                        if ret {
+                            // if sys_config changed, store utxo tx hash into global region
+                            let lock_id = utxo_tx.transaction.unwrap().lock_id;
+                            let key = lock_id.to_be_bytes().to_vec();
+                            let tx_hash = utxo_tx.transaction_hash;
+                            store_data(self.storage_port, 0, key, tx_hash)
+                                .await
+                                .expect("store_data failed");
+
+                            if lock_id == LOCK_ID_VALIDATORS || lock_id == LOCK_ID_BLOCK_INTERVAL {
+                                let sys_config = {
+                                    let auth = self.auth.read().await;
+                                    auth.get_system_config()
+                                };
+                                reconfigure(self.consensus_port, sys_config)
+                                    .await
+                                    .expect("reconfigure failed");
+                            }
+                        }
+                    }
+                }
+
+                // let mut raw_tx_bytes = Vec::new();
+                // raw_tx
+                //    .encode(&mut raw_tx_bytes)
+                //    .expect("encode raw_tx failed");
+                // store_data(self.storage_port, 1, hash, raw_tx_bytes)
+                //    .await
+                //    .expect("store_data failed");
+
+                // region 7 : tx_hash - block_height
+                store_data(self.storage_port, 7, hash.to_vec(), key.clone())
+                    .await
+                    .expect("store tx_hash_2_block_height failed");
+                // region 9 : tx_hash - tx_index
+                store_data(
+                    self.storage_port,
+                    9,
+                    hash.to_vec(),
+                    (tx_index as u64).to_be_bytes().to_vec(),
+                )
+                .await
+                .expect("store tx_hash_2_block_height failed");
+            }
+        }
+        // this must be before update pool
+        {
+            let mut auth = self.auth.write().await;
+            auth.insert_tx_hash(block_height, tx_hash_list.clone());
+        }
+        // update pool
+        {
+            let mut pool = self.pool.write().await;
+            pool.update(tx_hash_list);
+        }
+
+        // region 0: 0 - current height; 1 - current hash
+        store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
+            .await
+            .expect("store_data failed");
+        store_data(
+            self.storage_port,
+            0,
+            1u64.to_be_bytes().to_vec(),
+            block_hash.to_owned(),
+        )
+        .await
+        .expect("store_data failed");
+    }
+
     pub async fn commit_block(&mut self, proposal: &[u8], proof: &[u8]) {
         info!(
             "commit_block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
@@ -521,170 +578,16 @@ impl Chain {
                             // get block
                             let (block, proof_opt) =
                                 self.fork_tree[index].get(block_hash).unwrap().to_owned();
-                            let block_clone = block.clone();
-                            let block_header = block.header.unwrap();
-                            let block_body = block.body.unwrap();
-                            let proof = proof_opt.unwrap();
-                            let block_height = self.block_number + index as u64 + 1;
-                            let key = block_height.to_be_bytes().to_vec();
-
-                            if check_block_exists(block_height) {
-                                warn!("finalized block has synced");
-                                return;
-                            }
-
-                            // exec block
-                            // if exec_block after consensus, we should ignore the error, because all node will have same error.
-                            // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
-                            // TODO: get length of hash from kms
-                            let executed_block_hash = exec_block(self.executor_port, block_clone)
-                                .await
-                                .unwrap_or_else(|_| vec![0u8; 32]);
-                            // region 6 : block_height - executed_block_hash
-                            store_data(self.storage_port, 6, key.clone(), executed_block_hash)
-                                .await
-                                .expect("store result failed");
-
-                            // region 5 : block_height - proof
-                            // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
-                            //    .await
-                            //    .expect("store proof failed");
-
-                            // region 4 : block_height - block hash
-                            store_data(self.storage_port, 4, key.clone(), block_hash.to_owned())
-                                .await
-                                .expect("store_data failed");
-
-                            // region 8 : block hash - block_height
-                            store_data(self.storage_port, 8, block_hash.to_owned(), key.clone())
-                                .await
-                                .expect("store_data failed");
-
-                            // region 3: block_height - block body
-                            let mut block_body_bytes = Vec::new();
-                            block_body
-                                .encode(&mut block_body_bytes)
-                                .expect("encode block body failed");
-                            // store_data(self.storage_port, 3, key.clone(), block_body_bytes)
-                            //    .await
-                            //    .expect("store_data failed");
-
-                            // region 2: block_height - block header
-                            let mut block_header_bytes = Vec::new();
-                            block_header
-                                .encode(&mut block_header_bytes)
-                                .expect("encode block header failed");
-                            // store_data(self.storage_port, 2, key.clone(), block_header_bytes)
-                            //    .await
-                            //    .expect("store_data failed");
-
-                            // store block with proof in sync folder.
-                            write_block(
-                                block_height,
-                                block_header_bytes.as_slice(),
-                                block_body_bytes.as_slice(),
-                                proof.as_slice(),
+                            self.finalize_block(
+                                block.to_owned(),
+                                proof_opt.unwrap(),
+                                block_hash.to_owned(),
+                                false,
                             )
                             .await;
-                            // region 1: tx_hash - tx
-                            let tx_hash_list = block_body.tx_hashes;
-                            {
-                                for (tx_index, hash) in tx_hash_list.iter().enumerate() {
-                                    // get tx from pool maybe failed
-                                    // we didn't check txs dup with pre blocks
-                                    // so there will be dup tx in different blocks
-                                    // tx maybe has been removed by pre block
-                                    if let Some(raw_tx) = get_tx(&hash).await {
-                                        // if tx is utxo tx, update sys_config
-                                        {
-                                            if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
-                                                let ret = {
-                                                    let mut auth = self.auth.write().await;
-                                                    auth.update_system_config(&utxo_tx)
-                                                };
-                                                if ret {
-                                                    // if sys_config changed, store utxo tx hash into global region
-                                                    let lock_id =
-                                                        utxo_tx.transaction.unwrap().lock_id;
-                                                    let key = lock_id.to_be_bytes().to_vec();
-                                                    let tx_hash = utxo_tx.transaction_hash;
-                                                    store_data(self.storage_port, 0, key, tx_hash)
-                                                        .await
-                                                        .expect("store_data failed");
-
-                                                    if lock_id == LOCK_ID_VALIDATORS
-                                                        || lock_id == LOCK_ID_BLOCK_INTERVAL
-                                                    {
-                                                        let sys_config = {
-                                                            let auth = self.auth.read().await;
-                                                            auth.get_system_config()
-                                                        };
-                                                        reconfigure(
-                                                            self.consensus_port,
-                                                            sys_config,
-                                                        )
-                                                        .await
-                                                        .expect("reconfigure failed");
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // let mut raw_tx_bytes = Vec::new();
-                                        // raw_tx
-                                        //    .encode(&mut raw_tx_bytes)
-                                        //    .expect("encode raw_tx failed");
-                                        // store_data(self.storage_port, 1, hash, raw_tx_bytes)
-                                        //    .await
-                                        //    .expect("store_data failed");
-
-                                        // region 7 : tx_hash - block_height
-                                        store_data(
-                                            self.storage_port,
-                                            7,
-                                            hash.to_vec(),
-                                            key.clone(),
-                                        )
-                                        .await
-                                        .expect("store tx_hash_2_block_height failed");
-                                        // region 9 : tx_hash - tx_index
-                                        store_data(
-                                            self.storage_port,
-                                            9,
-                                            hash.to_vec(),
-                                            (tx_index as u64).to_be_bytes().to_vec(),
-                                        )
-                                        .await
-                                        .expect("store tx_hash_2_block_height failed");
-                                    } else {
-                                        warn!("get tx from pool failed");
-                                    }
-                                }
-                            }
-                            finalized_tx_hash_list.extend_from_slice(&tx_hash_list);
-                            // this must be before update pool
-                            {
-                                let mut auth = self.auth.write().await;
-                                auth.insert_tx_hash(block_height, tx_hash_list.clone());
-                            }
-                            // update pool
-                            {
-                                let mut pool = self.pool.write().await;
-                                pool.update(tx_hash_list);
-                            }
-
-                            // region 0: 0 - current height; 1 - current hash
-                            store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
-                                .await
-                                .expect("store_data failed");
-                            store_data(
-                                self.storage_port,
-                                0,
-                                1u64.to_be_bytes().to_vec(),
-                                block_hash.to_owned(),
-                            )
-                            .await
-                            .expect("store_data failed");
+                            let block_body = block.to_owned().body.unwrap();
+                            finalized_tx_hash_list
+                                .extend_from_slice(block_body.tx_hashes.as_slice());
                         }
                         self.block_number += finalized_blocks_number as u64;
                         self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
