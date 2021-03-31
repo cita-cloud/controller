@@ -386,6 +386,11 @@ impl Chain {
             return true;
         }
 
+        if h > self.block_number + self.fork_tree.len() as u64 {
+            warn!("proposal too high");
+            return false;
+        }
+
         let block_hash = &proposal[8..40];
         let proposal_state_root = &proposal[40..72];
         let proposal_proof = &proposal[72..];
