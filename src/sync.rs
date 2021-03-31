@@ -14,7 +14,7 @@
 
 use crossbeam::queue::SegQueue;
 use inotify::{Inotify, WatchMask};
-use std::fs::{self, DirEntry};
+use std::fs;
 use std::path::Path;
 use tokio_stream::StreamExt;
 
@@ -47,34 +47,9 @@ impl Notifier {
         events
     }
 
-    fn walk_dir(&self, dir: &str, before: u64) -> Vec<NotifyMessage> {
+    fn walk_dir(&self, dir: &str) -> Vec<NotifyMessage> {
         let root_path = Path::new(&self.root);
         let path = root_path.join(dir);
-
-        // walk dir to find latest file
-        let ret = fs::read_dir(path.clone());
-        if ret.is_err() {
-            return vec![];
-        }
-        let read_dir = ret.unwrap();
-
-        let ret = read_dir.min_by_key(|e| {
-            if e.is_ok() {
-                let e = e.as_ref().unwrap();
-                return get_modify_elapsed(e);
-            }
-            u64::max_value()
-        });
-
-        if ret.is_none() {
-            return vec![];
-        }
-        let ret = ret.unwrap();
-        if ret.is_err() {
-            return vec![];
-        }
-        let latest_e = ret.unwrap();
-        let latest_elapsed = get_modify_elapsed(&latest_e);
 
         // walk dir to list files
         let ret = fs::read_dir(path);
@@ -84,16 +59,6 @@ impl Notifier {
         let read_dir = ret.unwrap();
 
         read_dir
-            .filter(|e| {
-                if e.is_err() {
-                    return false;
-                }
-                let e = e.as_ref().unwrap();
-                if e.file_name().into_string().unwrap().starts_with('.') {
-                    return false;
-                }
-                get_modify_elapsed(e) < latest_elapsed.saturating_add(before)
-            })
             .map(|e| {
                 let e = e.unwrap();
                 NotifyMessage {
@@ -104,9 +69,9 @@ impl Notifier {
             .collect()
     }
 
-    pub fn list(&self, interval: u64) {
+    pub fn list(&self) {
         for dir in SYNC_FOLDERS.iter() {
-            let msg = self.walk_dir(dir, interval);
+            let msg = self.walk_dir(dir);
             for m in msg {
                 self.queue.push(m)
             }
@@ -144,19 +109,6 @@ impl Notifier {
     }
 }
 
-fn get_modify_elapsed(e: &DirEntry) -> u64 {
-    if let Ok(m) = e.metadata() {
-        if !m.is_dir() {
-            if let Ok(s) = m.modified() {
-                if let Ok(d) = s.elapsed() {
-                    return d.as_secs();
-                }
-            }
-        }
-    }
-    u64::max_value()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +117,7 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
     use tempdir::TempDir;
-    use tokio::time::delay_for;
+    use tokio::time;
 
     #[test]
     fn walk_dir_test() {
@@ -188,7 +140,7 @@ mod tests {
         let d4 = path.join("d4");
         fs::create_dir(d4).unwrap();
 
-        let msgs = n.walk_dir("txs", 3);
+        let msgs = n.walk_dir("txs");
         let expect_msg0 = NotifyMessage {
             folder: "txs".to_string(),
             filename: "tx3".to_string(),
@@ -197,8 +149,13 @@ mod tests {
             folder: "txs".to_string(),
             filename: "tx2".to_string(),
         };
+        let expect_msg2 = NotifyMessage {
+            folder: "txs".to_string(),
+            filename: "tx1".to_string(),
+        };
         assert_eq!(msgs.contains(&expect_msg0), true);
         assert_eq!(msgs.contains(&expect_msg1), true);
+        assert_eq!(msgs.contains(&expect_msg2), true);
     }
 
     #[tokio::test]
@@ -217,7 +174,7 @@ mod tests {
             n_clone.watch().await;
         });
 
-        delay_for(Duration::new(1, 0)).await;
+        time::sleep(time::Duration::from_secs(1)).await;
 
         let f1 = txs_path.join("tx1");
         fs::write(f1, b"tx1").unwrap();
@@ -227,22 +184,22 @@ mod tests {
         let f2 = blocks_path.join("block1");
         fs::write(f2, b"block1").unwrap();
 
-        delay_for(Duration::new(1, 0)).await;
+        time::sleep(time::Duration::from_secs(1)).await;
 
         assert_eq!(
             n.queue.pop(),
-            Ok(NotifyMessage {
+            Some(NotifyMessage {
                 folder: "txs".to_string(),
                 filename: "tx1".to_string(),
             })
         );
         assert_eq!(
             n.queue.pop(),
-            Ok(NotifyMessage {
+            Some(NotifyMessage {
                 folder: "blocks".to_string(),
                 filename: "block1".to_string(),
             })
         );
-        assert_eq!(n.queue.pop().is_err(), true);
+        assert_eq!(n.queue.pop().is_none(), true);
     }
 }

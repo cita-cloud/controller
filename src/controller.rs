@@ -99,7 +99,7 @@ impl Controller {
             let mut auth = self.auth.write().await;
             auth.init(init_block_number).await;
         }
-        self.notifier.list(150u64);
+        self.notifier.list();
         self.proc_sync_notify().await;
     }
 
