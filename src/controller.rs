@@ -326,6 +326,7 @@ impl Controller {
     }
 
     pub async fn chain_check_proposal(&self, proposal: &[u8]) -> Result<bool, String> {
+        info!("enter chain_check_proposal");
         let chain = self.chain.read().await;
         let ret = chain.check_proposal(proposal).await;
         Ok(ret)

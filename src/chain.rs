@@ -372,6 +372,7 @@ impl Chain {
     }
 
     pub async fn check_proposal(&self, proposal: &[u8]) -> bool {
+        info!("enter check_proposal");
         if proposal.len() < 8 + 32 + 32 {
             warn!("proposal length invalid");
             return false;
@@ -385,6 +386,7 @@ impl Chain {
 
         // old proposal
         if h <= self.block_number {
+            info!("old proposal");
             return true;
         }
 
@@ -420,6 +422,7 @@ impl Chain {
             };
 
             if proposal_state_root == state_root && proposal_proof == proof {
+                info!("check_proposal ok");
                 return true;
             } else {
                 warn!("check_proposal failed!\nproposal_state_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nstate_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproposal_proof 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproof 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
