@@ -587,7 +587,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
-                let _ = reconfigure(consensus_port, sys_config_clone.clone()).await;
+                let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
+                if ret.is_ok() && ret.unwrap() {
+                    info!("reconfigure success!");
+                    break;
+                }
             }
         }
     });
