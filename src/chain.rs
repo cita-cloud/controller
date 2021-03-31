@@ -196,6 +196,7 @@ impl Chain {
 
     pub async fn get_proposal(&self) -> Option<Vec<u8>> {
         if let Some((h, ref blk_hash)) = self.candidate_block {
+            let h_bytes = h.to_be_bytes().to_vec();
             let pre_h = h - self.block_delay_number as u64 - 1;
             let key = pre_h.to_be_bytes().to_vec();
 
@@ -218,7 +219,7 @@ impl Chain {
             };
 
             let mut proposal = Vec::new();
-            proposal.extend_from_slice(&key); // len 8
+            proposal.extend_from_slice(&h_bytes); // len 8
             proposal.extend_from_slice(blk_hash); // len 32
             proposal.extend_from_slice(&state_root); // len 32
             proposal.extend_from_slice(&proof); // len unknown
