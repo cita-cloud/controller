@@ -96,6 +96,7 @@ impl Chain {
 
     pub async fn init(&self, init_block_number: u64) {
         if init_block_number == 0 {
+            info!("finalize genesis block");
             self.finalize_block(
                 self.genesis.genesis_block(),
                 vec![0u8; 32],
@@ -470,7 +471,11 @@ impl Chain {
         let block_height = block_header.height;
         let key = block_height.to_be_bytes().to_vec();
 
-        if !is_sync && check_block_exists(block_height) {
+        info!("finalize_block: {}", block_height);
+
+        // genesis block (block_height = 0) can't be processed by sync
+        // because sync start from self.block_number + 1
+        if !is_sync && check_block_exists(block_height) && block_height != 0 {
             warn!("finalized block has synced");
             return;
         }
