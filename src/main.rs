@@ -460,7 +460,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::sync::Notifier;
-use crate::util::{load_data, load_data_maybe_empty, reconfigure};
+use crate::util::{load_data, load_data_maybe_empty, reconfigure, hash_data};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
@@ -488,21 +488,33 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     let block_delay_number = config.block_delay_number;
 
     let grpc_port_clone = opts.grpc_port.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(3));
-        loop {
-            interval.tick().await;
-            // register endpoint
-            {
-                let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
-                if ret.is_ok() && ret.unwrap() {
-                    info!("register network msg handler success!");
-                    break;
-                }
+    let mut interval = time::interval(Duration::from_secs(3));
+    loop {
+        interval.tick().await;
+        // register endpoint
+        {
+            let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
+            if ret.is_ok() && ret.unwrap() {
+                info!("register network msg handler success!");
+                break;
             }
-            warn!("register network msg handler failed! Retrying");
         }
-    });
+        warn!("register network msg handler failed! Retrying");
+    }
+
+    let mut interval = time::interval(Duration::from_secs(3));
+    loop {
+        interval.tick().await;
+        // register endpoint
+        {
+            let ret = hash_data(kms_port, vec![0u8; 32]).await;
+            if ret.is_ok() {
+                info!("kms is ready!");
+                break;
+            }
+        }
+        warn!("kms not ready! Retrying");
+    }
 
     // load key_id
     let buffer = fs::read_to_string("key_id")
@@ -580,21 +592,19 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
 
     // send configuration to consensus
     let sys_config_clone = sys_config.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            // reconfigure consensus
-            {
-                info!("reconfigure consensus!");
-                let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
-                if ret.is_ok() && ret.unwrap() {
-                    info!("reconfigure success!");
-                    break;
-                }
+    let mut interval = time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+        // reconfigure consensus
+        {
+            info!("reconfigure consensus!");
+            let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
+            if ret.is_ok() && ret.unwrap() {
+                info!("reconfigure success!");
+                break;
             }
         }
-    });
+    }
 
     let controller = Controller::new(
         consensus_port,
