@@ -89,7 +89,7 @@ impl Notifier {
             wds.push(wd);
         }
 
-        let mut buffer = vec![0u8; 4096];
+        let mut buffer = vec![0u8; 16384];
         let mut stream = inotify.event_stream(&mut buffer).unwrap();
 
         while let Some(event_or_error) = stream.next().await {

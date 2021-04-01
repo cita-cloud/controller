@@ -460,7 +460,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::sync::Notifier;
-use crate::util::{load_data, load_data_maybe_empty, reconfigure, hash_data};
+use crate::util::{hash_data, load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_VALIDATORS, LOCK_ID_VERSION,

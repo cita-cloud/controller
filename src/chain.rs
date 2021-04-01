@@ -425,7 +425,7 @@ impl Chain {
                 info!("check_proposal ok");
                 return true;
             } else {
-                warn!("check_proposal failed!\nproposal_state_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nstate_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproposal_proof 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproof 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+                warn!("check_proposal failed!\nproposal_state_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nstate_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproposal_proof {:?}\nproof {:?}",
                       proposal_state_root[0],
                       proposal_state_root[1],
                       proposal_state_root[2],
@@ -436,16 +436,8 @@ impl Chain {
                       state_root[2],
                       state_root[state_root.len() - 2],
                       state_root[state_root.len() - 1],
-                      proposal_proof[0],
-                      proposal_proof[1],
-                      proposal_proof[2],
-                      proposal_proof[proposal_proof.len() - 2],
-                      proposal_proof[proposal_proof.len() - 1],
-                      proof[0],
-                      proof[1],
-                      proof[2],
-                      proof[proof.len() - 2],
-                      proof[proof.len() - 1],
+                      proposal_proof,
+                      proof,
                 );
                 return false;
             }
