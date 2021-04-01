@@ -592,19 +592,21 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
 
     // send configuration to consensus
     let sys_config_clone = sys_config.clone();
-    let mut interval = time::interval(Duration::from_secs(30));
-    loop {
-        interval.tick().await;
-        // reconfigure consensus
-        {
-            info!("reconfigure consensus!");
-            let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
-            if ret.is_ok() && ret.unwrap() {
-                info!("reconfigure success!");
-                break;
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            // reconfigure consensus
+            {
+                info!("reconfigure consensus!");
+                let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
+                if ret.is_ok() && ret.unwrap() {
+                    info!("reconfigure success!");
+                    break;
+                }
             }
         }
-    }
+    });
 
     let controller = Controller::new(
         consensus_port,
