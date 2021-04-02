@@ -59,6 +59,16 @@ impl Notifier {
         let read_dir = ret.unwrap();
 
         read_dir
+            .filter(|e| {
+                if e.is_err() {
+                    return false;
+                }
+                let e = e.as_ref().unwrap();
+                if e.file_name().into_string().unwrap().starts_with('.') {
+                    return false;
+                }
+                true
+            })
             .map(|e| {
                 let e = e.unwrap();
                 NotifyMessage {

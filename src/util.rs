@@ -242,7 +242,6 @@ pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
 }
 
 pub async fn remove_tx(filename: &str) {
-    warn!("remove tx file: {}", filename);
     let root_path = Path::new(".");
     let tx_path = root_path.join("txs").join(filename);
     let _ = fs::remove_file(tx_path).await;
@@ -284,7 +283,6 @@ pub async fn get_proposal(block_hash: &[u8]) -> Option<CompactBlock> {
 }
 
 pub async fn remove_proposal(filename: &str) {
-    warn!("remove proposal file: {}", filename);
     let root_path = Path::new(".");
     let block_path = root_path.join("proposals").join(filename);
 

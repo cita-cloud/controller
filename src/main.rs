@@ -383,7 +383,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         &self,
         request: Request<Hash>,
     ) -> Result<Response<SimpleResponse>, Status> {
-        info!("check_proposal request: {:?}", request);
+        debug!("check_proposal request: {:?}", request);
 
         let hash = request.into_inner().hash;
 
@@ -402,7 +402,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         &self,
         request: Request<ProposalWithProof>,
     ) -> Result<Response<Empty>, Status> {
-        info!("commit_block request: {:?}", request);
+        debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
         let proposal = proposal_with_proof.proposal;
