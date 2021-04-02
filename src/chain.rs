@@ -16,8 +16,8 @@ use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
     check_block, check_block_exists, check_proposal_exists, exec_block, get_block, get_tx,
-    hash_data, print_main_chain, reconfigure, remove_proposal, store_data, unix_now, write_block,
-    write_proposal,
+    hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data, unix_now,
+    write_block, write_proposal,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -44,7 +44,7 @@ pub struct Chain {
     fork_tree: Vec<HashMap<Vec<u8>, (CompactBlock, Option<Vec<u8>>)>>,
     main_chain: Vec<Vec<u8>>,
     main_chain_tx_hash: Vec<Vec<u8>>,
-    candidate_block: Option<(Vec<u8>, CompactBlock)>,
+    candidate_block: Option<(u64, Vec<u8>)>,
     pool: Arc<RwLock<Pool>>,
     auth: Arc<RwLock<Authentication>>,
     genesis: GenesisBlock,
@@ -91,6 +91,19 @@ impl Chain {
             genesis,
             key_id,
             node_address,
+        }
+    }
+
+    pub async fn init(&self, init_block_number: u64) {
+        if init_block_number == 0 {
+            info!("finalize genesis block");
+            self.finalize_block(
+                self.genesis.genesis_block(),
+                vec![0u8; 32],
+                self.block_hash.clone(),
+                false,
+            )
+            .await;
         }
     }
 
@@ -181,10 +194,38 @@ impl Chain {
         }
     }
 
-    pub fn get_candidate_block_hash(&self) -> Option<Vec<u8>> {
-        self.candidate_block
-            .as_ref()
-            .map(|(hash, _)| hash.to_owned())
+    pub async fn get_proposal(&self) -> Option<Vec<u8>> {
+        if let Some((h, ref blk_hash)) = self.candidate_block {
+            let h_bytes = h.to_be_bytes().to_vec();
+            let pre_h = h - self.block_delay_number as u64 - 1;
+            let key = pre_h.to_be_bytes().to_vec();
+
+            let state_root = {
+                let ret = load_data(self.storage_port, 6, key.clone()).await;
+                if ret.is_err() {
+                    warn!("get_proposal get state_root failed");
+                    return None;
+                }
+                ret.unwrap()
+            };
+
+            let proof = {
+                let ret = get_block(pre_h).await;
+                if ret.is_none() {
+                    warn!("get_proposal get proof failed");
+                    return None;
+                }
+                ret.unwrap().1
+            };
+
+            let mut proposal = Vec::new();
+            proposal.extend_from_slice(&h_bytes); // len 8
+            proposal.extend_from_slice(blk_hash); // len 32
+            proposal.extend_from_slice(&state_root); // len 32
+            proposal.extend_from_slice(&proof); // len unknown
+            return Some(proposal);
+        }
+        None
     }
 
     pub async fn add_block(&mut self, block: CompactBlock) -> bool {
@@ -319,7 +360,7 @@ impl Chain {
             block_hash[block_hash.len() - 2],
             block_hash[block_hash.len() - 1]
         );
-        self.candidate_block = Some((block_hash.clone(), block.clone()));
+        self.candidate_block = Some((height, block_hash.clone()));
         self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
 
         let is_exists = check_proposal_exists(block_hash.as_slice());
@@ -331,11 +372,82 @@ impl Chain {
     }
 
     pub async fn check_proposal(&self, proposal: &[u8]) -> bool {
-        for map in self.fork_tree.iter() {
-            if map.contains_key(proposal) {
+        if proposal.len() < 8 + 32 + 32 {
+            warn!("proposal length invalid");
+            return false;
+        }
+
+        let h = {
+            let mut bytes: [u8; 8] = [0; 8];
+            bytes[..8].clone_from_slice(&proposal[..8]);
+            u64::from_be_bytes(bytes)
+        };
+
+        // old proposal
+        if h <= self.block_number {
+            return true;
+        }
+
+        if h > self.block_number + self.fork_tree.len() as u64 {
+            warn!("proposal too high");
+            return false;
+        }
+
+        let block_hash = &proposal[8..40];
+        let proposal_state_root = &proposal[40..72];
+        let proposal_proof = &proposal[72..];
+
+        if self.fork_tree[h as usize - self.block_number as usize - 1].contains_key(block_hash) {
+            let pre_h = h - self.block_delay_number as u64 - 1;
+            let key = pre_h.to_be_bytes().to_vec();
+
+            let state_root = {
+                let ret = load_data(self.storage_port, 6, key).await;
+                if ret.is_err() {
+                    warn!("get_proposal get state_root failed");
+                    return false;
+                }
+                ret.unwrap()
+            };
+
+            let proof = {
+                let ret = get_block(pre_h).await;
+                if ret.is_none() {
+                    warn!("get_proposal get proof failed");
+                    return false;
+                }
+                ret.unwrap().1
+            };
+
+            if proposal_state_root == state_root && proposal_proof == proof {
                 return true;
+            } else {
+                warn!("check_proposal failed!\nproposal_state_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nstate_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproposal_proof {:?}\nproof {:?}",
+                      proposal_state_root[0],
+                      proposal_state_root[1],
+                      proposal_state_root[2],
+                      proposal_state_root[proposal_state_root.len() - 2],
+                      proposal_state_root[proposal_state_root.len() - 1],
+                      state_root[0],
+                      state_root[1],
+                      state_root[2],
+                      state_root[state_root.len() - 2],
+                      state_root[state_root.len() - 1],
+                      proposal_proof,
+                      proof,
+                );
+                return false;
             }
         }
+
+        warn!(
+            "can't find proposal block 0x{:02x}{:02x}{:02x}..{:02x}{:02x} in fork tree",
+            block_hash[0],
+            block_hash[1],
+            block_hash[2],
+            block_hash[block_hash.len() - 2],
+            block_hash[block_hash.len() - 1]
+        );
         false
     }
 
@@ -352,7 +464,11 @@ impl Chain {
         let block_height = block_header.height;
         let key = block_height.to_be_bytes().to_vec();
 
-        if !is_sync && check_block_exists(block_height) {
+        info!("finalize_block: {}", block_height);
+
+        // genesis block (block_height = 0) can't be processed by sync
+        // because sync start from self.block_number + 1
+        if !is_sync && check_block_exists(block_height) && block_height != 0 {
             warn!("finalized block has synced");
             return;
         }
@@ -496,20 +612,21 @@ impl Chain {
     }
 
     pub async fn commit_block(&mut self, proposal: &[u8], proof: &[u8]) {
+        let proposal_blk_hash = &proposal[8..40];
         info!(
             "commit_block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
-            proposal[0],
-            proposal[1],
-            proposal[2],
-            proposal[proposal.len() - 2],
-            proposal[proposal.len() - 1]
+            proposal_blk_hash[0],
+            proposal_blk_hash[1],
+            proposal_blk_hash[2],
+            proposal_blk_hash[proposal_blk_hash.len() - 2],
+            proposal_blk_hash[proposal_blk_hash.len() - 1]
         );
 
         let commit_block_index;
         let commit_block;
         for (index, map) in self.fork_tree.iter_mut().enumerate() {
             // make sure the block in fork_tree
-            if let Some((block, proof_opt)) = map.get_mut(proposal) {
+            if let Some((block, proof_opt)) = map.get_mut(proposal_blk_hash) {
                 commit_block_index = index;
                 commit_block = block.clone();
 
@@ -520,7 +637,7 @@ impl Chain {
                 let mut candidate_chain = Vec::new();
                 let mut candidate_chain_tx_hash = Vec::new();
 
-                candidate_chain.push(proposal.to_owned());
+                candidate_chain.push(proposal_blk_hash.to_owned());
                 candidate_chain_tx_hash.extend_from_slice(&commit_block.body.unwrap().tx_hashes);
 
                 let mut prevhash = commit_block.header.unwrap().prevhash;
@@ -552,9 +669,9 @@ impl Chain {
                 if prevhash != self.block_hash {
                     warn!("candidate_chain can't fit finalized block");
                     // break this invalid chain
-                    let proposal = candidate_chain.last().unwrap();
-                    self.fork_tree.get_mut(0).unwrap().remove(proposal);
-                    let filename = hex::encode(proposal);
+                    let blk_hash = candidate_chain.last().unwrap();
+                    self.fork_tree.get_mut(0).unwrap().remove(blk_hash);
+                    let filename = hex::encode(blk_hash);
                     remove_proposal(filename.as_str()).await;
                     return;
                 }

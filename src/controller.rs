@@ -92,13 +92,14 @@ impl Controller {
     pub async fn init(&self, init_block_number: u64) {
         {
             let mut chain = self.chain.write().await;
+            chain.init(init_block_number).await;
             chain.add_proposal().await
         }
         {
             let mut auth = self.auth.write().await;
             auth.init(init_block_number).await;
         }
-        self.notifier.list(150u64);
+        self.notifier.list();
         self.proc_sync_notify().await;
     }
 
@@ -313,7 +314,7 @@ impl Controller {
     pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
         {
             let chain = self.chain.read().await;
-            if let Some(proposal) = chain.get_candidate_block_hash() {
+            if let Some(proposal) = chain.get_proposal().await {
                 return Ok(proposal);
             }
         }
