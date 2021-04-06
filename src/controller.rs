@@ -17,8 +17,8 @@ use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
 use crate::util::{
-    check_tx_exists, get_network_status, get_proposal, get_tx, load_data, load_tx_info,
-    remove_proposal, remove_tx, write_tx,
+    check_tx_exists, get_network_status, get_new_tx, get_proposal, get_tx, load_data, load_tx_info,
+    remove_proposal, remove_tx, unix_now, write_new_tx,
 };
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -39,7 +39,9 @@ pub struct Controller {
     auth: Arc<RwLock<Authentication>>,
     pool: Arc<RwLock<Pool>>,
     chain: Arc<RwLock<Chain>>,
-    notifier: Arc<Notifier>,
+    txs_notifier: Arc<Notifier>,
+    proposals_notifier: Arc<Notifier>,
+    blocks_notifier: Arc<Notifier>,
 }
 
 impl Controller {
@@ -55,7 +57,9 @@ impl Controller {
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
         genesis: GenesisBlock,
-        notifier: Arc<Notifier>,
+        txs_notifier: Arc<Notifier>,
+        proposals_notifier: Arc<Notifier>,
+        blocks_notifier: Arc<Notifier>,
         key_id: u64,
         node_address: Vec<u8>,
     ) -> Self {
@@ -85,7 +89,9 @@ impl Controller {
             auth,
             pool,
             chain,
-            notifier,
+            txs_notifier,
+            proposals_notifier,
+            blocks_notifier,
         }
     }
 
@@ -99,93 +105,173 @@ impl Controller {
             let mut auth = self.auth.write().await;
             auth.init(init_block_number).await;
         }
-        self.notifier.list();
         self.proc_sync_notify().await;
     }
 
     pub async fn proc_sync_notify(&self) {
-        let c = self.clone();
-        let notifier_clone = c.notifier.clone();
+        // setup list
+        let txs_notifier_clone = self.txs_notifier.clone();
         tokio::spawn(async move {
-            notifier_clone.watch().await;
-        });
-        /*
-        let notifier_clone = c.notifier.clone();
-        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(30, 0));
             loop {
-                time::delay_for(Duration::new(15, 0)).await;
+                interval.tick().await;
                 {
-                    notifier_clone.list(20);
+                    txs_notifier_clone.list(0);
                 }
             }
         });
-         */
-        let notifier_clone = c.notifier.clone();
+
+        let proposals_notifier_clone = self.proposals_notifier.clone();
         tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(30, 0));
             loop {
-                time::sleep(Duration::from_secs(1)).await;
+                interval.tick().await;
                 {
-                    let events = notifier_clone.fetch_events();
-                    for event in events {
-                        match event.folder.as_str() {
-                            "txs" => {
-                                if let Ok(tx_hash) = hex::decode(&event.filename) {
-                                    if let Some(raw_tx) = get_tx(&tx_hash).await {
-                                        let ret = c.rpc_send_raw_transaction(raw_tx).await;
-                                        match ret {
-                                            Ok(hash) => {
-                                                if hash == tx_hash {
-                                                    continue;
-                                                } else {
-                                                    warn!("tx hash mismatch");
-                                                }
-                                            }
-                                            Err(e) => {
-                                                if e == "dup" || e == "Invalid valid_until_block" {
-                                                    continue;
-                                                } else {
-                                                    warn!("add sync tx failed: {:?}", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                // any failed delete the tx file
-                                warn!("sync tx invalid");
-                                remove_tx(event.filename.as_str()).await;
-                            }
-                            "proposals" => {
-                                if let Ok(block_hash) = hex::decode(&event.filename) {
-                                    if let Some(block) = get_proposal(&block_hash).await {
-                                        info!("add proposal");
-                                        let mut chain = c.chain.write().await;
-                                        if chain.add_remote_proposal(block).await {
+                    proposals_notifier_clone.list(0);
+                }
+            }
+        });
+
+        let blocks_notifier_clone = self.blocks_notifier.clone();
+        let chain_clone = self.chain.clone();
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(30, 0));
+            loop {
+                interval.tick().await;
+                let current_block_number = {
+                    let chain = chain_clone.read().await;
+                    chain.get_block_number(false)
+                };
+                {
+                    blocks_notifier_clone.list(current_block_number);
+                }
+            }
+        });
+
+        // setup watch
+        let txs_notifier_clone = self.txs_notifier.clone();
+        tokio::spawn(async move {
+            txs_notifier_clone.watch().await;
+        });
+
+        let proposals_notifier_clone = self.proposals_notifier.clone();
+        tokio::spawn(async move {
+            proposals_notifier_clone.watch().await;
+        });
+
+        let blocks_notifier_clone = self.blocks_notifier.clone();
+        tokio::spawn(async move {
+            blocks_notifier_clone.watch().await;
+        });
+
+        // proc notify event
+        let txs_notifier_clone = self.txs_notifier.clone();
+        let controller_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(1, 0));
+            loop {
+                interval.tick().await;
+                {
+                    while let Some(event) = txs_notifier_clone.queue.pop() {
+                        let file_name = event.filename;
+                        let mut is_new_tx = true;
+                        let tx_hash_str =
+                            if let Some(striped_file_name) = file_name.strip_prefix("new_") {
+                                // skip prefix new_
+                                striped_file_name
+                            } else {
+                                is_new_tx = false;
+                                &file_name
+                            };
+                        if let Ok(tx_hash) = hex::decode(tx_hash_str) {
+                            let opt_raw_tx = if is_new_tx {
+                                get_new_tx(&tx_hash).await
+                            } else {
+                                get_tx(&tx_hash).await
+                            };
+                            if let Some(raw_tx) = opt_raw_tx {
+                                let ret = controller_clone.rpc_send_raw_transaction(raw_tx).await;
+                                match ret {
+                                    Ok(hash) => {
+                                        if hash == tx_hash {
                                             continue;
                                         } else {
-                                            warn!("add_remote_proposal failed");
+                                            warn!("tx hash mismatch");
                                         }
-                                    } else {
-                                        warn!("get_proposal failed");
                                     }
-                                } else {
-                                    warn!("decode filename failed {}", &event.filename);
-                                }
-                                // any failed delete the proposal file
-                                warn!("sync proposal invalid");
-                                remove_proposal(event.filename.as_str()).await;
-                            }
-                            "blocks" => {
-                                if event.filename.as_str().parse::<u64>().is_ok() {
-                                    {
-                                        let mut chain = c.chain.write().await;
-                                        chain.proc_sync_block().await;
-                                        continue;
+                                    Err(e) => {
+                                        if e == "dup" || e == "Invalid valid_until_block" {
+                                            continue;
+                                        } else {
+                                            warn!("add sync tx failed: {:?}", e);
+                                        }
                                     }
                                 }
-                                warn!("sync block invalid {}", event.filename.as_str());
                             }
-                            _ => panic!("unexpected folder"),
                         }
+                        // any failed delete the tx file
+                        warn!("sync tx invalid");
+                        remove_tx(file_name.as_str()).await;
+                    }
+                }
+            }
+        });
+
+        let proposals_notifier_clone = self.proposals_notifier.clone();
+        let chain_clone = self.chain.clone();
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(1, 0));
+            loop {
+                interval.tick().await;
+                {
+                    let start = unix_now();
+                    let mut msg_num: u64 = 0;
+                    while let Some(event) = proposals_notifier_clone.queue.pop() {
+                        msg_num += 1;
+                        if let Ok(block_hash) = hex::decode(&event.filename) {
+                            if let Some(block) = get_proposal(&block_hash).await {
+                                info!("add proposal");
+                                let mut chain = chain_clone.write().await;
+                                if chain.add_remote_proposal(block).await {
+                                    continue;
+                                } else {
+                                    warn!("add_remote_proposal failed");
+                                }
+                            } else {
+                                warn!("get_proposal failed");
+                            }
+                        } else {
+                            warn!("decode filename failed {}", &event.filename);
+                        }
+                        // any failed delete the proposal file
+                        warn!("sync proposal invalid {}", &event.filename);
+                        remove_proposal(event.filename.as_str()).await;
+                    }
+                    info!(
+                        "performance proc add_remote_proposal use {} proc {} msg",
+                        unix_now() - start,
+                        msg_num
+                    );
+                }
+            }
+        });
+
+        let blocks_notifier_clone = self.blocks_notifier.clone();
+        let chain_clone = self.chain.clone();
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::new(12, 0));
+            loop {
+                interval.tick().await;
+                {
+                    while let Some(event) = blocks_notifier_clone.queue.pop() {
+                        if event.filename.as_str().parse::<u64>().is_ok() {
+                            {
+                                let mut chain = chain_clone.write().await;
+                                chain.proc_sync_block().await;
+                                continue;
+                            }
+                        }
+                        warn!("sync block invalid {}", event.filename.as_str());
                     }
                 }
             }
@@ -211,7 +297,7 @@ impl Controller {
         if !is_exists {
             let mut raw_tx_bytes: Vec<u8> = Vec::new();
             let _ = raw_tx.encode(&mut raw_tx_bytes);
-            write_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
+            write_new_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
         }
         let mut pool = self.pool.write().await;
         let is_ok = pool.enqueue(tx_hash.clone());
@@ -295,10 +381,16 @@ impl Controller {
                 return Ok(proposal);
             }
         }
-
-        // there are no proposal, try to add it
-        let mut chain = self.chain.write().await;
-        chain.add_proposal().await;
+        {
+            let mut chain = self.chain.write().await;
+            chain.add_proposal().await;
+        }
+        {
+            let chain = self.chain.read().await;
+            if let Some(proposal) = chain.get_proposal().await {
+                return Ok(proposal);
+            }
+        }
         Err("get proposal error".to_owned())
     }
 

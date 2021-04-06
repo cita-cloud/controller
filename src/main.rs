@@ -619,7 +619,9 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         current_block_hash,
         sys_config,
         genesis,
-        Arc::new(Notifier::new(".".to_string())),
+        Arc::new(Notifier::new(".".to_string(), "txs".to_string())),
+        Arc::new(Notifier::new(".".to_string(), "proposals".to_string())),
+        Arc::new(Notifier::new(".".to_string(), "blocks".to_string())),
         key_id,
         node_address,
     );

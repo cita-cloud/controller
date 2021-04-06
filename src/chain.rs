@@ -15,8 +15,8 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    check_block, check_block_exists, check_proposal_exists, check_tx_exists, exec_block, get_block,
-    get_tx, hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data,
+    check_block, check_block_exists, check_proposal_exists, exec_block, get_block, get_tx,
+    hash_data, load_data, move_tx, print_main_chain, reconfigure, remove_proposal, store_data,
     store_tx_info, unix_now, write_block, write_proposal,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
@@ -133,17 +133,20 @@ impl Chain {
                 }
 
                 // check tx in block
-                let tx_hash_list = block_body.tx_hashes;
-                let mut is_valid = true;
-                for hash in tx_hash_list.iter() {
-                    if !check_tx_exists(hash) {
-                        is_valid = false;
+                {
+                    let tx_hash_list = block_body.tx_hashes;
+                    let mut is_valid = true;
+                    let pool = self.pool.read().await;
+                    for hash in tx_hash_list.iter() {
+                        if !pool.contains(hash) {
+                            is_valid = false;
+                            break;
+                        }
+                    }
+                    if !is_valid {
+                        warn!("find tx in sync block {} failed", height);
                         break;
                     }
-                }
-                if !is_valid {
-                    warn!("find tx in sync block {} failed", height);
-                    break;
                 }
 
                 let mut block_header_bytes = Vec::new();
@@ -171,6 +174,8 @@ impl Chain {
 
                 self.block_number += 1;
                 self.block_hash = block_hash;
+
+                self.clear_proposal();
 
                 // renew main_chain
                 self.main_chain = Vec::new();
@@ -259,7 +264,7 @@ impl Chain {
         let ret = hash_data(self.kms_port, block_header_bytes).await;
         if let Ok(block_hash) = ret {
             info!(
-                "add block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+                "add remote proposal 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
                 block_hash[0],
                 block_hash[1],
                 block_hash[2],
@@ -381,6 +386,10 @@ impl Chain {
         }
     }
 
+    pub fn clear_proposal(&mut self) {
+        self.candidate_block = None;
+    }
+
     pub async fn check_proposal(&self, proposal: &[u8]) -> bool {
         if proposal.len() < 8 + 32 + 32 {
             warn!("proposal length invalid");
@@ -411,18 +420,21 @@ impl Chain {
             self.fork_tree[h as usize - self.block_number as usize - 1].get(block_hash)
         {
             let block_body = blk.clone().body.unwrap();
-            let tx_hash_list = block_body.tx_hashes;
-            // check tx in proposal
-            let mut is_valid = true;
-            for hash in tx_hash_list.iter() {
-                if !check_tx_exists(hash) {
-                    is_valid = false;
-                    break;
+            // check tx in block
+            {
+                let tx_hash_list = block_body.tx_hashes;
+                let mut is_valid = true;
+                let pool = self.pool.read().await;
+                for hash in tx_hash_list.iter() {
+                    if !pool.contains(hash) {
+                        is_valid = false;
+                        break;
+                    }
                 }
-            }
-            if !is_valid {
-                warn!("find tx in proposal {} failed", h);
-                return false;
+                if !is_valid {
+                    warn!("find tx in proposal {} failed", h);
+                    return false;
+                }
             }
 
             let pre_h = h - self.block_delay_number as u64 - 1;
@@ -500,18 +512,6 @@ impl Chain {
             return;
         }
 
-        // exec block
-        // if exec_block after consensus, we should ignore the error, because all node will have same error.
-        // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
-        // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(self.executor_port, block_clone)
-            .await
-            .unwrap_or_else(|_| vec![0u8; 32]);
-        // region 6 : block_height - executed_block_hash
-        store_data(self.storage_port, 6, key.clone(), executed_block_hash)
-            .await
-            .expect("store result failed");
-
         // region 5 : block_height - proof
         // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
         //    .await
@@ -560,7 +560,18 @@ impl Chain {
         let tx_hash_list = block_body.tx_hashes;
         {
             for (tx_index, hash) in tx_hash_list.iter().enumerate() {
+                let start = unix_now();
+                move_tx(&hash).await;
+                info!(
+                    "performance finalize_block move_tx use {}",
+                    unix_now() - start
+                );
+                let start = unix_now();
                 let raw_tx = get_tx(&hash).await.expect("get tx failed");
+                info!(
+                    "performance finalize_block get_tx use {}",
+                    unix_now() - start
+                );
                 // if tx is utxo tx, update sys_config
                 {
                     if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
@@ -594,6 +605,19 @@ impl Chain {
                 store_tx_info(&hash, block_height, tx_index as u64).await;
             }
         }
+
+        // exec block
+        // if exec_block after consensus, we should ignore the error, because all node will have same error.
+        // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
+        // TODO: get length of hash from kms
+        let executed_block_hash = exec_block(self.executor_port, block_clone)
+            .await
+            .unwrap_or_else(|_| vec![0u8; 32]);
+        // region 6 : block_height - executed_block_hash
+        store_data(self.storage_port, 6, key.clone(), executed_block_hash)
+            .await
+            .expect("store result failed");
+
         // this must be before update pool
         {
             let mut auth = self.auth.write().await;
@@ -736,7 +760,7 @@ impl Chain {
                             .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
                     }
                     // candidate_block need update
-                    self.add_proposal().await;
+                    self.clear_proposal();
                 }
                 break;
             }

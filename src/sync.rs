@@ -18,34 +18,34 @@ use std::fs;
 use std::path::Path;
 use tokio_stream::StreamExt;
 
-pub static SYNC_FOLDERS: [&str; 3] = ["txs", "proposals", "blocks"];
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotifyMessage {
-    pub folder: String,
     pub filename: String,
 }
 
 pub struct Notifier {
     pub root: String,
+    pub subpath: String,
     pub queue: SegQueue<NotifyMessage>,
 }
 
 impl Notifier {
-    pub fn new(root: String) -> Self {
+    pub fn new(root: String, subpath: String) -> Self {
         Self {
             root,
+            subpath,
             queue: SegQueue::new(),
         }
     }
 
+    /*
     pub fn fetch_events(&self) -> Vec<NotifyMessage> {
         let mut events = Vec::new();
         while let Some(msg) = self.queue.pop() {
             events.push(msg);
         }
         events
-    }
+    }*/
 
     fn walk_dir(&self, dir: &str) -> Vec<NotifyMessage> {
         let root_path = Path::new(&self.root);
@@ -72,18 +72,100 @@ impl Notifier {
             .map(|e| {
                 let e = e.unwrap();
                 NotifyMessage {
-                    folder: dir.to_string(),
                     filename: e.file_name().into_string().unwrap(),
                 }
             })
             .collect()
     }
 
-    pub fn list(&self) {
-        for dir in SYNC_FOLDERS.iter() {
-            let msg = self.walk_dir(dir);
-            for m in msg {
-                self.queue.push(m)
+    pub fn list_blocks(&self, current_block_number: u64) -> Vec<NotifyMessage> {
+        let root_path = Path::new(&self.root);
+        let path = root_path.join("blocks");
+
+        // walk dir to list files
+        let ret = fs::read_dir(path);
+        if ret.is_err() {
+            return vec![];
+        }
+        let read_dir = ret.unwrap();
+
+        read_dir
+            .filter(|e| {
+                if e.is_err() {
+                    return false;
+                }
+                let e = e.as_ref().unwrap();
+                let ret = e.file_name().into_string().unwrap().parse::<u64>();
+                if ret.is_err() {
+                    return false;
+                }
+                if ret.unwrap() <= current_block_number {
+                    return false;
+                }
+                true
+            })
+            .map(|e| {
+                let e = e.unwrap();
+                NotifyMessage {
+                    filename: e.file_name().into_string().unwrap(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn list_txs(&self) -> Vec<NotifyMessage> {
+        let root_path = Path::new(&self.root);
+        let path = root_path.join("txs");
+
+        // walk dir to list files
+        let ret = fs::read_dir(path);
+        if ret.is_err() {
+            return vec![];
+        }
+        let read_dir = ret.unwrap();
+
+        read_dir
+            .filter(|e| {
+                if e.is_err() {
+                    return false;
+                }
+                let e = e.as_ref().unwrap();
+                if !e.file_name().into_string().unwrap().starts_with("new_") {
+                    return false;
+                }
+                true
+            })
+            .map(|e| {
+                let e = e.unwrap();
+                NotifyMessage {
+                    filename: e.file_name().into_string().unwrap(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn list(&self, current_block_number: u64) {
+        match self.subpath.as_str() {
+            "txs" => {
+                let msg = self.list_txs();
+                for m in msg {
+                    self.queue.push(m)
+                }
+            }
+            "proposals" => {
+                let msg = self.walk_dir("proposals");
+                for m in msg {
+                    self.queue.push(m)
+                }
+            }
+            "blocks" => {
+                let msg = self.list_blocks(current_block_number);
+                for m in msg {
+                    self.queue.push(m)
+                }
+            }
+            _ => {
+                panic!("unexpected subpath")
             }
         }
     }
@@ -92,12 +174,9 @@ impl Notifier {
         let mut inotify = Inotify::init().expect("Failed to initialize inotify");
 
         let root_path = Path::new(&self.root);
-        let mut wds = Vec::new();
-        for dir in SYNC_FOLDERS.iter() {
-            let path = root_path.join(dir);
-            let wd = inotify.add_watch(path, WatchMask::MOVED_TO).unwrap();
-            wds.push(wd);
-        }
+
+        let path = root_path.join(&self.subpath);
+        inotify.add_watch(path, WatchMask::MOVED_TO).unwrap();
 
         let mut buffer = vec![0u8; 16384];
         let mut stream = inotify.event_stream(&mut buffer).unwrap();
@@ -105,111 +184,10 @@ impl Notifier {
         while let Some(event_or_error) = stream.next().await {
             if let Ok(event) = event_or_error {
                 let c = NotifyMessage {
-                    folder: {
-                        match wds.iter().position(|w| w == &event.wd) {
-                            Some(position) => SYNC_FOLDERS[position].to_string(),
-                            None => panic!("unexpected wd: {:?}", event.wd),
-                        }
-                    },
                     filename: event.name.unwrap().into_string().unwrap(),
                 };
                 self.queue.push(c);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::sync::Arc;
-    use std::thread::sleep;
-    use std::time::Duration;
-    use tempdir::TempDir;
-    use tokio::time;
-
-    #[test]
-    fn walk_dir_test() {
-        let tempdir = TempDir::new("test").unwrap().into_path();
-        let n = Notifier::new(tempdir.to_str().unwrap().to_string());
-
-        let path = tempdir.join("txs");
-        fs::create_dir(path.clone()).unwrap();
-        let f1 = path.join("tx1");
-        fs::write(f1, b"tx1").unwrap();
-
-        sleep(Duration::new(5, 0));
-
-        let f2 = path.join("tx2");
-        fs::write(f2, b"tx2").unwrap();
-
-        let f3 = path.join("tx3");
-        fs::write(f3, b"tx3").unwrap();
-
-        let d4 = path.join("d4");
-        fs::create_dir(d4).unwrap();
-
-        let msgs = n.walk_dir("txs");
-        let expect_msg0 = NotifyMessage {
-            folder: "txs".to_string(),
-            filename: "tx3".to_string(),
-        };
-        let expect_msg1 = NotifyMessage {
-            folder: "txs".to_string(),
-            filename: "tx2".to_string(),
-        };
-        let expect_msg2 = NotifyMessage {
-            folder: "txs".to_string(),
-            filename: "tx1".to_string(),
-        };
-        assert_eq!(msgs.contains(&expect_msg0), true);
-        assert_eq!(msgs.contains(&expect_msg1), true);
-        assert_eq!(msgs.contains(&expect_msg2), true);
-    }
-
-    #[tokio::test]
-    async fn watch_test() {
-        let tempdir = TempDir::new("test").unwrap().into_path();
-        let n = Arc::new(Notifier::new(tempdir.to_str().unwrap().to_string()));
-
-        let txs_path = tempdir.join("txs");
-        fs::create_dir(txs_path.clone()).unwrap();
-
-        let blocks_path = tempdir.join("blocks");
-        fs::create_dir(blocks_path.clone()).unwrap();
-
-        let n_clone = n.clone();
-        tokio::spawn(async move {
-            n_clone.watch().await;
-        });
-
-        time::sleep(time::Duration::from_secs(1)).await;
-
-        let f1 = txs_path.join("tx1");
-        fs::write(f1, b"tx1").unwrap();
-
-        sleep(Duration::new(1, 0));
-
-        let f2 = blocks_path.join("block1");
-        fs::write(f2, b"block1").unwrap();
-
-        time::sleep(time::Duration::from_secs(1)).await;
-
-        assert_eq!(
-            n.queue.pop(),
-            Some(NotifyMessage {
-                folder: "txs".to_string(),
-                filename: "tx1".to_string(),
-            })
-        );
-        assert_eq!(
-            n.queue.pop(),
-            Some(NotifyMessage {
-                folder: "blocks".to_string(),
-                filename: "block1".to_string(),
-            })
-        );
-        assert_eq!(n.queue.pop().is_none(), true);
     }
 }
