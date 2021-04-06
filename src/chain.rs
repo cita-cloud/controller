@@ -15,9 +15,9 @@
 use crate::auth::Authentication;
 use crate::pool::Pool;
 use crate::util::{
-    check_block, check_block_exists, check_proposal_exists, exec_block, get_block, get_tx,
-    hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data, unix_now,
-    write_block, write_proposal,
+    check_block, check_block_exists, check_proposal_exists, check_tx_exists, exec_block, get_block,
+    get_tx, hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data,
+    unix_now, write_block, write_proposal,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -132,10 +132,19 @@ impl Chain {
                     panic!("proc_sync_block {} invalid block prevhash", h)
                 }
 
-                let mut block_body_bytes = Vec::new();
-                block_body
-                    .encode(&mut block_body_bytes)
-                    .expect("encode block body failed");
+                // check tx in block
+                let tx_hash_list = block_body.tx_hashes;
+                let mut is_valid = true;
+                for hash in tx_hash_list.iter() {
+                    if !check_tx_exists(hash) {
+                        is_valid = false;
+                        break;
+                    }
+                }
+                if !is_valid {
+                    warn!("find tx in sync block {} failed", height);
+                    break;
+                }
 
                 let mut block_header_bytes = Vec::new();
                 block_header
@@ -180,6 +189,7 @@ impl Chain {
                     .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
                 info!("sync block to {}", height);
             } else {
+                info!("sync break at {}", self.block_number);
                 break;
             }
         }
@@ -228,7 +238,7 @@ impl Chain {
         None
     }
 
-    pub async fn add_block(&mut self, block: CompactBlock) -> bool {
+    pub async fn add_remote_proposal(&mut self, block: CompactBlock) -> bool {
         let header = block.clone().header.unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
@@ -389,7 +399,7 @@ impl Chain {
         }
 
         if h > self.block_number + self.fork_tree.len() as u64 {
-            warn!("proposal too high");
+            warn!("proposal {} too high", h);
             return false;
         }
 
@@ -397,14 +407,31 @@ impl Chain {
         let proposal_state_root = &proposal[40..72];
         let proposal_proof = &proposal[72..];
 
-        if self.fork_tree[h as usize - self.block_number as usize - 1].contains_key(block_hash) {
+        if let Some((blk, _)) =
+            self.fork_tree[h as usize - self.block_number as usize - 1].get(block_hash)
+        {
+            let block_body = blk.clone().body.unwrap();
+            let tx_hash_list = block_body.tx_hashes;
+            // check tx in proposal
+            let mut is_valid = true;
+            for hash in tx_hash_list.iter() {
+                if !check_tx_exists(hash) {
+                    is_valid = false;
+                    break;
+                }
+            }
+            if !is_valid {
+                warn!("find tx in proposal {} failed", h);
+                return false;
+            }
+
             let pre_h = h - self.block_delay_number as u64 - 1;
             let key = pre_h.to_be_bytes().to_vec();
 
             let state_root = {
                 let ret = load_data(self.storage_port, 6, key).await;
                 if ret.is_err() {
-                    warn!("get_proposal get state_root failed");
+                    warn!("check_proposal get state_root failed");
                     return false;
                 }
                 ret.unwrap()
@@ -413,7 +440,7 @@ impl Chain {
             let proof = {
                 let ret = get_block(pre_h).await;
                 if ret.is_none() {
-                    warn!("get_proposal get proof failed");
+                    warn!("check_proposal get proof failed");
                     return false;
                 }
                 ret.unwrap().1

@@ -157,32 +157,15 @@ impl Controller {
                             "proposals" => {
                                 if let Ok(block_hash) = hex::decode(&event.filename) {
                                     if let Some(block) = get_proposal(&block_hash).await {
-                                        if let Some(block_body) = block.clone().body {
-                                            let tx_hash_list = block_body.tx_hashes;
-                                            // check tx in proposal
-                                            let mut is_valid = true;
-                                            for hash in tx_hash_list.iter() {
-                                                if !check_tx_exists(hash) {
-                                                    is_valid = false;
-                                                    break;
-                                                }
-                                            }
-                                            if is_valid {
-                                                info!("add proposal");
-                                                let mut chain = c.chain.write().await;
-                                                if chain.add_block(block).await {
-                                                    continue;
-                                                } else {
-                                                    warn!("add_block failed");
-                                                }
-                                            } else {
-                                                warn!("find tx failed");
-                                            }
+                                        info!("add proposal");
+                                        let mut chain = c.chain.write().await;
+                                        if chain.add_remote_proposal(block).await {
+                                            continue;
                                         } else {
-                                            warn!("get block_body failed");
+                                            warn!("add_remote_proposal failed");
                                         }
                                     } else {
-                                        warn!("get_block failed");
+                                        warn!("get_proposal failed");
                                     }
                                 } else {
                                     warn!("decode filename failed {}", &event.filename);
