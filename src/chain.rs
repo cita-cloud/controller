@@ -17,7 +17,7 @@ use crate::pool::Pool;
 use crate::util::{
     check_block, check_block_exists, check_proposal_exists, check_tx_exists, exec_block, get_block,
     get_tx, hash_data, load_data, print_main_chain, reconfigure, remove_proposal, store_data,
-    unix_now, write_block, write_proposal,
+    store_tx_info, unix_now, write_block, write_proposal,
 };
 use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
@@ -590,27 +590,8 @@ impl Chain {
                     }
                 }
 
-                // let mut raw_tx_bytes = Vec::new();
-                // raw_tx
-                //    .encode(&mut raw_tx_bytes)
-                //    .expect("encode raw_tx failed");
-                // store_data(self.storage_port, 1, hash, raw_tx_bytes)
-                //    .await
-                //    .expect("store_data failed");
-
-                // region 7 : tx_hash - block_height
-                store_data(self.storage_port, 7, hash.to_vec(), key.clone())
-                    .await
-                    .expect("store tx_hash_2_block_height failed");
-                // region 9 : tx_hash - tx_index
-                store_data(
-                    self.storage_port,
-                    9,
-                    hash.to_vec(),
-                    (tx_index as u64).to_be_bytes().to_vec(),
-                )
-                .await
-                .expect("store tx_hash_2_block_height failed");
+                // store tx info
+                store_tx_info(&hash, block_height, tx_index as u64).await;
             }
         }
         // this must be before update pool
