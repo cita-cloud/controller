@@ -247,6 +247,45 @@ pub async fn remove_tx(filename: &str) {
     let _ = fs::remove_file(tx_path).await;
 }
 
+pub async fn store_tx_info(tx_hash: &[u8], block_height: u64, tx_index: u64) {
+    let filename = hex::encode(tx_hash);
+    let root_path = Path::new(".");
+    let tx_info_path = root_path.join("tx_infos").join(filename);
+
+    let mut data = block_height.to_be_bytes().to_vec();
+    data.extend_from_slice(&tx_index.to_be_bytes().to_vec());
+
+    let _ = fs::write(tx_info_path, data).await;
+}
+
+pub async fn load_tx_info(tx_hash: &[u8]) -> Option<(u64, u64)> {
+    let filename = hex::encode(tx_hash);
+    let root_path = Path::new(".");
+    let tx_info_path = root_path.join("tx_infos").join(filename);
+
+    let ret = fs::read(tx_info_path).await;
+    if ret.is_err() {
+        warn!("read tx info file failed: {:?}", ret);
+        return None;
+    }
+    let data = ret.unwrap();
+
+    if data.len() != 16 {
+        warn!("tx info data invalid");
+        return None;
+    }
+
+    let mut buf: [u8; 8] = [0; 8];
+
+    buf[..8].clone_from_slice(&data[..8]);
+    let block_height = u64::from_be_bytes(buf);
+
+    buf[..8].clone_from_slice(&data[8..]);
+    let tx_index = u64::from_be_bytes(buf);
+
+    Some((block_height, tx_index))
+}
+
 pub async fn write_proposal(block_hash: &[u8], data: &[u8]) {
     let filename = hex::encode(block_hash);
 

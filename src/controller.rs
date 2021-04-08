@@ -17,8 +17,8 @@ use crate::chain::Chain;
 use crate::pool::Pool;
 use crate::sync::Notifier;
 use crate::util::{
-    check_tx_exists, get_network_status, get_proposal, get_tx, load_data, remove_proposal,
-    remove_tx, write_tx,
+    check_tx_exists, get_network_status, get_proposal, get_tx, load_data, load_tx_info,
+    remove_proposal, remove_tx, write_tx,
 };
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -241,25 +241,19 @@ impl Controller {
     }
 
     pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
-        load_data(self.storage_port, 7, tx_hash)
-            .await
-            .map_err(|_| "load block hash failed".to_owned())
-            .map(|v| {
-                let mut bytes: [u8; 8] = [0; 8];
-                bytes[..8].clone_from_slice(&v[..8]);
-                u64::from_be_bytes(bytes)
-            })
+        if let Some((block_number, _)) = load_tx_info(tx_hash.as_slice()).await {
+            Ok(block_number)
+        } else {
+            Err("load tx info failed".to_owned())
+        }
     }
 
     pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
-        load_data(self.storage_port, 9, tx_hash)
-            .await
-            .map_err(|_| "load tx index failed".to_owned())
-            .map(|v| {
-                let mut bytes: [u8; 8] = [0; 8];
-                bytes[..8].clone_from_slice(&v[..8]);
-                u64::from_be_bytes(bytes)
-            })
+        if let Some((_, tx_index)) = load_tx_info(tx_hash.as_slice()).await {
+            Ok(tx_index)
+        } else {
+            Err("load tx info failed".to_owned())
+        }
     }
 
     pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
