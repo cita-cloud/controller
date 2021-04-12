@@ -113,4 +113,8 @@ impl Pool {
     pub fn len(&self) -> usize {
         self.order_set.len()
     }
+
+    pub fn contains(&self, tx_hash: &[u8]) -> bool {
+        self.txs.get(tx_hash).is_some()
+    }
 }
