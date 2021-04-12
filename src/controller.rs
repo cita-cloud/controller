@@ -18,7 +18,7 @@ use crate::pool::Pool;
 use crate::sync::Notifier;
 use crate::util::{
     check_tx_exists, get_network_status, get_new_tx, get_proposal, get_tx, load_data, load_tx_info,
-    remove_proposal, remove_tx, unix_now, write_new_tx,
+    remove_proposal, remove_tx, write_new_tx,
 };
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -224,10 +224,7 @@ impl Controller {
             loop {
                 interval.tick().await;
                 {
-                    let start = unix_now();
-                    let mut msg_num: u64 = 0;
                     while let Some(event) = proposals_notifier_clone.queue.pop() {
-                        msg_num += 1;
                         if let Ok(block_hash) = hex::decode(&event.filename) {
                             if let Some(block) = get_proposal(&block_hash).await {
                                 info!("add proposal");
@@ -247,11 +244,6 @@ impl Controller {
                         warn!("sync proposal invalid {}", &event.filename);
                         remove_proposal(event.filename.as_str()).await;
                     }
-                    info!(
-                        "performance proc add_remote_proposal use {} proc {} msg",
-                        unix_now() - start,
-                        msg_num
-                    );
                 }
             }
         });

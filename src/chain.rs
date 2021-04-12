@@ -505,13 +505,6 @@ impl Chain {
 
         info!("finalize_block: {}", block_height);
 
-        // genesis block (block_height = 0) can't be processed by sync
-        // because sync start from self.block_number + 1
-        if !is_sync && check_block_exists(block_height) && block_height != 0 {
-            warn!("finalized block has synced");
-            return;
-        }
-
         // region 5 : block_height - proof
         // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
         //    .await
@@ -527,7 +520,7 @@ impl Chain {
             .await
             .expect("store_data failed");
 
-        if !is_sync {
+        if !is_sync || !check_block_exists(block_height) {
             // region 3: block_height - block body
             let mut block_body_bytes = Vec::new();
             block_body
@@ -560,18 +553,8 @@ impl Chain {
         let tx_hash_list = block_body.tx_hashes;
         {
             for (tx_index, hash) in tx_hash_list.iter().enumerate() {
-                let start = unix_now();
                 move_tx(&hash).await;
-                info!(
-                    "performance finalize_block move_tx use {}",
-                    unix_now() - start
-                );
-                let start = unix_now();
                 let raw_tx = get_tx(&hash).await.expect("get tx failed");
-                info!(
-                    "performance finalize_block get_tx use {}",
-                    unix_now() - start
-                );
                 // if tx is utxo tx, update sys_config
                 {
                     if let UtxoTx(utxo_tx) = raw_tx.clone().tx.unwrap() {
