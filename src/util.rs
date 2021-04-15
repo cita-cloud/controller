@@ -29,7 +29,7 @@ use log::{info, warn};
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_cloud_proto::common::{Empty, ProposalWithProof};
+use cita_cloud_proto::common::{Empty, Proposal, ProposalWithProof};
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
 use std::io::{Error, ErrorKind};
@@ -43,12 +43,14 @@ pub fn unix_now() -> u64 {
 
 pub async fn reconfigure(
     consensus_port: u16,
+    height: u64,
     sys_config: SystemConfig,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
     let request = Request::new(ConsensusConfiguration {
+        height,
         block_interval: sys_config.block_interval,
         validators: sys_config.validators,
     });
@@ -59,12 +61,14 @@ pub async fn reconfigure(
 
 pub async fn check_block(
     consensus_port: u16,
-    proposal: Vec<u8>,
+    height: u64,
+    data: Vec<u8>,
     proof: Vec<u8>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
+    let proposal = Some(Proposal { height, data });
     let request = Request::new(ProposalWithProof { proposal, proof });
 
     let response = client.check_block(request).await?;

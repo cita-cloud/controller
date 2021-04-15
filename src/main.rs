@@ -105,7 +105,7 @@ async fn register_network_msg_handler(
 }
 
 use cita_cloud_proto::blockchain::CompactBlock;
-use cita_cloud_proto::common::{Empty, Hash, ProposalWithProof, SimpleResponse};
+use cita_cloud_proto::common::{Empty, Hash, Proposal, ProposalWithProof, SimpleResponse};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
@@ -368,27 +368,30 @@ impl Consensus2ControllerServer {
 
 #[tonic::async_trait]
 impl Consensus2ControllerService for Consensus2ControllerServer {
-    async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Hash>, Status> {
+    async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Proposal>, Status> {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
             |e| Err(Status::internal(e)),
-            |hash| {
-                let reply = Response::new(Hash { hash });
+            |(height, data)| {
+                let reply = Response::new(Proposal { height, data });
                 Ok(reply)
             },
         )
     }
     async fn check_proposal(
         &self,
-        request: Request<Hash>,
+        request: Request<Proposal>,
     ) -> Result<Response<SimpleResponse>, Status> {
         debug!("check_proposal request: {:?}", request);
 
-        let hash = request.into_inner().hash;
+        let proposal = request.into_inner();
+
+        let height = proposal.height;
+        let data = proposal.data;
 
         self.controller
-            .chain_check_proposal(&hash)
+            .chain_check_proposal(height, &data)
             .await
             .map_or_else(
                 |e| Err(Status::internal(e)),
@@ -405,11 +408,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
-        let proposal = proposal_with_proof.proposal;
+        let proposal = proposal_with_proof.proposal.unwrap();
+        let height = proposal.height;
+        let data = proposal.data;
         let proof = proposal_with_proof.proof;
 
         self.controller
-            .chain_commit_block(&proposal, &proof)
+            .chain_commit_block(height, &data, &proof)
             .await
             .map_or_else(
                 |e| Err(Status::internal(e)),
@@ -599,7 +604,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
-                let ret = reconfigure(consensus_port, sys_config_clone.clone()).await;
+                let ret = reconfigure(
+                    consensus_port,
+                    current_block_number,
+                    sys_config_clone.clone(),
+                )
+                .await;
                 if ret.is_ok() && ret.unwrap() {
                     info!("reconfigure success!");
                     break;

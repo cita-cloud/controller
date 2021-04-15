@@ -366,7 +366,7 @@ impl Controller {
         Ok(sys_config)
     }
 
-    pub async fn chain_get_proposal(&self) -> Result<Vec<u8>, String> {
+    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), String> {
         {
             let chain = self.chain.read().await;
             if let Some(proposal) = chain.get_proposal().await {
@@ -386,15 +386,20 @@ impl Controller {
         Err("get proposal error".to_owned())
     }
 
-    pub async fn chain_check_proposal(&self, proposal: &[u8]) -> Result<bool, String> {
+    pub async fn chain_check_proposal(&self, height: u64, proposal: &[u8]) -> Result<bool, String> {
         let chain = self.chain.read().await;
-        let ret = chain.check_proposal(proposal).await;
+        let ret = chain.check_proposal(height, proposal).await;
         Ok(ret)
     }
 
-    pub async fn chain_commit_block(&self, proposal: &[u8], proof: &[u8]) -> Result<(), String> {
+    pub async fn chain_commit_block(
+        &self,
+        height: u64,
+        proposal: &[u8],
+        proof: &[u8],
+    ) -> Result<(), String> {
         let mut chain = self.chain.write().await;
-        chain.commit_block(proposal, proof).await;
+        chain.commit_block(height, proposal, proof).await;
         Ok(())
     }
 
