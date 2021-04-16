@@ -161,9 +161,18 @@ impl Chain {
                     }
                     ret.unwrap()
                 };
+                let (pre_state_root, pre_proof) = {
+                    self.extract_proposal_info(height)
+                        .await
+                        .expect("extract_proposal_info failed")
+                };
                 {
+                    let mut proposal = Vec::new();
+                    proposal.extend_from_slice(&block_hash); // len 32
+                    proposal.extend_from_slice(&pre_state_root); // len 32
+                    proposal.extend_from_slice(&pre_proof); // len unknown
                     let ret =
-                        check_block(self.consensus_port, block_hash.clone(), proof.clone()).await;
+                        check_block(self.consensus_port, height, proposal, proof.clone()).await;
                     if ret.is_err() || !ret.unwrap() {
                         panic!("check_block failed")
                     }
@@ -209,36 +218,40 @@ impl Chain {
         }
     }
 
-    pub async fn get_proposal(&self) -> Option<Vec<u8>> {
+    async fn extract_proposal_info(&self, h: u64) -> Option<(Vec<u8>, Vec<u8>)> {
+        let pre_h = h - self.block_delay_number as u64 - 1;
+        let key = pre_h.to_be_bytes().to_vec();
+
+        let state_root = {
+            let ret = load_data(self.storage_port, 6, key.clone()).await;
+            if ret.is_err() {
+                warn!("get_proposal get state_root failed");
+                return None;
+            }
+            ret.unwrap()
+        };
+
+        let proof = {
+            let ret = get_block(pre_h).await;
+            if ret.is_none() {
+                warn!("get_proposal get proof failed");
+                return None;
+            }
+            ret.unwrap().1
+        };
+
+        Some((state_root, proof))
+    }
+
+    pub async fn get_proposal(&self) -> Option<(u64, Vec<u8>)> {
         if let Some((h, ref blk_hash)) = self.candidate_block {
-            let h_bytes = h.to_be_bytes().to_vec();
-            let pre_h = h - self.block_delay_number as u64 - 1;
-            let key = pre_h.to_be_bytes().to_vec();
-
-            let state_root = {
-                let ret = load_data(self.storage_port, 6, key.clone()).await;
-                if ret.is_err() {
-                    warn!("get_proposal get state_root failed");
-                    return None;
-                }
-                ret.unwrap()
-            };
-
-            let proof = {
-                let ret = get_block(pre_h).await;
-                if ret.is_none() {
-                    warn!("get_proposal get proof failed");
-                    return None;
-                }
-                ret.unwrap().1
-            };
-
-            let mut proposal = Vec::new();
-            proposal.extend_from_slice(&h_bytes); // len 8
-            proposal.extend_from_slice(blk_hash); // len 32
-            proposal.extend_from_slice(&state_root); // len 32
-            proposal.extend_from_slice(&proof); // len unknown
-            return Some(proposal);
+            if let Some((state_root, proof)) = self.extract_proposal_info(h).await {
+                let mut proposal = Vec::new();
+                proposal.extend_from_slice(blk_hash); // len 32
+                proposal.extend_from_slice(&state_root); // len 32
+                proposal.extend_from_slice(&proof); // len unknown
+                return Some((h, proposal));
+            }
         }
         None
     }
@@ -390,17 +403,11 @@ impl Chain {
         self.candidate_block = None;
     }
 
-    pub async fn check_proposal(&self, proposal: &[u8]) -> bool {
-        if proposal.len() < 8 + 32 + 32 {
+    pub async fn check_proposal(&self, h: u64, proposal: &[u8]) -> bool {
+        if proposal.len() < 32 + 32 {
             warn!("proposal length invalid");
             return false;
         }
-
-        let h = {
-            let mut bytes: [u8; 8] = [0; 8];
-            bytes[..8].clone_from_slice(&proposal[..8]);
-            u64::from_be_bytes(bytes)
-        };
 
         // old proposal
         if h <= self.block_number {
@@ -412,9 +419,9 @@ impl Chain {
             return false;
         }
 
-        let block_hash = &proposal[8..40];
-        let proposal_state_root = &proposal[40..72];
-        let proposal_proof = &proposal[72..];
+        let block_hash = &proposal[..32];
+        let proposal_state_root = &proposal[32..64];
+        let proposal_proof = &proposal[64..];
 
         if let Some((blk, _)) =
             self.fork_tree[h as usize - self.block_number as usize - 1].get(block_hash)
@@ -576,7 +583,7 @@ impl Chain {
                                     let auth = self.auth.read().await;
                                     auth.get_system_config()
                                 };
-                                reconfigure(self.consensus_port, sys_config)
+                                reconfigure(self.consensus_port, block_height, sys_config)
                                     .await
                                     .expect("reconfigure failed");
                             }
@@ -626,10 +633,11 @@ impl Chain {
         .expect("store_data failed");
     }
 
-    pub async fn commit_block(&mut self, proposal: &[u8], proof: &[u8]) {
-        let proposal_blk_hash = &proposal[8..40];
+    pub async fn commit_block(&mut self, height: u64, proposal: &[u8], proof: &[u8]) {
+        let proposal_blk_hash = &proposal[..32];
         info!(
-            "commit_block 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            "commit_block height {}: 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            height,
             proposal_blk_hash[0],
             proposal_blk_hash[1],
             proposal_blk_hash[2],
