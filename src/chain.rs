@@ -276,14 +276,7 @@ impl Chain {
 
         let ret = hash_data(self.kms_port, block_header_bytes).await;
         if let Ok(block_hash) = ret {
-            info!(
-                "add remote proposal 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
-                block_hash[0],
-                block_hash[1],
-                block_hash[2],
-                block_hash[block_hash.len() - 2],
-                block_hash[block_hash.len() - 1]
-            );
+            info!("add remote proposal {}", hex::encode(&block_hash));
             self.fork_tree[block_height as usize - self.block_number as usize - 1]
                 .entry(block_hash)
                 .or_insert((block, None));
@@ -346,15 +339,7 @@ impl Chain {
             self.main_chain.last().unwrap().to_owned()
         };
         let height = self.block_number + self.main_chain.len() as u64 + 1;
-        info!(
-            "proposal {} prevhash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
-            height,
-            prevhash[0],
-            prevhash[1],
-            prevhash[2],
-            prevhash[prevhash.len() - 2],
-            prevhash[prevhash.len() - 1]
-        );
+        info!("proposal {} prevhash {}", height, hex::encode(&prevhash));
         let header = BlockHeader {
             prevhash,
             timestamp: unix_now(),
@@ -380,13 +365,9 @@ impl Chain {
             .await
             .expect("hash data failed");
         info!(
-            "proposal {} block_hash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            "proposal {} block_hash {}",
             height,
-            block_hash[0],
-            block_hash[1],
-            block_hash[2],
-            block_hash[block_hash.len() - 2],
-            block_hash[block_hash.len() - 1]
+            hex::encode(&block_hash)
         );
         self.candidate_block = Some((height, block_hash.clone()));
         self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
@@ -430,17 +411,12 @@ impl Chain {
             // check tx in block
             {
                 let tx_hash_list = block_body.tx_hashes;
-                let mut is_valid = true;
                 let pool = self.pool.read().await;
                 for hash in tx_hash_list.iter() {
                     if !pool.contains(hash) {
-                        is_valid = false;
-                        break;
+                        warn!("can't find tx {} in proposal {}", hex::encode(&hash), h);
+                        return false;
                     }
-                }
-                if !is_valid {
-                    warn!("find tx in proposal {} failed", h);
-                    return false;
                 }
             }
 
@@ -468,31 +444,19 @@ impl Chain {
             if proposal_state_root == state_root && proposal_proof == proof {
                 return true;
             } else {
-                warn!("check_proposal failed!\nproposal_state_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nstate_root 0x{:02x}{:02x}{:02x}..{:02x}{:02x}\nproposal_proof {:?}\nproof {:?}",
-                      proposal_state_root[0],
-                      proposal_state_root[1],
-                      proposal_state_root[2],
-                      proposal_state_root[proposal_state_root.len() - 2],
-                      proposal_state_root[proposal_state_root.len() - 1],
-                      state_root[0],
-                      state_root[1],
-                      state_root[2],
-                      state_root[state_root.len() - 2],
-                      state_root[state_root.len() - 1],
-                      proposal_proof,
-                      proof,
+                warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
+                    hex::encode(&proposal_state_root),
+                    hex::encode(&state_root),
+                    hex::encode(&proposal_proof),
+                    hex::encode(&proof),
                 );
                 return false;
             }
         }
 
         warn!(
-            "can't find proposal block 0x{:02x}{:02x}{:02x}..{:02x}{:02x} in fork tree",
-            block_hash[0],
-            block_hash[1],
-            block_hash[2],
-            block_hash[block_hash.len() - 2],
-            block_hash[block_hash.len() - 1]
+            "can't find proposal block {} in fork tree",
+            hex::encode(&block_hash)
         );
         false
     }
@@ -636,13 +600,9 @@ impl Chain {
     pub async fn commit_block(&mut self, height: u64, proposal: &[u8], proof: &[u8]) {
         let proposal_blk_hash = &proposal[..32];
         info!(
-            "commit_block height {}: 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            "commit_block height {}: {}",
             height,
-            proposal_blk_hash[0],
-            proposal_blk_hash[1],
-            proposal_blk_hash[2],
-            proposal_blk_hash[proposal_blk_hash.len() - 2],
-            proposal_blk_hash[proposal_blk_hash.len() - 1]
+            hex::encode(&proposal_blk_hash)
         );
 
         let commit_block_index;

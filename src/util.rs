@@ -199,13 +199,9 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     info!("main chain:");
     for (i, hash) in chain.iter().enumerate() {
         info!(
-            "height: {} hash 0x{:02x}{:02x}{:02x}..{:02x}{:02x}",
+            "height: {} hash {}",
             i as u64 + block_number + 1,
-            hash[0],
-            hash[1],
-            hash[2],
-            hash[hash.len() - 2],
-            hash[hash.len() - 1]
+            hex::encode(&hash)
         );
     }
 }
