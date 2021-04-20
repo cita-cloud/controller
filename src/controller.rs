@@ -200,7 +200,10 @@ impl Controller {
                                         }
                                     }
                                     Err(e) => {
-                                        if e == "dup" || e == "Invalid valid_until_block" {
+                                        if e == "dup"
+                                            || e == "Invalid valid_until_block"
+                                            || e == "internal err"
+                                        {
                                             continue;
                                         } else {
                                             warn!("add sync tx failed: {:?}", e);
