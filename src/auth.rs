@@ -157,18 +157,20 @@ impl Authentication {
                         if !is_ok {
                             return Err("Invalid tx_hash".to_owned());
                         }
+                    } else {
+                        return Err("internal err".to_owned());
                     }
 
                     if let Ok(address) =
                         verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
                     {
                         if address == sender {
-                            Ok(tx_hash)
+                            return Ok(tx_hash);
                         } else {
-                            Err("Invalid sender".to_owned())
+                            return Err("Invalid sender".to_owned());
                         }
                     } else {
-                        Err("kms recover signature failed".to_owned())
+                        return Err("internal err".to_owned());
                     }
                 }
                 UtxoTx(utxo_tx) => {
@@ -192,6 +194,8 @@ impl Authentication {
                         if !is_ok {
                             return Err("Invalid utxo tx hash".to_owned());
                         }
+                    } else {
+                        return Err("internal err".to_owned());
                     }
 
                     for (i, w) in witnesses.into_iter().enumerate() {
@@ -206,8 +210,7 @@ impl Authentication {
                                 return Err(err_str);
                             }
                         } else {
-                            let err_str = format!("kms recover signature failed index: {}", i);
-                            return Err(err_str);
+                            return Err("internal err".to_owned());
                         }
                     }
                     Ok(tx_hash)
