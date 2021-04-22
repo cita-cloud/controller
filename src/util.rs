@@ -35,6 +35,7 @@ use prost::Message;
 use std::io::{Error, ErrorKind};
 use std::path::Path;
 use tokio::fs;
+use tonic::Code;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -88,8 +89,19 @@ pub async fn verify_tx_signature(
         signature,
     });
 
-    let response = client.recover_signature(request).await?;
-    Ok(response.into_inner().address)
+    match client.recover_signature(request).await {
+        Ok(response) => Ok(response.into_inner().address),
+        Err(e) => {
+            if e.code() == Code::InvalidArgument {
+                Ok(vec![])
+            } else {
+                Err(Box::new(Error::new(
+                    ErrorKind::Other,
+                    "verify_tx_signature failed",
+                )))
+            }
+        }
+    }
 }
 
 pub async fn verify_tx_hash(

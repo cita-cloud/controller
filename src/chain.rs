@@ -157,6 +157,7 @@ impl Chain {
                 let block_hash = {
                     let ret = hash_data(self.kms_port, block_header_bytes).await;
                     if ret.is_err() {
+                        warn!("hash_data failed {:?}", ret);
                         return;
                     }
                     ret.unwrap()
@@ -281,7 +282,7 @@ impl Chain {
                 .entry(block_hash)
                 .or_insert((block, None));
         } else {
-            warn!("hash block failed {:?}", ret);
+            warn!("hash_data failed {:?}", ret);
         }
         true
     }
@@ -327,6 +328,7 @@ impl Chain {
         {
             let ret = hash_data(self.kms_port, data).await;
             if ret.is_err() {
+                warn!("hash_data failed {:?}", ret);
                 return;
             } else {
                 transactions_root = ret.unwrap();
@@ -361,9 +363,17 @@ impl Chain {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        let block_hash = hash_data(self.kms_port, block_header_bytes)
-            .await
-            .expect("hash data failed");
+        let block_hash;
+        {
+            let ret = hash_data(self.kms_port, block_header_bytes).await;
+            if ret.is_err() {
+                warn!("hash_data failed {:?}", ret);
+                return;
+            } else {
+                block_hash = ret.unwrap();
+            }
+        }
+
         info!(
             "proposal {} block_hash {}",
             height,
