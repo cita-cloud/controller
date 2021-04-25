@@ -558,8 +558,9 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
                     let mut bytes: [u8; 8] = [0; 8];
                     bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
                     current_block_number = u64::from_be_bytes(bytes);
-                    let ret = load_data(storage_port, 0, 1u64.to_be_bytes().to_vec()).await;
-                    current_block_hash = ret.unwrap();
+                    current_block_hash = load_data(storage_port, 0, 1u64.to_be_bytes().to_vec())
+                        .await
+                        .unwrap();
                 }
                 break;
             }
