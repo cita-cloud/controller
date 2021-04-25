@@ -32,7 +32,6 @@ use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::common::{Empty, Proposal, ProposalWithProof};
 use cita_cloud_proto::controller::RawTransaction;
 use prost::Message;
-use std::io::{Error, ErrorKind};
 use std::path::Path;
 use tokio::fs;
 use tonic::Code;
@@ -95,10 +94,7 @@ pub async fn verify_tx_signature(
             if e.code() == Code::InvalidArgument {
                 Ok(vec![])
             } else {
-                Err(Box::new(Error::new(
-                    ErrorKind::Other,
-                    "verify_tx_signature failed",
-                )))
+                Err(Box::new(e))
             }
         }
     }
@@ -160,12 +156,8 @@ pub async fn load_data(
     let request = Request::new(ExtKey { region, key });
 
     let response = client.load(request).await?;
-    let value = response.into_inner().value;
-    if value.is_empty() {
-        Err(Box::new(Error::new(ErrorKind::Other, "empty value")))
-    } else {
-        Ok(value)
-    }
+
+    Ok(response.into_inner().value)
 }
 
 pub async fn load_data_maybe_empty(
@@ -178,8 +170,16 @@ pub async fn load_data_maybe_empty(
 
     let request = Request::new(ExtKey { region, key });
 
-    let response = client.load(request).await?;
-    Ok(response.into_inner().value)
+    match client.load(request).await {
+        Ok(response) => Ok(response.into_inner().value),
+        Err(e) => {
+            if e.code() == Code::NotFound {
+                Ok(vec![])
+            } else {
+                Err(Box::new(e))
+            }
+        }
+    }
 }
 
 pub async fn exec_block(
