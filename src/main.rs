@@ -235,6 +235,7 @@ impl RpcService for RPCServer {
                     admin: sys_config.admin,
                     block_interval: sys_config.block_interval,
                     validators: sys_config.validators,
+                    emergency_brake: sys_config.emergency_brake,
                     version_pre_hash: sys_config
                         .utxo_tx_hashes
                         .get(&LOCK_ID_VERSION)
@@ -258,6 +259,11 @@ impl RpcService for RPCServer {
                     validators_pre_hash: sys_config
                         .utxo_tx_hashes
                         .get(&LOCK_ID_VALIDATORS)
+                        .unwrap()
+                        .to_owned(),
+                    emergency_brake_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_EMERGENCY_BRAKE)
                         .unwrap()
                         .to_owned(),
                 });
@@ -468,7 +474,7 @@ use crate::sync::Notifier;
 use crate::util::{hash_data, load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
-    LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
+    LOCK_ID_VALIDATORS, LOCK_ID_VERSION, LOCK_ID_EMERGENCY_BRAKE,
 };
 use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;

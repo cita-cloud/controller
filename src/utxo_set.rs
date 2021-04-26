@@ -62,6 +62,7 @@ pub struct SystemConfig {
     pub admin: Vec<u8>,
     pub block_interval: u32,
     pub validators: Vec<Vec<u8>>,
+    pub emergency_brake: bool,
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
 }
 
@@ -70,7 +71,8 @@ pub const LOCK_ID_CHAIN_ID: u64 = 1_001;
 pub const LOCK_ID_ADMIN: u64 = 1_002;
 pub const LOCK_ID_BLOCK_INTERVAL: u64 = 1_003;
 pub const LOCK_ID_VALIDATORS: u64 = 1_004;
-pub const LOCK_ID_BUTTON: u64 = 1_005;
+pub const LOCK_ID_EMERGENCY_BRAKE: u64 = 1_005;
+pub const LOCK_ID_BUTTON: u64 = 1_006;
 
 impl SystemConfig {
     pub fn new(
@@ -91,6 +93,7 @@ impl SystemConfig {
             admin,
             block_interval,
             validators,
+            emergency_brake: false,
             utxo_tx_hashes: map,
         }
     }
@@ -141,15 +144,19 @@ impl SystemConfig {
             }
             LOCK_ID_VALIDATORS => {
                 let mut validators = Vec::new();
-                if data.len() % 21 == 0 {
-                    for i in 0..(data.len() / 21) {
-                        validators.push(data[i..(i + 1) * 21].to_vec())
+                if data.len() % 20 == 0 {
+                    for i in 0..(data.len() / 20) {
+                        validators.push(data[i..(i + 1) * 20].to_vec())
                     }
                     true
                 } else {
                     warn!("Invalid validators");
                     false
                 }
+            }
+            LOCK_ID_EMERGENCY_BRAKE => {
+                self.emergency_brake = data.len() > 0;
+                true
             }
             _ => {
                 warn!("Invalid lock_id");

@@ -16,7 +16,7 @@ tonic = "*"
 prost = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-stream = "*"
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch == "add_emergency_brake" }
 futures-util = "*"
 rand = "*"
 toml = "*"
