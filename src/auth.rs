@@ -136,6 +136,10 @@ impl Authentication {
                     let signature = witness.signature;
                     let sender = witness.sender;
 
+                    if self.sys_config.emergency_brake {
+                        return Err("forbidden".to_owned());
+                    }
+
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = normal_tx.transaction {
                         self.check_transaction(&tx)?;
@@ -175,6 +179,16 @@ impl Authentication {
                 }
                 UtxoTx(utxo_tx) => {
                     let witnesses = utxo_tx.witnesses;
+
+                    // limit witnesses length is 1
+                    if witnesses.len() != 1 {
+                        return Err("invalid witnesses".to_owned());
+                    }
+
+                    // only admin can send utxo tx
+                    if witnesses[0].sender != self.sys_config.admin {
+                        return Err("forbidden".to_owned());
+                    }
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = utxo_tx.transaction {
