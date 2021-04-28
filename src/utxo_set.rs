@@ -130,7 +130,7 @@ impl SystemConfig {
                 }
             }
             LOCK_ID_ADMIN => {
-                if data.len() == 21 {
+                if data.len() == 20 {
                     self.admin = data;
                     true
                 } else {
