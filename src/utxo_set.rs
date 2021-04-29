@@ -146,7 +146,7 @@ impl SystemConfig {
                 let mut validators = Vec::new();
                 if data.len() % 20 == 0 {
                     for i in 0..(data.len() / 20) {
-                        validators.push(data[i..(i + 1) * 20].to_vec())
+                        validators.push(data[i * 20..(i + 1) * 20].to_vec())
                     }
                     self.validators = validators;
                     true
