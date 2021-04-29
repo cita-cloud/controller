@@ -474,7 +474,7 @@ use crate::sync::Notifier;
 use crate::util::{hash_data, load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
-    LOCK_ID_VALIDATORS, LOCK_ID_VERSION, LOCK_ID_EMERGENCY_BRAKE,
+    LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
 use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
