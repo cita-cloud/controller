@@ -148,6 +148,7 @@ impl SystemConfig {
                     for i in 0..(data.len() / 20) {
                         validators.push(data[i..(i + 1) * 20].to_vec())
                     }
+                    self.validators = validators;
                     true
                 } else {
                     warn!("Invalid validators");
