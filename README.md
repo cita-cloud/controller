@@ -1,4 +1,4 @@
-# controller poc
+# controller
 ## build
 ```
 cargo build --release
