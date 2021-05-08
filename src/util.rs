@@ -243,7 +243,7 @@ pub async fn move_tx(tx_hash: &[u8]) {
 
     let root_path = Path::new(".");
     let file_path = root_path.join("txs").join(filename);
-    let new_file_path = root_path.join("txs").join(new_filename);
+    let new_file_path = root_path.join("txs").join(new_filename.clone());
 
     if new_file_path.exists() {
         if !file_path.exists() {
@@ -255,7 +255,7 @@ pub async fn move_tx(tx_hash: &[u8]) {
             let content = ret.unwrap();
             let _ = fs::write(file_path, content).await;
         }
-        remove_tx(new_file_path.to_str().unwrap()).await;
+        remove_tx(&new_filename).await;
     } else if !file_path.exists() {
         panic!("can't find tx when move_tx");
     }

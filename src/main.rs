@@ -530,7 +530,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     // load key_id
     let buffer = fs::read_to_string("key_id")
         .unwrap_or_else(|err| panic!("Error while loading key_id: [{}]", err));
-    let key_id = u64::from_str_radix(&buffer, 10)
+    let key_id = buffer
+        .parse::<u64>()
         .unwrap_or_else(|err| panic!("Error while parsing key_id: [{}]", err));
     info!("key_id: {}", key_id);
 
