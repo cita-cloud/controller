@@ -156,7 +156,7 @@ impl SystemConfig {
                 }
             }
             LOCK_ID_EMERGENCY_BRAKE => {
-                self.emergency_brake = data.len() > 0;
+                self.emergency_brake = !data.is_empty();
                 true
             }
             _ => {

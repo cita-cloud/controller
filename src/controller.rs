@@ -288,15 +288,15 @@ impl Controller {
             auth.check_raw_tx(raw_tx.clone()).await?
         };
 
-        let is_exists = check_tx_exists(tx_hash.as_slice());
-        if !is_exists {
-            let mut raw_tx_bytes: Vec<u8> = Vec::new();
-            let _ = raw_tx.encode(&mut raw_tx_bytes);
-            write_new_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
-        }
         let mut pool = self.pool.write().await;
         let is_ok = pool.enqueue(tx_hash.clone());
         if is_ok {
+            let is_exists = check_tx_exists(tx_hash.as_slice());
+            if !is_exists {
+                let mut raw_tx_bytes: Vec<u8> = Vec::new();
+                let _ = raw_tx.encode(&mut raw_tx_bytes);
+                write_new_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
+            }
             Ok(tx_hash)
         } else {
             Err("dup".to_owned())
