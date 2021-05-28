@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util::clean_0x;
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use log::warn;
 use serde_derive::Deserialize;
@@ -34,11 +35,12 @@ impl SystemConfigFile {
     }
 
     pub fn to_system_config(&self) -> SystemConfig {
-        let chain_id = hex::decode(&self.chain_id[2..]).expect("parsing chain_id failed!");
-        let admin = hex::decode(&self.admin[2..]).expect("parsing admin failed!");
+        let chain_id = hex::decode(clean_0x(&self.chain_id)).expect("parsing chain_id failed!");
+        let admin = hex::decode(clean_0x(&self.admin)).expect("parsing admin failed!");
         let mut validators = Vec::new();
         for validator_str in self.validators.iter() {
-            let validator = hex::decode(&validator_str[2..]).expect("parsing validator failed!");
+            let validator =
+                hex::decode(clean_0x(&validator_str)).expect("parsing validator failed!");
             validators.push(validator)
         }
         SystemConfig::new(

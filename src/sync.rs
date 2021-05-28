@@ -25,15 +25,15 @@ pub struct NotifyMessage {
 
 pub struct Notifier {
     pub root: String,
-    pub subpath: String,
+    pub sub_path: String,
     pub queue: SegQueue<NotifyMessage>,
 }
 
 impl Notifier {
-    pub fn new(root: String, subpath: String) -> Self {
+    pub fn new(root: String, sub_path: String) -> Self {
         Self {
             root,
-            subpath,
+            sub_path,
             queue: SegQueue::new(),
         }
     }
@@ -145,7 +145,7 @@ impl Notifier {
     }
 
     pub fn list(&self, current_block_number: u64) {
-        match self.subpath.as_str() {
+        match self.sub_path.as_str() {
             "txs" => {
                 let msg = self.list_txs();
                 for m in msg {
@@ -175,7 +175,7 @@ impl Notifier {
 
         let root_path = Path::new(&self.root);
 
-        let path = root_path.join(&self.subpath);
+        let path = root_path.join(&self.sub_path);
         inotify.add_watch(path, WatchMask::MOVED_TO).unwrap();
 
         let mut buffer = vec![0u8; 16384];

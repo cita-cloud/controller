@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use log::info;
+use log::debug;
 use rand::Rng;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -55,7 +55,7 @@ impl Pool {
     }
 
     fn update_low_bound(&mut self) {
-        info!("low_bound before update: {}", self.lower_bound);
+        debug!("low_bound before update: {}", self.lower_bound);
         let old_low_bound = self.lower_bound;
         for i in old_low_bound..self.order {
             if self.order_set.get(&i).is_some() {
@@ -63,11 +63,11 @@ impl Pool {
             }
             self.lower_bound += 1;
         }
-        info!("low_bound after update: {}", self.lower_bound);
+        debug!("low_bound after update: {}", self.lower_bound);
     }
 
     pub fn update(&mut self, tx_hash_list: Vec<Vec<u8>>) {
-        info!(
+        debug!(
             "before update len of pool {}, will update {} tx",
             self.len(),
             tx_hash_list.len()
@@ -84,7 +84,7 @@ impl Pool {
         self.order_set = new_order_set;
         self.txs = new_txs;
 
-        info!("after update len of pool {}", self.len());
+        debug!("after update len of pool {}", self.len());
         self.update_low_bound()
     }
 

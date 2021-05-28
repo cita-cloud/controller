@@ -17,10 +17,15 @@ mod chain;
 mod config;
 mod controller;
 mod genesis;
+mod node_manager;
 mod panic_hook;
 mod pool;
+mod protocol;
 mod sync;
+#[macro_use]
 mod util;
+mod error;
+mod event;
 mod utxo_set;
 
 use crate::panic_hook::set_panic_handler;
@@ -89,7 +94,7 @@ use cita_cloud_proto::network::RegisterInfo;
 async fn register_network_msg_handler(
     network_port: u16,
     port: String,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let network_addr = format!("http://127.0.0.1:{}", network_port);
     let mut client = NetworkServiceClient::connect(network_addr).await?;
 
@@ -104,12 +109,14 @@ async fn register_network_msg_handler(
     Ok(response.into_inner().is_success)
 }
 
-use cita_cloud_proto::blockchain::CompactBlock;
-use cita_cloud_proto::common::{Empty, Hash, Proposal, ProposalWithProof, SimpleResponse};
+use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction};
+use cita_cloud_proto::common::{
+    ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof, SimpleResponse,
+};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-    PeerCount, RawTransaction, SoftwareVersion, TransactionIndex,
+    PeerCount, SoftwareVersion, TransactionIndex,
 };
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -137,7 +144,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_number(flag.flag)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_number| {
                     let reply = Response::new(BlockNumber { block_number });
                     Ok(reply)
@@ -153,10 +160,10 @@ impl RpcService for RPCServer {
         let raw_tx = request.into_inner();
 
         self.controller
-            .rpc_send_raw_transaction(raw_tx)
+            .rpc_send_raw_transaction(raw_tx, true)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |tx_hash| {
                     let reply = Response::new(Hash { hash: tx_hash });
                     Ok(reply)
@@ -175,7 +182,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_hash(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -194,7 +201,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_number(block_number.block_number)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -213,7 +220,7 @@ impl RpcService for RPCServer {
             .rpc_get_transaction(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |raw_tx| {
                     let reply = Response::new(raw_tx);
                     Ok(reply)
@@ -227,7 +234,7 @@ impl RpcService for RPCServer {
         debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
-            |e| Err(Status::internal(e)),
+            |e| Err(Status::invalid_argument(e)),
             |sys_config| {
                 let reply = Response::new(ProtoSystemConfig {
                     version: sys_config.version,
@@ -295,7 +302,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_hash(block_number.block_number)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_hash| {
                     let reply = Response::new(Hash { hash: block_hash });
                     Ok(reply)
@@ -315,7 +322,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_block_number(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_number| {
                     let reply = Response::new(BlockNumber { block_number });
                     Ok(reply)
@@ -335,7 +342,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_index(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |tx_index| {
                     let reply = Response::new(TransactionIndex { tx_index });
                     Ok(reply)
@@ -347,7 +354,7 @@ impl RpcService for RPCServer {
         debug!("get_peer_count request: {:?}", request);
 
         self.controller.rpc_get_peer_count().await.map_or_else(
-            |e| Err(Status::internal(e)),
+            |e| Err(Status::invalid_argument(e)),
             |peer_count| {
                 let reply = Response::new(PeerCount { peer_count });
                 Ok(reply)
@@ -377,13 +384,14 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Proposal>, Status> {
         debug!("get_proposal request: {:?}", request);
 
-        self.controller.chain_get_proposal().await.map_or_else(
-            |e| Err(Status::internal(e)),
-            |(height, data)| {
-                let reply = Response::new(Proposal { height, data });
+        match self.controller.chain_get_proposal().await {
+            Ok((height, data)) => {
+                let proposal = Proposal { height, data };
+                let reply = Response::new(proposal);
                 Ok(reply)
-            },
-        )
+            }
+            Err(e) => Err(Status::invalid_argument(e.to_string())),
+        }
     }
     async fn check_proposal(
         &self,
@@ -400,7 +408,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             .chain_check_proposal(height, &data)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |is_ok| {
                     let reply = Response::new(SimpleResponse { is_success: is_ok });
                     Ok(reply)
@@ -410,7 +418,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<ConsensusConfiguration>, Status> {
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
@@ -423,8 +431,8 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             .chain_commit_block(height, &data, &proof)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
-                |_| Ok(Response::new(Empty {})),
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |r| Ok(Response::new(r)),
             )
     }
 }
@@ -458,11 +466,8 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
             Err(Status::invalid_argument("wrong module"))
         } else {
             self.controller.process_network_msg(msg).await.map_or_else(
-                |e| Err(Status::internal(e)),
-                |_| {
-                    let reply = SimpleResponse { is_success: true };
-                    Ok(Response::new(reply))
-                },
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |r| Ok(Response::new(r)),
             )
         }
     }
@@ -470,13 +475,14 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
+use crate::event::EventTask;
 use crate::sync::Notifier;
-use crate::util::{hash_data, load_data, load_data_maybe_empty, reconfigure};
+use crate::util::{clean_0x, hash_data, load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
-use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
 use prost::Message;
 use std::fs;
@@ -485,7 +491,7 @@ use std::time::Duration;
 use tokio::time;
 
 #[tokio::main]
-async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // read consensus-config.toml
     let buffer = fs::read_to_string("controller-config.toml")
         .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
@@ -539,7 +545,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     let buffer = fs::read_to_string("node_address")
         .unwrap_or_else(|err| panic!("Error while loading node_address: [{}]", err));
     // skip 0x prefix
-    let node_address = hex::decode(&buffer[2..])
+    let node_address = hex::decode(clean_0x(&buffer))
         .unwrap_or_else(|err| panic!("Error while parsing node_address: [{}]", err));
     info!("node_address: {:?}", buffer);
 
@@ -553,23 +559,26 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         interval.tick().await;
         {
-            let ret = load_data_maybe_empty(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
-            if let Ok(current_block_number_bytes) = ret {
-                info!("get current block number success!");
-                if current_block_number_bytes.is_empty() {
-                    info!("this is a new chain!");
-                    current_block_number = 0u64;
-                    current_block_hash = genesis.genesis_block_hash(kms_port).await;
-                } else {
-                    info!("this is an old chain!");
-                    let mut bytes: [u8; 8] = [0; 8];
-                    bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
-                    current_block_number = u64::from_be_bytes(bytes);
-                    current_block_hash = load_data(storage_port, 0, 1u64.to_be_bytes().to_vec())
-                        .await
-                        .unwrap();
+            match load_data_maybe_empty(storage_port, 0, 0u64.to_be_bytes().to_vec()).await {
+                Ok(current_block_number_bytes) => {
+                    info!("get current block number success!");
+                    if current_block_number_bytes.is_empty() {
+                        info!("this is a new chain!");
+                        current_block_number = 0u64;
+                        current_block_hash = genesis.genesis_block_hash(kms_port).await;
+                    } else {
+                        info!("this is an old chain!");
+                        let mut bytes: [u8; 8] = [0; 8];
+                        bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
+                        current_block_number = u64::from_be_bytes(bytes);
+                        current_block_hash =
+                            load_data(storage_port, 0, 1u64.to_be_bytes().to_vec())
+                                .await
+                                .unwrap();
+                    }
+                    break;
                 }
-                break;
+                Err(e) => warn!("{}", e.to_string()),
             }
         }
         warn!("get current block number failed! Retrying");
@@ -626,6 +635,9 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let (task_sender, task_receiver) = crossbeam::channel::unbounded();
+
+    // todo local_address
     let controller = Controller::new(
         consensus_port,
         network_port,
@@ -635,16 +647,38 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         block_delay_number,
         current_block_number,
         current_block_hash,
-        sys_config,
+        sys_config.clone(),
         genesis,
         Arc::new(Notifier::new(".".to_string(), "txs".to_string())),
         Arc::new(Notifier::new(".".to_string(), "proposals".to_string())),
         Arc::new(Notifier::new(".".to_string(), "blocks".to_string())),
         key_id,
         node_address,
+        task_sender,
     );
 
-    controller.init(current_block_number).await;
+    controller.init(current_block_number, sys_config).await;
+
+    let controller_clone = controller.clone();
+    tokio::spawn(async move {
+        loop {
+            match task_receiver.recv().unwrap() {
+                EventTask::UpdateStatus(mut csf) => {
+                    if controller_clone.update_from_chain(csf.status.clone()).await
+                        && csf.broadcast_or_not
+                    {
+                        csf.status.address = Some(controller_clone.local_address.clone());
+                        controller_clone
+                            .multicast_chain_status(network_port, csf.status)
+                            .await;
+                    }
+                }
+                EventTask::SyncBlock => {
+                    controller_clone.try_sync_block().await;
+                }
+            }
+        }
+    });
 
     let addr_str = format!("0.0.0.0:{}", opts.grpc_port);
     let addr = addr_str.parse()?;

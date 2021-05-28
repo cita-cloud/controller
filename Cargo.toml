@@ -16,7 +16,7 @@ tonic = "*"
 prost = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-stream = "*"
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "full_block_develop" }
 futures-util = "*"
 rand = "*"
 toml = "*"
@@ -26,10 +26,10 @@ hex = "*"
 inotify = "*"
 crossbeam = "*"
 backtrace = "*"
+bincode = "*"
 
-[dev-dependencies]
-tempdir = "*"
-
+[build-dependencies]
+tonic-build = "*"
 
 [profile.release.package."*"]
 # Set the default for dependencies.

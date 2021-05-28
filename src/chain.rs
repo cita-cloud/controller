@@ -13,22 +13,35 @@
 // limitations under the License.
 
 use crate::auth::Authentication;
+use crate::error::Error;
+use crate::event::EventTask;
+use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
 use crate::pool::Pool;
 use crate::util::{
-    check_block, check_block_exists, check_proposal_exists, exec_block, get_block, get_tx,
-    hash_data, load_data, move_tx, print_main_chain, reconfigure, remove_proposal, store_data,
-    store_tx_info, unix_now, write_block, write_proposal,
+    check_block, check_block_exists, exec_block, get_compact_block, get_full_block, get_tx,
+    hash_data, load_data, move_tx, print_main_chain, reconfigure, store_data, store_tx_info,
+    unix_now, write_block,
 };
-use crate::utxo_set::{LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
+use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
-use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::blockchain::{Block, BlockHeader, CompactBlock, CompactBlockBody};
+use cita_cloud_proto::common::proposal_enum::Proposal;
+use cita_cloud_proto::common::{
+    proposal_enum, BftProposal, ConsensusConfiguration, Hash, ProposalEnum,
+};
 use log::{info, warn};
 use prost::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+pub enum ChainStep {
+    SyncStep,
+    OnlineStep,
+}
+
+#[allow(dead_code)]
 pub struct Chain {
     kms_port: u16,
     storage_port: u16,
@@ -50,6 +63,8 @@ pub struct Chain {
     genesis: GenesisBlock,
     key_id: u64,
     node_address: Vec<u8>,
+
+    task_sender: crossbeam::channel::Sender<EventTask>,
 }
 
 impl Chain {
@@ -67,6 +82,7 @@ impl Chain {
         genesis: GenesisBlock,
         key_id: u64,
         node_address: Vec<u8>,
+        task_sender: crossbeam::channel::Sender<EventTask>,
     ) -> Self {
         let fork_tree_size = (block_delay_number * 2 + 2) as usize;
         let mut fork_tree = Vec::with_capacity(fork_tree_size);
@@ -91,6 +107,8 @@ impl Chain {
             genesis,
             key_id,
             node_address,
+
+            task_sender,
         }
     }
 
@@ -107,6 +125,10 @@ impl Chain {
         }
     }
 
+    pub fn get_genesis_block(&self) -> CompactBlock {
+        self.genesis.genesis_block()
+    }
+
     pub fn get_block_number(&self, is_pending: bool) -> u64 {
         if is_pending {
             self.block_number + self.main_chain.len() as u64
@@ -118,7 +140,7 @@ impl Chain {
     pub async fn proc_sync_block(&mut self) {
         loop {
             let h = self.block_number + 1;
-            if let Some((block, proof)) = get_block(h).await {
+            if let Some((block, proof)) = get_compact_block(h).await {
                 let block_clone = block.clone();
                 let block_header = block_clone.header.unwrap();
                 let block_body = block_clone.body.unwrap();
@@ -168,12 +190,23 @@ impl Chain {
                         .expect("extract_proposal_info failed")
                 };
                 {
-                    let mut proposal = Vec::new();
-                    proposal.extend_from_slice(&block_hash); // len 32
-                    proposal.extend_from_slice(&pre_state_root); // len 32
-                    proposal.extend_from_slice(&pre_proof); // len unknown
+                    let proposal = ProposalEnum {
+                        proposal: Some(Proposal::BftProposal(BftProposal {
+                            block_hash: block_hash.clone(),
+                            pre_state_root,
+                            pre_proof,
+                        })),
+                    };
+
+                    let mut proposal_bytes = Vec::new();
+
+                    proposal
+                        .encode(&mut proposal_bytes)
+                        .expect("encode proposal failed");
+
                     let ret =
-                        check_block(self.consensus_port, height, proposal, proof.clone()).await;
+                        check_block(self.consensus_port, height, proposal_bytes, proof.clone())
+                            .await;
                     if ret.is_err() || !ret.unwrap() {
                         panic!("check_block failed")
                     }
@@ -183,7 +216,20 @@ impl Chain {
                     .await;
 
                 self.block_number += 1;
-                self.block_hash = block_hash;
+                self.block_hash = block_hash.clone();
+
+                let csf = ChainStatusWithFlag {
+                    status: ChainStatus {
+                        version: 0,
+                        chain_id: vec![],
+                        height,
+                        hash: Some(Hash { hash: block_hash }),
+                        address: None,
+                    },
+                    broadcast_or_not: false,
+                };
+
+                self.task_sender.send(EventTask::UpdateStatus(csf)).unwrap();
 
                 self.clear_proposal();
 
@@ -193,19 +239,13 @@ impl Chain {
 
                 // update fork_tree
                 let new_fork_tree = self.fork_tree.split_off(1);
-                for map in self.fork_tree.iter() {
-                    for (block_hash, _) in map.iter() {
-                        let filename = hex::encode(&block_hash);
-                        remove_proposal(&filename).await;
-                    }
-                }
+
                 self.fork_tree = new_fork_tree;
                 self.fork_tree
                     .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
                 info!("sync block to {}", height);
             } else {
-                info!("sync break at {}", self.block_number);
-                break;
+                self.task_sender.send(EventTask::SyncBlock).unwrap();
             }
         }
     }
@@ -215,11 +255,11 @@ impl Chain {
             let genesis_block = self.genesis.genesis_block();
             Some(genesis_block)
         } else {
-            get_block(block_number).await.map(|t| t.0)
+            get_compact_block(block_number).await.map(|t| t.0)
         }
     }
 
-    async fn extract_proposal_info(&self, h: u64) -> Option<(Vec<u8>, Vec<u8>)> {
+    pub async fn extract_proposal_info(&self, h: u64) -> Option<(Vec<u8>, Vec<u8>)> {
         let pre_h = h - self.block_delay_number as u64 - 1;
         let key = pre_h.to_be_bytes().to_vec();
 
@@ -233,7 +273,7 @@ impl Chain {
         };
 
         let proof = {
-            let ret = get_block(pre_h).await;
+            let ret = get_compact_block(pre_h).await;
             if ret.is_none() {
                 warn!("get_proposal get proof failed");
                 return None;
@@ -244,17 +284,26 @@ impl Chain {
         Some((state_root, proof))
     }
 
-    pub async fn get_proposal(&self) -> Option<(u64, Vec<u8>)> {
-        if let Some((h, ref blk_hash)) = self.candidate_block {
-            if let Some((state_root, proof)) = self.extract_proposal_info(h).await {
-                let mut proposal = Vec::new();
-                proposal.extend_from_slice(blk_hash); // len 32
-                proposal.extend_from_slice(&state_root); // len 32
-                proposal.extend_from_slice(&proof); // len unknown
-                return Some((h, proposal));
+    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
+        if let Some((h, block_hash)) = self.candidate_block.clone() {
+            if let Some((pre_state_root, pre_proof)) = self.extract_proposal_info(h).await {
+                let proposal = ProposalEnum {
+                    proposal: Some(Proposal::BftProposal(BftProposal {
+                        block_hash,
+                        pre_state_root,
+                        pre_proof,
+                    })),
+                };
+
+                let mut proposal_bytes = Vec::new();
+                proposal
+                    .encode(&mut proposal_bytes)
+                    .map_err(|_| Error::EncodeError("encode proposal failed".to_string()))?;
+
+                return Ok((h, proposal_bytes));
             }
         }
-        None
+        Err(Error::NoCandidate)
     }
 
     pub async fn add_remote_proposal(&mut self, block: CompactBlock) -> bool {
@@ -287,7 +336,7 @@ impl Chain {
         true
     }
 
-    pub async fn add_proposal(&mut self) {
+    pub async fn add_proposal(&mut self) -> Option<Block> {
         info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
         let mut filtered_tx_hash_list = Vec::new();
         // if we are no lucky, all tx is dup, try again
@@ -329,7 +378,7 @@ impl Chain {
             let ret = hash_data(self.kms_port, data).await;
             if ret.is_err() {
                 warn!("hash_data failed {:?}", ret);
-                return;
+                return None;
             } else {
                 transactions_root = ret.unwrap();
             }
@@ -352,7 +401,7 @@ impl Chain {
         let body = CompactBlockBody {
             tx_hashes: filtered_tx_hash_list,
         };
-        let block = CompactBlock {
+        let compact_block = CompactBlock {
             version: 0,
             header: Some(header.clone()),
             body: Some(body),
@@ -368,7 +417,7 @@ impl Chain {
             let ret = hash_data(self.kms_port, block_header_bytes).await;
             if ret.is_err() {
                 warn!("hash_data failed {:?}", ret);
-                return;
+                return None;
             } else {
                 block_hash = ret.unwrap();
             }
@@ -380,95 +429,105 @@ impl Chain {
             hex::encode(&block_hash)
         );
         self.candidate_block = Some((height, block_hash.clone()));
-        self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), (block.clone(), None));
+        self.fork_tree[self.main_chain.len()]
+            .insert(block_hash.clone(), (compact_block.clone(), None));
 
-        let is_exists = check_proposal_exists(block_hash.as_slice());
-        if !is_exists {
-            let mut block_bytes = Vec::new();
-            block.encode(&mut block_bytes).expect("encode block failed");
-            write_proposal(&block_hash, &block_bytes).await;
+        let block = get_full_block(compact_block.clone(), Vec::new())
+            .await
+            .unwrap();
+        let mut block_bytes = Vec::new();
+        block.encode(&mut block_bytes).expect("encode block failed");
+
+        if !self.add_remote_proposal(compact_block).await {
+            warn!("add remote proposal: {} failed", hex::encode(block_hash))
         }
+
+        Some(block)
     }
 
     pub fn clear_proposal(&mut self) {
         self.candidate_block = None;
     }
 
-    pub async fn check_proposal(&self, h: u64, proposal: &[u8]) -> bool {
-        if proposal.len() < 32 + 32 {
-            warn!("proposal length invalid");
-            return false;
-        }
-
+    pub async fn check_proposal(&self, h: u64, proposal: &[u8]) -> Result<bool, Error> {
         // old proposal
         if h <= self.block_number {
-            return true;
+            return Ok(true);
         }
 
         if h > self.block_number + self.fork_tree.len() as u64 {
             warn!("proposal {} too high", h);
-            return false;
+            return Ok(false);
         }
 
-        let block_hash = &proposal[..32];
-        let proposal_state_root = &proposal[32..64];
-        let proposal_proof = &proposal[64..];
-
-        if let Some((blk, _)) =
-            self.fork_tree[h as usize - self.block_number as usize - 1].get(block_hash)
+        match ProposalEnum::decode(proposal)
+            .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?
+            .proposal
         {
-            let block_body = blk.clone().body.unwrap();
-            // check tx in block
-            {
-                let tx_hash_list = block_body.tx_hashes;
-                let pool = self.pool.read().await;
-                for hash in tx_hash_list.iter() {
-                    if !pool.contains(hash) {
-                        warn!("can't find tx {} in proposal {}", hex::encode(&hash), h);
-                        return false;
+            Some(proposal_enum::Proposal::BftProposal(bft_proposal)) => {
+                if let Some((blk, _)) = self.fork_tree[h as usize - self.block_number as usize - 1]
+                    .get(bft_proposal.block_hash.as_slice())
+                {
+                    let block_body = blk.clone().body.unwrap();
+                    // check tx in block
+                    {
+                        let tx_hash_list = block_body.tx_hashes;
+                        let pool = self.pool.read().await;
+                        for hash in tx_hash_list.iter() {
+                            if !pool.contains(hash) {
+                                warn!("can't find tx {} in proposal {}", hex::encode(&hash), h);
+                                return Ok(false);
+                            }
+                        }
                     }
+
+                    let pre_h = h - self.block_delay_number as u64 - 1;
+                    let key = pre_h.to_be_bytes().to_vec();
+
+                    let state_root = {
+                        let ret = load_data(self.storage_port, 6, key).await;
+                        if ret.is_err() {
+                            warn!("check_proposal get state_root failed");
+                            return Ok(false);
+                        }
+                        ret.unwrap()
+                    };
+
+                    let proof = {
+                        let ret = get_compact_block(pre_h).await;
+                        if ret.is_none() {
+                            warn!("check_proposal get proof failed");
+                            return Ok(false);
+                        }
+                        ret.unwrap().1
+                    };
+
+                    return if bft_proposal.pre_state_root == state_root
+                        && bft_proposal.pre_proof == proof
+                    {
+                        Ok(true)
+                    } else {
+                        warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
+                              hex::encode(&bft_proposal.pre_state_root),
+                              hex::encode(&state_root),
+                              hex::encode(&bft_proposal.pre_proof),
+                              hex::encode(&proof),
+                        );
+                        Ok(false)
+                    };
+                } else {
+                    warn!(
+                        "can't find proposal block {} in fork tree",
+                        hex::encode(&bft_proposal.block_hash)
+                    );
+                    Ok(false)
                 }
             }
-
-            let pre_h = h - self.block_delay_number as u64 - 1;
-            let key = pre_h.to_be_bytes().to_vec();
-
-            let state_root = {
-                let ret = load_data(self.storage_port, 6, key).await;
-                if ret.is_err() {
-                    warn!("check_proposal get state_root failed");
-                    return false;
-                }
-                ret.unwrap()
-            };
-
-            let proof = {
-                let ret = get_block(pre_h).await;
-                if ret.is_none() {
-                    warn!("check_proposal get proof failed");
-                    return false;
-                }
-                ret.unwrap().1
-            };
-
-            if proposal_state_root == state_root && proposal_proof == proof {
-                return true;
-            } else {
-                warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
-                    hex::encode(&proposal_state_root),
-                    hex::encode(&state_root),
-                    hex::encode(&proposal_proof),
-                    hex::encode(&proof),
-                );
-                return false;
+            None => {
+                // todo modify error
+                Err(Error::ExpectError(format!("no proposal found")))
             }
         }
-
-        warn!(
-            "can't find proposal block {} in fork tree",
-            hex::encode(&block_hash)
-        );
-        false
     }
 
     async fn finalize_block(
@@ -566,7 +625,7 @@ impl Chain {
                 }
 
                 // store tx info
-                store_tx_info(&hash, block_height, tx_index as u64).await;
+                store_tx_info(&hash, block_height, tx_index).await;
             }
         }
 
@@ -574,9 +633,14 @@ impl Chain {
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
         // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
         // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(self.executor_port, block_clone)
-            .await
-            .unwrap_or_else(|_| vec![0u8; 32]);
+        let executed_block_hash = exec_block(
+            self.executor_port,
+            get_full_block(block_clone, proof)
+                .await
+                .expect(format!("can't get full block: {}", block_height).as_str()),
+        )
+        .await
+        .unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
         store_data(self.storage_port, 6, key.clone(), executed_block_hash)
             .await
@@ -607,19 +671,25 @@ impl Chain {
         .expect("store_data failed");
     }
 
-    pub async fn commit_block(&mut self, height: u64, proposal: &[u8], proof: &[u8]) {
-        let proposal_blk_hash = &proposal[..32];
-        info!(
-            "commit_block height {}: {}",
-            height,
-            hex::encode(&proposal_blk_hash)
-        );
+    pub async fn commit_block(
+        &mut self,
+        height: u64,
+        proposal: &[u8],
+        proof: &[u8],
+    ) -> Result<ConsensusConfiguration, Error> {
+        let bft_proposal = match ProposalEnum::decode(proposal)
+            .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?
+            .proposal
+        {
+            Some(proposal_enum::Proposal::BftProposal(bft_proposal)) => Ok(bft_proposal),
+            None => Err(Error::ExpectError(format!("no proposal found"))),
+        }?;
 
         let commit_block_index;
         let commit_block;
         for (index, map) in self.fork_tree.iter_mut().enumerate() {
             // make sure the block in fork_tree
-            if let Some((block, proof_opt)) = map.get_mut(proposal_blk_hash) {
+            if let Some((block, proof_opt)) = map.get_mut(&bft_proposal.block_hash) {
                 commit_block_index = index;
                 commit_block = block.clone();
 
@@ -630,7 +700,7 @@ impl Chain {
                 let mut candidate_chain = Vec::new();
                 let mut candidate_chain_tx_hash = Vec::new();
 
-                candidate_chain.push(proposal_blk_hash.to_owned());
+                candidate_chain.push(bft_proposal.block_hash);
                 candidate_chain_tx_hash.extend_from_slice(&commit_block.body.unwrap().tx_hashes);
 
                 let mut prevhash = commit_block.header.unwrap().prevhash;
@@ -639,14 +709,18 @@ impl Chain {
                     if let Some((block, proof_opt)) = map.get(&prevhash) {
                         if proof_opt.is_none() {
                             warn!("candidate_chain has no proof");
-                            return;
+                            return Err(Error::ExpectError(
+                                "candidate_chain has no proof".to_string(),
+                            ));
                         }
                         candidate_chain.push(prevhash.clone());
                         for hash in block.to_owned().body.unwrap().tx_hashes {
                             if candidate_chain_tx_hash.contains(&hash) {
                                 // candidate_chain has dup tx, so failed
                                 warn!("candidate_chain has dup tx");
-                                return;
+                                return Err(Error::ExpectError(
+                                    "candidate_chain has dup tx".to_string(),
+                                ));
                             }
                         }
                         candidate_chain_tx_hash
@@ -655,7 +729,9 @@ impl Chain {
                     } else {
                         // candidate_chain interrupted, so failed
                         warn!("candidate_chain interrupted");
-                        return;
+                        return Err(Error::ExpectError(
+                            "candidate_chain interrupted".to_string(),
+                        ));
                     }
                 }
 
@@ -664,9 +740,9 @@ impl Chain {
                     // break this invalid chain
                     let blk_hash = candidate_chain.last().unwrap();
                     self.fork_tree.get_mut(0).unwrap().remove(blk_hash);
-                    let filename = hex::encode(blk_hash);
-                    remove_proposal(filename.as_str()).await;
-                    return;
+                    return Err(Error::ExpectError(
+                        "candidate_chain can't fit finalized block".to_string(),
+                    ));
                 }
 
                 // if candidate_chain longer than original main_chain
@@ -701,6 +777,22 @@ impl Chain {
                         }
                         self.block_number += finalized_blocks_number as u64;
                         self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
+
+                        let sys_config = self.get_system_config().await;
+                        let csf = ChainStatusWithFlag {
+                            status: ChainStatus {
+                                version: sys_config.version,
+                                chain_id: sys_config.chain_id,
+                                height: self.block_number,
+                                hash: Some(Hash {
+                                    hash: self.block_hash.clone(),
+                                }),
+                                address: None,
+                            },
+                            broadcast_or_not: true,
+                        };
+                        self.task_sender.send(EventTask::UpdateStatus(csf)).unwrap();
+
                         self.main_chain = new_main_chain;
                         // update main_chain_tx_hash
                         self.main_chain_tx_hash = self
@@ -710,21 +802,38 @@ impl Chain {
                             .filter(|hash| !finalized_tx_hash_list.contains(hash))
                             .collect();
                         let new_fork_tree = self.fork_tree.split_off(finalized_blocks_number);
-                        for map in self.fork_tree.iter() {
-                            for (block_hash, _) in map.iter() {
-                                let filename = hex::encode(&block_hash);
-                                remove_proposal(&filename).await;
-                            }
-                        }
                         self.fork_tree = new_fork_tree;
                         self.fork_tree
                             .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
                     }
                     // candidate_block need update
                     self.clear_proposal();
+
+                    let config = self.get_system_config().await;
+
+                    return Ok(ConsensusConfiguration {
+                        height,
+                        block_interval: config.block_interval,
+                        validators: config.validators,
+                    });
                 }
                 break;
             }
+        }
+
+        Err(Error::NoForkTree)
+    }
+
+    pub async fn get_system_config(&self) -> SystemConfig {
+        let rd = self.auth.read().await;
+        rd.get_system_config()
+    }
+
+    pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
+        if self.fork_tree.is_empty() && glob_status.height > self.block_number {
+            ChainStep::SyncStep
+        } else {
+            ChainStep::OnlineStep
         }
     }
 }

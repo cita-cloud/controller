@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use cita_cloud_proto::consensus::{
-    consensus_service_client::ConsensusServiceClient, ConsensusConfiguration,
+use cita_cloud_proto::blockchain::{
+    Block, BlockHeader, CompactBlock, CompactBlockBody, RawTransactions,
 };
+use cita_cloud_proto::consensus::consensus_service_client::ConsensusServiceClient;
 use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
 use cita_cloud_proto::kms::{
     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
@@ -29,8 +29,9 @@ use log::{info, warn};
 use tonic::Request;
 
 use crate::utxo_set::SystemConfig;
-use cita_cloud_proto::common::{Empty, Proposal, ProposalWithProof};
-use cita_cloud_proto::controller::RawTransaction;
+use cita_cloud_proto::blockchain::raw_transaction::Tx;
+use cita_cloud_proto::blockchain::RawTransaction;
+use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof};
 use prost::Message;
 use std::path::Path;
 use tokio::fs;
@@ -45,7 +46,7 @@ pub async fn reconfigure(
     consensus_port: u16,
     height: u64,
     sys_config: SystemConfig,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
@@ -64,7 +65,7 @@ pub async fn check_block(
     height: u64,
     data: Vec<u8>,
     proof: Vec<u8>,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
@@ -79,7 +80,7 @@ pub async fn verify_tx_signature(
     kms_port: u16,
     tx_hash: Vec<u8>,
     signature: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let kms_addr = format!("http://127.0.0.1:{}", kms_port);
     let mut client = KmsServiceClient::connect(kms_addr).await?;
 
@@ -104,7 +105,7 @@ pub async fn verify_tx_hash(
     kms_port: u16,
     tx_hash: Vec<u8>,
     tx_bytes: Vec<u8>,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let kms_addr = format!("http://127.0.0.1:{}", kms_port);
     let mut client = KmsServiceClient::connect(kms_addr).await?;
 
@@ -120,7 +121,7 @@ pub async fn verify_tx_hash(
 pub async fn hash_data(
     kms_port: u16,
     data: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let kms_addr = format!("http://127.0.0.1:{}", kms_port);
     let mut client = KmsServiceClient::connect(kms_addr).await?;
 
@@ -135,7 +136,7 @@ pub async fn store_data(
     region: u32,
     key: Vec<u8>,
     value: Vec<u8>,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let storage_addr = format!("http://127.0.0.1:{}", storage_port);
     let mut client = StorageServiceClient::connect(storage_addr).await?;
 
@@ -149,7 +150,7 @@ pub async fn load_data(
     storage_port: u16,
     region: u32,
     key: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let storage_addr = format!("http://127.0.0.1:{}", storage_port);
     let mut client = StorageServiceClient::connect(storage_addr).await?;
 
@@ -164,7 +165,7 @@ pub async fn load_data_maybe_empty(
     storage_port: u16,
     region: u32,
     key: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let storage_addr = format!("http://127.0.0.1:{}", storage_port);
     let mut client = StorageServiceClient::connect(storage_addr).await?;
 
@@ -182,10 +183,69 @@ pub async fn load_data_maybe_empty(
     }
 }
 
+pub async fn get_full_block(
+    compact_block: CompactBlock,
+    proof: Vec<u8>,
+) -> Result<Block, Box<dyn std::error::Error + Send + Sync>> {
+    let mut body = Vec::new();
+    if let Some(compact_body) = compact_block.body {
+        for hash in compact_body.tx_hashes {
+            if let Some(tx) = get_tx(&hash).await {
+                body.push(tx);
+            } else {
+                warn!("can't get tx: {}", hex::encode(hash));
+            }
+        }
+    }
+
+    Ok(Block {
+        version: compact_block.version,
+        header: compact_block.header,
+        body: Some(RawTransactions { body }),
+        proof,
+    })
+}
+
+pub fn full_to_compact(block: Block) -> CompactBlock {
+    let mut compact_body = CompactBlockBody { tx_hashes: vec![] };
+
+    if let Some(body) = block.body {
+        for raw_tx in body.body {
+            match raw_tx.tx {
+                Some(Tx::NormalTx(normal_tx)) => {
+                    compact_body.tx_hashes.push(normal_tx.transaction_hash)
+                }
+                Some(Tx::UtxoTx(utxo_tx)) => compact_body.tx_hashes.push(utxo_tx.transaction_hash),
+                None => {}
+            }
+        }
+    }
+
+    CompactBlock {
+        version: block.version,
+        header: block.header,
+        body: Some(compact_body),
+    }
+}
+
+pub async fn header_to_block_hash(
+    kms_port: u16,
+    block_header: BlockHeader,
+) -> Result<Vec<u8>, crate::error::Error> {
+    let mut block_header_bytes = Vec::new();
+    block_header
+        .encode(&mut block_header_bytes)
+        .map_err(|_| crate::error::Error::EncodeError(format!("encode block header failed")))?;
+
+    hash_data(kms_port, block_header_bytes)
+        .await
+        .map_err(crate::error::Error::InternalError)
+}
+
 pub async fn exec_block(
     executor_port: u16,
-    block: CompactBlock,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    block: Block,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let executor_addr = format!("http://127.0.0.1:{}", executor_port);
     let mut client = ExecutorServiceClient::connect(executor_addr).await?;
 
@@ -197,7 +257,7 @@ pub async fn exec_block(
 
 pub async fn get_network_status(
     network_port: u16,
-) -> Result<NetworkStatusResponse, Box<dyn std::error::Error>> {
+) -> Result<NetworkStatusResponse, Box<dyn std::error::Error + Send + Sync>> {
     let network_addr = format!("http://127.0.0.1:{}", network_port);
     let mut client = NetworkServiceClient::connect(network_addr).await?;
 
@@ -208,7 +268,6 @@ pub async fn get_network_status(
 }
 
 pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
-    info!("main chain:");
     for (i, hash) in chain.iter().enumerate() {
         info!(
             "height: {} hash {}",
@@ -299,13 +358,25 @@ pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
     Some(ret.unwrap())
 }
 
+pub fn extract_tx_hash(raw_tx: RawTransaction) -> Option<Hash> {
+    match raw_tx.tx {
+        Some(Tx::NormalTx(normal_tx)) => Some(Hash {
+            hash: normal_tx.transaction_hash,
+        }),
+        Some(Tx::UtxoTx(utxo_tx)) => Some(Hash {
+            hash: utxo_tx.transaction_hash,
+        }),
+        None => None,
+    }
+}
+
 pub async fn remove_tx(filename: &str) {
     let root_path = Path::new(".");
     let tx_path = root_path.join("txs").join(filename);
     let _ = fs::remove_file(tx_path).await;
 }
 
-pub async fn store_tx_info(tx_hash: &[u8], block_height: u64, tx_index: u64) {
+pub async fn store_tx_info(tx_hash: &[u8], block_height: u64, tx_index: usize) {
     let filename = hex::encode(tx_hash);
     let root_path = Path::new(".");
     let tx_info_path = root_path.join("tx_infos").join(filename);
@@ -344,48 +415,6 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Option<(u64, u64)> {
     Some((block_height, tx_index))
 }
 
-pub async fn write_proposal(block_hash: &[u8], data: &[u8]) {
-    let filename = hex::encode(block_hash);
-
-    let root_path = Path::new(".");
-    let block_path = root_path.join("proposals").join(filename);
-    let _ = fs::write(block_path, data).await;
-}
-
-pub fn check_proposal_exists(block_hash: &[u8]) -> bool {
-    let filename = hex::encode(block_hash);
-    let root_path = Path::new(".");
-    let file_path = root_path.join("proposals").join(filename);
-
-    file_path.exists()
-}
-
-pub async fn get_proposal(block_hash: &[u8]) -> Option<CompactBlock> {
-    let filename = hex::encode(block_hash);
-    let root_path = Path::new(".");
-    let block_path = root_path.join("proposals").join(filename);
-
-    let ret = fs::read(block_path).await;
-    if ret.is_err() {
-        warn!("read proposal file failed: {:?}", ret);
-        return None;
-    }
-    let content = ret.unwrap();
-    let ret = CompactBlock::decode(content.as_slice());
-    if ret.is_err() {
-        warn!("decode proposal file failed: {:?}", ret);
-        return None;
-    }
-    Some(ret.unwrap())
-}
-
-pub async fn remove_proposal(filename: &str) {
-    let root_path = Path::new(".");
-    let block_path = root_path.join("proposals").join(filename);
-
-    let _ = fs::remove_file(block_path).await;
-}
-
 pub async fn write_block(
     height: u64,
     block_header_bytes: &[u8],
@@ -418,7 +447,7 @@ pub fn check_block_exists(height: u64) -> bool {
     file_path.exists()
 }
 
-pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
+pub async fn get_compact_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
     let filename = format!("{}", height);
     let root_path = Path::new(".");
     let block_path = root_path.join("blocks").join(filename);
@@ -431,7 +460,7 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 
     let bytes_len = bytes.len();
     if bytes_len <= 24 {
-        warn!("get_block {} bad bytes length", height);
+        warn!("get_compact_block {} bad bytes length", height);
         return None;
     }
 
@@ -447,7 +476,7 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
     let proof_len = usize::from_be_bytes(len_bytes);
 
     if bytes_len != 24 + header_len + body_len + proof_len {
-        warn!("get_block {} bad bytes total length", height);
+        warn!("get_compact_block {} bad bytes total length", height);
         return None;
     }
 
@@ -460,14 +489,17 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 
     let ret = BlockHeader::decode(header_slice);
     if ret.is_err() {
-        warn!("get_block {} decode BlockHeader failed", height);
+        warn!("get_compact_block {} decode BlockHeader failed", height);
         return None;
     }
     let block_header = ret.unwrap();
 
     let ret = CompactBlockBody::decode(body_slice);
     if ret.is_err() {
-        warn!("get_block {} decode CompactBlockBody failed", height);
+        warn!(
+            "get_compact_block {} decode CompactBlockBody failed",
+            height
+        );
         return None;
     }
     let block_body = ret.unwrap();
@@ -479,4 +511,153 @@ pub async fn get_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
     };
 
     Some((block, proof_slice.to_vec()))
+}
+
+#[macro_export]
+macro_rules! impl_multicast {
+    ($func_name:ident, $type:ident, $name:expr) => {
+        pub async fn $func_name(&self, port: u16, item: $type) {
+            let nodes = self.node_manager.grab_node().await;
+
+            let network_addr = format!("http://127.0.0.1:{}", port);
+
+            let client =
+                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
+                    network_addr,
+                )
+                .await
+                .unwrap();
+
+            for node in nodes {
+                log::info!("send {}: {:?} to {:x?}", $name, item.clone(), node);
+
+                let mut client = client.clone();
+
+                let origin = {
+                    match self.node_manager.get_origin(node.clone()).await {
+                        Some(id) => id,
+                        None => {
+                            log::warn!("not get address: {:x?} origin", node);
+                            return;
+                        }
+                    }
+                };
+
+                let mut buf = Vec::new();
+
+                item.encode(&mut buf)
+                    .expect(&($name.to_string() + " encode failed"));
+
+                let msg = cita_cloud_proto::network::NetworkMsg {
+                    module: "controller".to_string(),
+                    r#type: $name.into(),
+                    origin,
+                    msg: buf,
+                };
+
+                let request = tonic::Request::new(msg);
+
+                tokio::spawn(async move {
+                    match client.send_msg(request).await {
+                        Ok(_) => {}
+                        Err(status) => {
+                            log::warn!("multicast {} to {:x?} failed: {:?}", $name, node, status)
+                        }
+                    }
+                });
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_unicast {
+    ($func_name:ident, $type:ident, $name:expr) => {
+        pub async fn $func_name(&self, port: u16, origin: u64, item: $type) {
+            let node = self.node_manager.get_address(origin).await;
+
+            let network_addr = format!("http://127.0.0.1:{}", port);
+
+            let mut client =
+                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
+                    network_addr,
+                )
+                .await
+                .unwrap();
+
+            log::info!("send {}: {:?} to {:x?}", $name, item.clone(), node);
+
+            let mut buf = Vec::new();
+
+            item.encode(&mut buf)
+                .expect(&($name.to_string() + " encode failed"));
+
+            let msg = cita_cloud_proto::network::NetworkMsg {
+                module: "controller".to_string(),
+                r#type: $name.into(),
+                origin,
+                msg: buf,
+            };
+
+            let request = tonic::Request::new(msg);
+
+            tokio::spawn(async move {
+                match client.send_msg(request).await {
+                    Ok(_) => {}
+                    Err(status) => {
+                        log::warn!("unicast {} to {:x?} failed: {:?}", $name, node, status)
+                    }
+                }
+            });
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_broadcast {
+    ($func_name:ident, $type:ident, $name:expr) => {
+        pub async fn $func_name(&self, port: u16, item: $type) {
+            let network_addr = format!("http://127.0.0.1:{}", port);
+
+            let mut client =
+                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
+                    network_addr,
+                )
+                .await
+                .unwrap();
+
+            log::info!("broadcast {}: {:?}", $name, item.clone());
+
+            let mut buf = Vec::new();
+
+            item.encode(&mut buf)
+                .expect(&($name.to_string() + " encode failed"));
+
+            let msg = cita_cloud_proto::network::NetworkMsg {
+                module: "controller".to_string(),
+                r#type: $name.into(),
+                origin: 0,
+                msg: buf,
+            };
+
+            let request = tonic::Request::new(msg);
+
+            tokio::spawn(async move {
+                match client.broadcast(request).await {
+                    Ok(_) => {}
+                    Err(status) => {
+                        log::warn!("broadcast {} failed: {:?}", $name, status)
+                    }
+                }
+            });
+        }
+    };
+}
+
+pub fn clean_0x(s: &str) -> &str {
+    if s.starts_with("0x") {
+        &s[2..]
+    } else {
+        s
+    }
 }

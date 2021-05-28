@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::hash_data;
+use crate::util::{clean_0x, hash_data};
 use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
 use log::warn;
 use prost::Message;
@@ -33,7 +33,7 @@ impl GenesisBlock {
     }
     pub fn genesis_block(&self) -> CompactBlock {
         let prevhash =
-            hex::decode(&self.prevhash[2..]).expect("parsing prevhash in genesis failed!");
+            hex::decode(clean_0x(&self.prevhash)).expect("parsing prevhash in genesis failed!");
         let header = BlockHeader {
             prevhash,
             timestamp: self.timestamp,
