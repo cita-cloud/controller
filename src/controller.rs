@@ -22,11 +22,7 @@ use crate::node_manager::{
 use crate::pool::Pool;
 use crate::protocol::sync_manager::{SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager};
 use crate::sync::Notifier;
-use crate::util::{
-    check_block, check_block_exists, check_tx_exists, extract_tx_hash, full_to_compact,
-    get_compact_block, get_full_block, get_network_status, get_new_tx, get_tx, hash_data,
-    header_to_block_hash, load_data, load_tx_info, remove_tx, write_block, write_new_tx,
-};
+use crate::util::{check_block, check_block_exists, check_tx_exists, extract_tx_hash, full_to_compact, get_compact_block, get_full_block, get_network_status, get_tx, hash_data, header_to_block_hash, load_data, load_tx_info, remove_tx, write_block, write_tx};
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
 use crate::{impl_broadcast, impl_multicast, impl_unicast};
@@ -94,8 +90,6 @@ pub struct Controller {
     auth: Arc<RwLock<Authentication>>,
     pool: Arc<RwLock<Pool>>,
     chain: Arc<RwLock<Chain>>,
-    txs_notifier: Arc<Notifier>,
-    proposals_notifier: Arc<Notifier>,
     blocks_notifier: Arc<Notifier>,
 
     consensus_port: u16,
@@ -126,8 +120,6 @@ impl Controller {
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
         genesis: GenesisBlock,
-        txs_notifier: Arc<Notifier>,
-        proposals_notifier: Arc<Notifier>,
         blocks_notifier: Arc<Notifier>,
         key_id: u64,
         node_address: Vec<u8>,
@@ -160,8 +152,6 @@ impl Controller {
             auth,
             pool,
             chain,
-            txs_notifier,
-            proposals_notifier,
             blocks_notifier,
             consensus_port,
             kms_port,
@@ -200,29 +190,6 @@ impl Controller {
     }
 
     pub async fn proc_sync_notify(&self) {
-        // setup list
-        let txs_notifier_clone = self.txs_notifier.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::new(30, 0));
-            loop {
-                interval.tick().await;
-                {
-                    txs_notifier_clone.list(0);
-                }
-            }
-        });
-
-        let proposals_notifier_clone = self.proposals_notifier.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::new(1, 0));
-            loop {
-                interval.tick().await;
-                {
-                    proposals_notifier_clone.list(0);
-                }
-            }
-        });
-
         let blocks_notifier_clone = self.blocks_notifier.clone();
         let chain_clone = self.chain.clone();
         tokio::spawn(async move {
@@ -239,73 +206,9 @@ impl Controller {
             }
         });
 
-        // setup watch
-        let txs_notifier_clone = self.txs_notifier.clone();
-        tokio::spawn(async move {
-            txs_notifier_clone.watch().await;
-        });
-
         let blocks_notifier_clone = self.blocks_notifier.clone();
         tokio::spawn(async move {
             blocks_notifier_clone.watch().await;
-        });
-
-        // proc notify event
-        let txs_notifier_clone = self.txs_notifier.clone();
-        let controller_clone = self.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::new(1, 0));
-            loop {
-                interval.tick().await;
-                {
-                    while let Some(event) = txs_notifier_clone.queue.pop() {
-                        let file_name = event.filename;
-                        let mut is_new_tx = true;
-                        let tx_hash_str =
-                            if let Some(striped_file_name) = file_name.strip_prefix("new_") {
-                                // skip prefix new_
-                                striped_file_name
-                            } else {
-                                is_new_tx = false;
-                                &file_name
-                            };
-                        if let Ok(tx_hash) = hex::decode(tx_hash_str) {
-                            let opt_raw_tx = if is_new_tx {
-                                get_new_tx(&tx_hash).await
-                            } else {
-                                get_tx(&tx_hash).await
-                            };
-                            if let Some(raw_tx) = opt_raw_tx {
-                                let ret = controller_clone
-                                    .rpc_send_raw_transaction(raw_tx, false)
-                                    .await;
-                                match ret {
-                                    Ok(hash) => {
-                                        if hash == tx_hash {
-                                            continue;
-                                        } else {
-                                            warn!("tx hash mismatch");
-                                        }
-                                    }
-                                    Err(e) => {
-                                        if e == "dup"
-                                            || e == "Invalid valid_until_block"
-                                            || e == "internal err"
-                                        {
-                                            continue;
-                                        } else {
-                                            warn!("add sync tx failed: {:?}", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // any failed delete the tx file
-                        warn!("sync tx invalid");
-                        remove_tx(file_name.as_str()).await;
-                    }
-                }
-            }
         });
 
         let blocks_notifier_clone = self.blocks_notifier.clone();
@@ -346,25 +249,29 @@ impl Controller {
             auth.check_raw_tx(raw_tx.clone()).await?
         };
 
-        let mut pool = self.pool.write().await;
-        let is_ok = pool.enqueue(tx_hash.clone());
-        if is_ok {
-            let is_exists = check_tx_exists(tx_hash.as_slice());
-            if !is_exists {
-                let mut raw_tx_bytes: Vec<u8> = Vec::new();
-                let _ = raw_tx.encode(&mut raw_tx_bytes);
-                write_new_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
-            }
+        let is_exists = check_tx_exists(tx_hash.as_slice());
+        if !is_exists {
+            let mut raw_tx_bytes: Vec<u8> = Vec::new();
+            let _ = raw_tx.encode(&mut raw_tx_bytes);
+            write_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
+
             let raw_txs = RawTransactions { body: vec![raw_tx] };
 
-            if broadcast {
-                self.multicast_send_txs(self.network_port, raw_txs).await;
+            let mut pool = self.pool.write().await;
+            let is_ok = pool.enqueue(tx_hash.clone());
+            if is_ok {
+                if broadcast {
+                    self.multicast_send_txs(self.network_port, raw_txs).await;
+                }
+                Ok(tx_hash)
+            } else {
+                remove_tx(hex::encode(tx_hash).as_str()).await;
+                Err("dup".to_owned())
             }
-
-            Ok(tx_hash)
         } else {
             Err("dup".to_owned())
         }
+
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {

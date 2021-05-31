@@ -193,7 +193,7 @@ pub async fn get_full_block(
             if let Some(tx) = get_tx(&hash).await {
                 body.push(tx);
             } else {
-                warn!("can't get tx: {}", hex::encode(hash));
+                panic!("can't get tx: {}", hex::encode(hash));
             }
         }
     }
@@ -277,8 +277,8 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     }
 }
 
-pub async fn write_new_tx(tx_hash: &[u8], data: &[u8]) {
-    let filename = format!("new_{}", hex::encode(tx_hash));
+pub async fn write_tx(tx_hash: &[u8], data: &[u8]) {
+    let filename = format!("{}", hex::encode(tx_hash));
 
     let root_path = Path::new(".");
     let file_path = root_path.join("txs").join(filename);
@@ -294,49 +294,6 @@ pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
     let new_file_path = root_path.join("txs").join(new_filename);
 
     file_path.exists() || new_file_path.exists()
-}
-
-pub async fn move_tx(tx_hash: &[u8]) {
-    let filename = hex::encode(tx_hash);
-    let new_filename = format!("new_{}", filename);
-
-    let root_path = Path::new(".");
-    let file_path = root_path.join("txs").join(filename);
-    let new_file_path = root_path.join("txs").join(new_filename.clone());
-
-    if new_file_path.exists() {
-        if !file_path.exists() {
-            let ret = fs::read(new_file_path.clone()).await;
-            if ret.is_err() {
-                warn!("read new tx file failed: {:?}", ret);
-                return;
-            }
-            let content = ret.unwrap();
-            let _ = fs::write(file_path, content).await;
-        }
-        remove_tx(&new_filename).await;
-    } else if !file_path.exists() {
-        panic!("can't find tx when move_tx");
-    }
-}
-
-pub async fn get_new_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
-    let filename = format!("new_{}", hex::encode(tx_hash));
-    let root_path = Path::new(".");
-    let tx_path = root_path.join("txs").join(filename);
-
-    let ret = fs::read(tx_path).await;
-    if ret.is_err() {
-        warn!("read tx file failed: {:?}", ret);
-        return None;
-    }
-    let content = ret.unwrap();
-    let ret = RawTransaction::decode(content.as_slice());
-    if ret.is_err() {
-        warn!("decode tx file failed: {:?}", ret);
-        return None;
-    }
-    Some(ret.unwrap())
 }
 
 pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {

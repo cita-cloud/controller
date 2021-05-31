@@ -19,7 +19,7 @@ use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
 use crate::pool::Pool;
 use crate::util::{
     check_block, check_block_exists, exec_block, get_compact_block, get_full_block, get_tx,
-    hash_data, load_data, move_tx, print_main_chain, reconfigure, store_data, store_tx_info,
+    hash_data, load_data, print_main_chain, reconfigure, store_data, store_tx_info,
     unix_now, write_block,
 };
 use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
@@ -593,7 +593,6 @@ impl Chain {
         let tx_hash_list = block_body.tx_hashes;
         {
             for (tx_index, hash) in tx_hash_list.iter().enumerate() {
-                move_tx(&hash).await;
                 let raw_tx = get_tx(&hash).await.expect("get tx failed");
                 // if tx is utxo tx, update sys_config
                 {
