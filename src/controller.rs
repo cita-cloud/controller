@@ -130,7 +130,7 @@ impl Controller {
             storage_port,
             sys_config,
         )));
-        let pool = Arc::new(RwLock::new(Pool::new(500)));
+        let pool = Arc::new(RwLock::new(Pool::new(1500)));
         let chain = Arc::new(RwLock::new(Chain::new(
             storage_port,
             kms_port,
