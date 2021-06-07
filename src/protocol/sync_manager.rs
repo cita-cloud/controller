@@ -56,9 +56,35 @@ pub mod sync_block_respond {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Respond {
         #[prost(message, tag = "1")]
-        NotFulFil(Address),
+        MissBlock(Address),
         #[prost(message, tag = "2")]
         Ok(super::SyncBlocks),
+    }
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SyncTxRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub tx_hash: ::prost::alloc::vec::Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SyncTxRespond {
+    #[prost(oneof = "sync_tx_respond::Respond", tags = "1, 2")]
+    pub respond: ::core::option::Option<sync_tx_respond::Respond>,
+}
+
+/// Nested message and enum types in `SyncTxRespond`.
+pub mod sync_tx_respond {
+    use cita_cloud_proto::blockchain::RawTransaction;
+    use cita_cloud_proto::common::Address;
+
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Respond {
+        #[prost(message, tag = "1")]
+        MissTx(Address),
+        #[prost(message, tag = "2")]
+        Ok(RawTransaction),
     }
 }
 
@@ -89,10 +115,19 @@ impl SyncManager {
     }
 
     #[allow(dead_code)]
-    pub async fn pop_blocks(&self, height: u64) -> Option<(Address, Block)> {
+    pub async fn pop_block(&self, height: u64) -> Option<(Address, Block)> {
         {
             let mut wr = self.syncing_block_list.write().await;
             wr.remove(&height)
+        }
+    }
+
+    pub async fn remove_blocks(&self, heights: Vec<u64>) {
+        {
+            let mut wr = self.syncing_block_list.write().await;
+            for height in heights {
+                wr.remove(&height);
+            }
         }
     }
 

@@ -190,7 +190,7 @@ pub async fn get_full_block(
     let mut body = Vec::new();
     if let Some(compact_body) = compact_block.body {
         for hash in compact_body.tx_hashes {
-            if let Some(tx) = get_tx(&hash).await {
+            if let Some(tx) = db_get_tx(&hash).await {
                 body.push(tx);
             } else {
                 panic!("can't get tx: {}", hex::encode(hash));
@@ -296,7 +296,7 @@ pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
     file_path.exists() || new_file_path.exists()
 }
 
-pub async fn get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
+pub async fn db_get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
     let filename = hex::encode(tx_hash);
     let root_path = Path::new(".");
     let tx_path = root_path.join("txs").join(filename);
@@ -473,7 +473,7 @@ pub async fn get_compact_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 #[macro_export]
 macro_rules! impl_multicast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(&self, port: u16, item: $type) {
+        pub async fn $func_name(&self, port: u16, item: $type) -> Vec<tokio::task::JoinHandle<()>> {
             let nodes = self.node_manager.grab_node().await;
 
             let network_addr = format!("http://127.0.0.1:{}", port);
@@ -484,21 +484,18 @@ macro_rules! impl_multicast {
                 )
                 .await
                 .unwrap();
+            let mut handle_vec = Vec::new();
 
             for node in nodes {
-                log::info!("send {}: {:?} to {:x?}", $name, item.clone(), node);
+                log::info!("send {} to {:x?}", $name, node);
 
                 let mut client = client.clone();
 
-                let origin = {
-                    match self.node_manager.get_origin(node.clone()).await {
-                        Some(id) => id,
-                        None => {
-                            log::warn!("not get address: {:x?} origin", node);
-                            return;
-                        }
-                    }
-                };
+                let origin = self
+                    .node_manager
+                    .get_origin(node.clone())
+                    .await
+                    .expect(format!("not get address: {:x?} origin", node).as_str());
 
                 let mut buf = Vec::new();
 
@@ -514,7 +511,7 @@ macro_rules! impl_multicast {
 
                 let request = tonic::Request::new(msg);
 
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     match client.send_msg(request).await {
                         Ok(_) => {}
                         Err(status) => {
@@ -522,7 +519,10 @@ macro_rules! impl_multicast {
                         }
                     }
                 });
+
+                handle_vec.push(handle);
             }
+            handle_vec
         }
     };
 }
@@ -530,7 +530,12 @@ macro_rules! impl_multicast {
 #[macro_export]
 macro_rules! impl_unicast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(&self, port: u16, origin: u64, item: $type) {
+        pub async fn $func_name(
+            &self,
+            port: u16,
+            origin: u64,
+            item: $type,
+        ) -> tokio::task::JoinHandle<()> {
             let node = self.node_manager.get_address(origin).await;
 
             let network_addr = format!("http://127.0.0.1:{}", port);
@@ -542,7 +547,7 @@ macro_rules! impl_unicast {
                 .await
                 .unwrap();
 
-            log::info!("send {}: {:?} to {:x?}", $name, item.clone(), node);
+            log::info!("send {} to {:x?}", $name, node);
 
             let mut buf = Vec::new();
 
@@ -565,7 +570,7 @@ macro_rules! impl_unicast {
                         log::warn!("unicast {} to {:x?} failed: {:?}", $name, node, status)
                     }
                 }
-            });
+            })
         }
     };
 }
@@ -573,7 +578,7 @@ macro_rules! impl_unicast {
 #[macro_export]
 macro_rules! impl_broadcast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(&self, port: u16, item: $type) {
+        pub async fn $func_name(&self, port: u16, item: $type) -> tokio::task::JoinHandle<()> {
             let network_addr = format!("http://127.0.0.1:{}", port);
 
             let mut client =
@@ -583,12 +588,14 @@ macro_rules! impl_broadcast {
                 .await
                 .unwrap();
 
-            log::info!("broadcast {}: {:?}", $name, item.clone());
+            log::info!("broadcast {}", $name);
 
             let mut buf = Vec::new();
 
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
+
+            log::info!("{} buf len: {}", $name, buf.clone().len());
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -606,7 +613,7 @@ macro_rules! impl_broadcast {
                         log::warn!("broadcast {} failed: {:?}", $name, status)
                     }
                 }
-            });
+            })
         }
     };
 }

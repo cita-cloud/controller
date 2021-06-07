@@ -59,11 +59,27 @@ pub mod chain_status_respond {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct MisbehaviorStatus {
     ban_times: u32,
     start_time: SystemTime,
-    address: Address,
+}
+
+impl Default for MisbehaviorStatus {
+    fn default() -> Self {
+        Self {
+            ban_times: 0,
+            start_time: SystemTime::now(),
+        }
+    }
+}
+
+impl MisbehaviorStatus {
+    fn update(mut self) -> Self {
+        self.ban_times += 1;
+        self.start_time = SystemTime::now();
+        self
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -215,7 +231,6 @@ impl NodeManager {
     pub async fn set_misbehavior_node(
         &self,
         node: Address,
-        misbehavior_status: MisbehaviorStatus,
     ) -> Result<Option<MisbehaviorStatus>, Error> {
         if self.in_node(node.clone()).await {
             self.delete_node(node.clone()).await;
@@ -226,9 +241,15 @@ impl NodeManager {
         }
 
         let na = node.into();
-        {
+        if let Some(mis_status) = {
+            let rd = self.misbehavior_nodes.read().await;
+            rd.get(&na).cloned()
+        } {
             let mut wr = self.misbehavior_nodes.write().await;
-            Ok(wr.insert(na, misbehavior_status))
+            Ok(wr.insert(na, mis_status.update()))
+        } else {
+            let mut wr = self.misbehavior_nodes.write().await;
+            Ok(wr.insert(na, MisbehaviorStatus::default()))
         }
     }
 

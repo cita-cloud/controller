@@ -21,7 +21,6 @@ mod node_manager;
 mod panic_hook;
 mod pool;
 mod protocol;
-mod sync;
 #[macro_use]
 mod util;
 mod error;
@@ -160,7 +159,7 @@ impl RpcService for RPCServer {
         let raw_tx = request.into_inner();
 
         self.controller
-            .rpc_send_raw_transaction(raw_tx, true)
+            .rpc_send_raw_transaction(raw_tx, false)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e)),
@@ -384,14 +383,16 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<Proposal>, Status> {
         debug!("get_proposal request: {:?}", request);
 
-        match self.controller.chain_get_proposal().await {
-            Ok((height, data)) => {
+        self.controller.chain_get_proposal().await.map_or_else(
+            |e| {
+                warn!("rpc: get_proposal failed: {:?}", e);
+                Err(Status::invalid_argument(e.to_string()))
+            },
+            |(height, data)| {
                 let proposal = Proposal { height, data };
-                let reply = Response::new(proposal);
-                Ok(reply)
-            }
-            Err(e) => Err(Status::invalid_argument(e.to_string())),
-        }
+                Ok(Response::new(proposal))
+            },
+        )
     }
     async fn check_proposal(
         &self,
@@ -408,7 +409,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             .chain_check_proposal(height, &data)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
+                |e| {
+                    warn!("rpc: check_proposal failed: {:?}", e);
+                    Err(Status::invalid_argument(e.to_string()))
+                },
                 |is_ok| {
                     let reply = Response::new(SimpleResponse { is_success: is_ok });
                     Ok(reply)
@@ -431,7 +435,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             .chain_commit_block(height, &data, &proof)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
+                |e| {
+                    warn!("rpc: commit_block failed: {:?}", e);
+                    Err(Status::invalid_argument(e.to_string()))
+                },
                 |r| Ok(Response::new(r)),
             )
     }
@@ -476,7 +483,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::event::EventTask;
-use crate::sync::Notifier;
+use crate::protocol::sync_manager::SyncTxRequest;
 use crate::util::{clean_0x, hash_data, load_data, load_data_maybe_empty, reconfigure};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
@@ -649,7 +656,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         current_block_hash,
         sys_config.clone(),
         genesis,
-        Arc::new(Notifier::new(".".to_string(), "blocks".to_string())),
         key_id,
         node_address,
         task_sender,
@@ -673,6 +679,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                 }
                 EventTask::SyncBlock => {
                     controller_clone.try_sync_block().await;
+                }
+                EventTask::SyncTx(tx_hash) => {
+                    controller_clone
+                        .multicast_sync_tx(controller_clone.network_port, SyncTxRequest { tx_hash })
+                        .await;
                 }
             }
         }

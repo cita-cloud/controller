@@ -20,16 +20,24 @@ use crate::node_manager::{
     chain_status_respond::Respond, ChainStatus, ChainStatusRespond, NodeManager,
 };
 use crate::pool::Pool;
-use crate::protocol::sync_manager::{SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager};
-use crate::sync::Notifier;
-use crate::util::{check_block, check_block_exists, check_tx_exists, extract_tx_hash, full_to_compact, get_compact_block, get_full_block, get_network_status, get_tx, hash_data, header_to_block_hash, load_data, load_tx_info, remove_tx, write_block, write_tx};
+use crate::protocol::sync_manager::{
+    SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
+};
+use crate::util::{
+    check_block, check_block_exists, check_tx_exists, db_get_tx, extract_tx_hash, full_to_compact,
+    get_compact_block, get_full_block, get_network_status, hash_data, header_to_block_hash,
+    load_data, load_tx_info, remove_tx, write_block, write_tx,
+};
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
 use crate::{impl_broadcast, impl_multicast, impl_unicast};
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::{Block, RawTransaction, RawTransactions};
 use cita_cloud_proto::blockchain::{CompactBlock, CompactBlockBody};
-use cita_cloud_proto::common::{Address, ConsensusConfiguration, Hash, SimpleResponse};
+use cita_cloud_proto::common::proposal_enum::Proposal;
+use cita_cloud_proto::common::{
+    Address, BftProposal, ConsensusConfiguration, Hash, ProposalEnum, SimpleResponse,
+};
 use cita_cloud_proto::network::NetworkMsg;
 use log::{info, warn};
 use prost::Message;
@@ -44,6 +52,8 @@ pub enum ControllerMsgType {
     ChainStatusRespondType,
     SyncBlockType,
     SyncBlockRespondType,
+    SyncTxType,
+    SyncTxRespondType,
     SendTxType,
     SendProposalType,
     Noop,
@@ -56,6 +66,8 @@ impl From<&str> for ControllerMsgType {
             "chain_status_respond" => Self::ChainStatusRespondType,
             "sync_block" => Self::SyncBlockType,
             "sync_block_respond" => Self::SyncBlockRespondType,
+            "sync_tx" => Self::SyncTxType,
+            "sync_tx_respond" => Self::SyncTxRespondType,
             "send_txs" => Self::SendTxType,
             "send_proposal" => Self::SendProposalType,
             _ => Self::Noop,
@@ -76,6 +88,8 @@ impl From<ControllerMsgType> for &str {
             ControllerMsgType::ChainStatusRespondType => "chain_status_respond",
             ControllerMsgType::SyncBlockType => "sync_block",
             ControllerMsgType::SyncBlockRespondType => "sync_block_respond",
+            ControllerMsgType::SyncTxType => "sync_tx",
+            ControllerMsgType::SyncTxRespondType => "sync_tx_respond",
             ControllerMsgType::SendTxType => "send_txs",
             ControllerMsgType::SendProposalType => "send_proposal",
             ControllerMsgType::Noop => "noop",
@@ -90,7 +104,6 @@ pub struct Controller {
     auth: Arc<RwLock<Authentication>>,
     pool: Arc<RwLock<Pool>>,
     chain: Arc<RwLock<Chain>>,
-    blocks_notifier: Arc<Notifier>,
 
     consensus_port: u16,
 
@@ -120,7 +133,6 @@ impl Controller {
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
         genesis: GenesisBlock,
-        blocks_notifier: Arc<Notifier>,
         key_id: u64,
         node_address: Vec<u8>,
         task_sender: crossbeam::channel::Sender<EventTask>,
@@ -130,7 +142,7 @@ impl Controller {
             storage_port,
             sys_config,
         )));
-        let pool = Arc::new(RwLock::new(Pool::new(1500)));
+        let pool = Arc::new(RwLock::new(Pool::new(1000)));
         let chain = Arc::new(RwLock::new(Chain::new(
             storage_port,
             kms_port,
@@ -152,7 +164,6 @@ impl Controller {
             auth,
             pool,
             chain,
-            blocks_notifier,
             consensus_port,
             kms_port,
             local_address: Address {
@@ -184,53 +195,11 @@ impl Controller {
             .await
             .unwrap();
         self.set_status(status.clone()).await;
-        self.broadcast_chain_status(self.network_port, status).await;
+        self.broadcast_chain_status(self.network_port, status)
+            .await
+            .await
+            .unwrap();
 
-        self.proc_sync_notify().await;
-    }
-
-    pub async fn proc_sync_notify(&self) {
-        let blocks_notifier_clone = self.blocks_notifier.clone();
-        let chain_clone = self.chain.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::new(30, 0));
-            loop {
-                interval.tick().await;
-                let current_block_number = {
-                    let chain = chain_clone.read().await;
-                    chain.get_block_number(false)
-                };
-                {
-                    blocks_notifier_clone.list(current_block_number);
-                }
-            }
-        });
-
-        let blocks_notifier_clone = self.blocks_notifier.clone();
-        tokio::spawn(async move {
-            blocks_notifier_clone.watch().await;
-        });
-
-        let blocks_notifier_clone = self.blocks_notifier.clone();
-        let chain_clone = self.chain.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::new(12, 0));
-            loop {
-                interval.tick().await;
-                {
-                    while let Some(event) = blocks_notifier_clone.queue.pop() {
-                        if event.filename.as_str().parse::<u64>().is_ok() {
-                            {
-                                let mut chain = chain_clone.write().await;
-                                chain.proc_sync_block().await;
-                                continue;
-                            }
-                        }
-                        warn!("sync block invalid {}", event.filename.as_str());
-                    }
-                }
-            }
-        });
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
@@ -249,29 +218,25 @@ impl Controller {
             auth.check_raw_tx(raw_tx.clone()).await?
         };
 
-        let is_exists = check_tx_exists(tx_hash.as_slice());
-        if !is_exists {
-            let mut raw_tx_bytes: Vec<u8> = Vec::new();
-            let _ = raw_tx.encode(&mut raw_tx_bytes);
-            write_tx(tx_hash.as_slice(), raw_tx_bytes.as_slice()).await;
-
-            let raw_txs = RawTransactions { body: vec![raw_tx] };
-
-            let mut pool = self.pool.write().await;
-            let is_ok = pool.enqueue(tx_hash.clone());
-            if is_ok {
-                if broadcast {
-                    self.multicast_send_txs(self.network_port, raw_txs).await;
-                }
-                Ok(tx_hash)
-            } else {
-                remove_tx(hex::encode(tx_hash).as_str()).await;
-                Err("dup".to_owned())
+        {
+            let chain = self.chain.read().await;
+            if !chain.check_dup_tx(&tx_hash) {
+                return Err(format!("Dup transaction, hash: {}", hex::encode(&tx_hash)));
             }
-        } else {
-            Err("dup".to_owned())
         }
 
+        if {
+            let mut pool = self.pool.write().await;
+            pool.enqueue(tx_hash.clone(), raw_tx.clone())
+        } {
+            if broadcast {
+                let raw_txs = RawTransactions { body: vec![raw_tx] };
+                self.multicast_send_txs(self.network_port, raw_txs).await;
+            }
+            Ok(tx_hash)
+        } else {
+            Err(format!("Dup transaction, hash: {}", hex::encode(tx_hash)))
+        }
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {
@@ -326,7 +291,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, String> {
-        let ret = get_tx(&tx_hash).await;
+        let ret = db_get_tx(&tx_hash).await;
         if let Some(raw_tx) = ret {
             Ok(raw_tx)
         } else {
@@ -341,11 +306,14 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
-        if let Some(block) = {
+        let block = {
             let mut chain = self.chain.write().await;
-            chain.add_proposal().await
-        } {
-            self.multicast_send_proposal(self.network_port, block).await;
+            chain.add_proposal().await?
+        };
+        // todo, fix network transport
+        let handles = self.multicast_send_proposal(self.network_port, block).await;
+        for handle in handles {
+            handle.await.unwrap()
         }
         {
             let chain = self.chain.read().await;
@@ -530,7 +498,7 @@ impl Controller {
                             block_vec.push(full_block);
                         } else {
                             let sync_block_respond = SyncBlockRespond {
-                                respond: Some(crate::protocol::sync_manager::sync_block_respond::Respond::NotFulFil(controller.local_address.clone()))
+                                respond: Some(crate::protocol::sync_manager::sync_block_respond::Respond::MissBlock(controller.local_address.clone()))
                             };
                             controller
                                 .unicast_sync_block_respond(
@@ -572,21 +540,23 @@ impl Controller {
                         ))
                     })?;
 
-                let controller = self.clone();
+                let controller_clone = self.clone();
+
+                use crate::protocol::sync_manager::sync_block_respond::Respond;
+
                 tokio::spawn(async move {
                     match sync_block_respond.respond {
-                        // todo add counter, after reaching a number, misbehave this node
-                        Some(
-                            crate::protocol::sync_manager::sync_block_respond::Respond::NotFulFil(
-                                _,
-                            ),
-                        ) => {}
-                        None => {}
-                        Some(crate::protocol::sync_manager::sync_block_respond::Respond::Ok(
-                            sync_blocks,
-                        )) => {
+                        Some(Respond::MissBlock(node)) => {
+                            controller_clone
+                                .node_manager
+                                .set_misbehavior_node(node.clone())
+                                .await
+                                .unwrap();
+                            controller_clone.delete_global_status(node).await;
+                        }
+                        Some(Respond::Ok(sync_blocks)) => {
                             // todo handle error
-                            match controller.handle_sync_blocks(sync_blocks).await {
+                            match controller_clone.handle_sync_blocks(sync_blocks).await {
                                 Ok(_) => {}
                                 Err(e) => {
                                     warn!("{}", e.to_string());
@@ -594,8 +564,61 @@ impl Controller {
                                 }
                             }
                         }
+                        None => {}
                     }
                 });
+            }
+
+            ControllerMsgType::SyncTxType => {
+                let sync_tx = SyncTxRequest::decode(msg.msg.as_slice()).map_err(|_| {
+                    Error::DecodeError(format!(
+                        "decode {} msg failed",
+                        ControllerMsgType::SyncTxType
+                    ))
+                })?;
+
+                let controller_clone = self.clone();
+
+                use crate::protocol::sync_manager::sync_tx_respond::Respond;
+                tokio::spawn(async move {
+                    if let Some(raw_tx) = {
+                        let rd = controller_clone.chain.read().await;
+                        rd.chain_get_tx(&sync_tx.tx_hash).await
+                    } {
+                        controller_clone
+                            .unicast_sync_tx_respond(
+                                controller_clone.network_port,
+                                msg.origin,
+                                SyncTxRespond {
+                                    respond: Some(Respond::Ok(raw_tx)),
+                                },
+                            )
+                            .await;
+                    }
+                });
+            }
+
+            ControllerMsgType::SyncTxRespondType => {
+                let sync_tx_respond = SyncTxRespond::decode(msg.msg.as_slice()).map_err(|_| {
+                    Error::DecodeError(format!(
+                        "decode {} msg failed",
+                        ControllerMsgType::SyncTxRespondType
+                    ))
+                })?;
+
+                use crate::protocol::sync_manager::sync_tx_respond::Respond;
+                match sync_tx_respond.respond {
+                    Some(Respond::MissTx(node)) => {
+                        self.node_manager.set_misbehavior_node(node.clone()).await?;
+                        self.delete_global_status(node).await;
+                    }
+                    Some(Respond::Ok(raw_tx)) => {
+                        self.rpc_send_raw_transaction(raw_tx, false)
+                            .await
+                            .map_err(Error::ExpectError)?;
+                    }
+                    None => {}
+                }
             }
 
             ControllerMsgType::SendTxType => {
@@ -614,14 +637,14 @@ impl Controller {
             }
 
             ControllerMsgType::SendProposalType => {
-                let block = Block::decode(msg.msg.as_slice()).map_err(|_| {
+                let full_block = Block::decode(msg.msg.as_slice()).map_err(|_| {
                     Error::DecodeError(format!(
                         "decode {} msg failed",
                         ControllerMsgType::SendProposalType
                     ))
                 })?;
 
-                if let Some(header) = block.header.clone() {
+                if let Some(header) = full_block.header.clone() {
                     let mut block_header_bytes = Vec::new();
                     header
                         .encode(&mut block_header_bytes)
@@ -633,21 +656,15 @@ impl Controller {
 
                     let controller_clone = self.clone();
                     tokio::spawn(async move {
-                        {
-                            let compact_block = full_to_compact(block.clone());
-                            {
-                                let mut wr = controller_clone.chain.write().await;
-                                if !wr.add_remote_proposal(compact_block).await {
-                                    warn!("add remote proposal: {} failed", hex::encode(block_hash))
-                                }
-                            }
-                            if let Some(body) = block.body {
-                                for raw_tx in body.body {
-                                    match controller_clone.rpc_send_raw_transaction(raw_tx, false).await {
-                                        Ok(_) => {},
-                                        Err(e) => warn!("process_network_msg: rpc_send_raw_transaction: error: {}", e)
-                                    }
-                                }
+                        let mut wr = controller_clone.chain.write().await;
+                        if !wr.add_remote_proposal(full_block.clone()).await {
+                            warn!("add remote proposal: {} failed", hex::encode(block_hash))
+                        }
+                        if let Some(body) = full_block.body {
+                            for raw_tx in body.body {
+                                let _ = controller_clone
+                                    .rpc_send_raw_transaction(raw_tx, false)
+                                    .await;
                             }
                         }
                     });
@@ -668,9 +685,10 @@ impl Controller {
 
     impl_broadcast!(broadcast_chain_status, ChainStatus, "chain_status");
 
-    impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_proposal, Block, "send_proposal");
+    impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
+    impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
 
     impl_unicast!(unicast_sync_block, SyncBlockRequest, "sync_block");
     impl_unicast!(
@@ -678,6 +696,7 @@ impl Controller {
         SyncBlockRespond,
         "sync_block_respond"
     );
+    impl_unicast!(unicast_sync_tx_respond, SyncTxRespond, "sync_tx_respond");
     impl_unicast!(
         unicast_chain_status_respond,
         ChainStatusRespond,
@@ -732,10 +751,10 @@ impl Controller {
     }
 
     async fn init_status(&self, height: u64, config: SystemConfig) -> Result<ChainStatus, Error> {
-        let compact_block = {
+        let full_block = {
             if height == 0 {
                 let rd = self.chain.read().await;
-                rd.get_genesis_block()
+                full_to_compact(rd.get_genesis_block())
             } else {
                 get_compact_block(height)
                     .await
@@ -744,7 +763,7 @@ impl Controller {
             }
         };
         let mut header_bytes = Vec::new();
-        compact_block
+        full_block
             .header
             .unwrap()
             .encode(&mut header_bytes)
@@ -807,15 +826,23 @@ impl Controller {
                 return Err(Error::NoneBlockHeader);
             }
 
-            let mut proposal = Vec::new();
-            sync_block
-                .encode(&mut proposal)
+            let proposal = ProposalEnum {
+                proposal: Some(Proposal::BftProposal(BftProposal {
+                    block_hash: vec![],
+                    pre_state_root: vec![],
+                    pre_proof: vec![],
+                })),
+            };
+
+            let mut proposal_bytes = Vec::new();
+            proposal
+                .encode(&mut proposal_bytes)
                 .map_err(|_| Error::EncodeError("encode proposal failed".to_string()))?;
 
             check_block(
                 self.consensus_port,
                 block_height,
-                proposal,
+                proposal_bytes,
                 sync_block.proof.clone(),
             )
             .await

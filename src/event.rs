@@ -20,4 +20,7 @@ pub enum EventTask {
 
     // multicast sync block req
     SyncBlock,
+
+    // multicast sync tx req
+    SyncTx(Vec<u8>),
 }
