@@ -80,23 +80,20 @@ impl Pool {
         let mut tx_list = Vec::new();
         let mut tx_hash_list = Vec::new();
 
-        loop {
-            match self.order_set.iter().next() {
-                Some((_, hash)) => match self.txs.get(hash) {
-                    Some(raw_tx) => {
-                        if tx_is_valid(raw_tx, height) {
-                            tx_list.push(raw_tx.clone());
-                            tx_hash_list.push(hash.clone());
-                        } else {
-                            invalid_tx_list.push(hash.clone());
-                        }
-                        if tx_hash_list.len() >= self.package_limit {
-                            break;
-                        }
+        for (_, hash) in self.order_set.iter() {
+            match self.txs.get(hash) {
+                Some(raw_tx) => {
+                    if tx_is_valid(raw_tx, height) {
+                        tx_list.push(raw_tx.clone());
+                        tx_hash_list.push(hash.clone());
+                    } else {
+                        invalid_tx_list.push(hash.clone());
                     }
-                    None => invalid_tx_list.push(hash.clone()),
-                },
-                None => break,
+                    if tx_hash_list.len() >= self.package_limit {
+                        break;
+                    }
+                }
+                None => invalid_tx_list.push(hash.clone()),
             }
         }
 

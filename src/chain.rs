@@ -17,16 +17,12 @@ use crate::error::Error;
 use crate::event::EventTask;
 use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
 use crate::pool::Pool;
-use crate::util::{
-    check_block, check_block_exists, db_get_tx, exec_block, full_to_compact, get_compact_block,
-    get_full_block, hash_data, load_data, print_main_chain, reconfigure, store_data, store_tx_info,
-    unix_now, write_block,
-};
+use crate::util::*;
 use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::{
-    Block, BlockHeader, CompactBlock, CompactBlockBody, RawTransaction, RawTransactions,
+    Block, BlockHeader, CompactBlock, RawTransaction, RawTransactions,
 };
 use cita_cloud_proto::common::proposal_enum::Proposal;
 use cita_cloud_proto::common::{
@@ -117,11 +113,8 @@ impl Chain {
     pub async fn init(&self, init_block_number: u64) {
         if init_block_number == 0 {
             info!("finalize genesis block");
-            self.finalize_block(
-                self.genesis.genesis_block(),
-                self.block_hash.clone(),
-            )
-            .await;
+            self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
+                .await;
         }
     }
 
@@ -193,7 +186,7 @@ impl Chain {
     }
 
     pub async fn add_remote_proposal(&mut self, full_block: Block) -> bool {
-        let header = full_block.clone().header.unwrap();
+        let header = full_block.header.clone().unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
             warn!("block_height {} too low", block_height);
@@ -306,8 +299,10 @@ impl Chain {
             .proposal
         {
             Some(proposal_enum::Proposal::BftProposal(bft_proposal)) => {
-                if let Some(full_block) = self.fork_tree[h as usize - self.block_number as usize - 1]
-                    .get(bft_proposal.block_hash.as_slice()).cloned()
+                if let Some(full_block) = self.fork_tree
+                    [h as usize - self.block_number as usize - 1]
+                    .get(bft_proposal.block_hash.as_slice())
+                    .cloned()
                 {
                     let block_body = full_to_compact(full_block).body.unwrap();
                     // check tx in block
@@ -358,7 +353,7 @@ impl Chain {
                     };
                 } else {
                     warn!(
-                        "can't find proposal block {} in fork tree",
+                        "can't find proposal block 0x{} in fork tree",
                         hex::encode(&bft_proposal.block_hash)
                     );
                     Ok(false)
@@ -371,11 +366,7 @@ impl Chain {
         }
     }
 
-    async fn finalize_block(
-        &self,
-        full_block: Block,
-        block_hash: Vec<u8>,
-    ) {
+    async fn finalize_block(&self, full_block: Block, block_hash: Vec<u8>) {
         let compact_block = full_to_compact(full_block.clone());
         let compact_block_body = compact_block.body.unwrap();
         let tx_hash_list = compact_block_body.tx_hashes.clone();
@@ -433,7 +424,7 @@ impl Chain {
         // region 1: tx_hash - tx
         if let Some(raw_txs) = full_block.body.clone() {
             for (tx_index, raw_tx) in raw_txs.body.into_iter().enumerate() {
-                let tx_hash = match raw_tx.tx {
+                let tx_hash = match raw_tx.tx.clone() {
                     Some(Tx::UtxoTx(utxo_tx)) => {
                         if {
                             let mut auth = self.auth.write().await;
@@ -461,8 +452,13 @@ impl Chain {
                     Some(Tx::NormalTx(normal_tx)) => normal_tx.transaction_hash,
                     None => Vec::new(),
                 };
-                // store tx info
+                // store tx
                 if !tx_hash.is_empty() {
+                    let mut tx_bytes = Vec::new();
+                    raw_tx.encode(&mut tx_bytes).expect(
+                        format!("encode {} tx failed", hex::encode(tx_hash.clone())).as_str(),
+                    );
+                    write_tx(&tx_hash, &tx_bytes).await;
                     store_tx_info(&tx_hash, block_height, tx_index).await;
                 }
             }
@@ -472,12 +468,9 @@ impl Chain {
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
         // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
         // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(
-            self.executor_port,
-            full_block,
-        )
-        .await
-        .unwrap_or_else(|_| vec![0u8; 32]);
+        let executed_block_hash = exec_block(self.executor_port, full_block)
+            .await
+            .unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
         store_data(self.storage_port, 6, key.clone(), executed_block_hash)
             .await
@@ -597,13 +590,9 @@ impl Chain {
                         // save finalized blocks / txs / current height / current hash
                         for (index, block_hash) in self.main_chain.iter().enumerate() {
                             // get block
-                            let block =
-                                self.fork_tree[index].get(block_hash).unwrap().to_owned();
-                            self.finalize_block(
-                                block.clone(),
-                                block_hash.to_owned(),
-                            )
-                            .await;
+                            let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
+                            self.finalize_block(block.clone(), block_hash.to_owned())
+                                .await;
                             let block_body = full_to_compact(block).body.unwrap();
                             finalized_tx_hash_list
                                 .extend_from_slice(block_body.tx_hashes.as_slice());

@@ -31,7 +31,9 @@ use tonic::Request;
 use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
-use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof};
+use cita_cloud_proto::common::{
+    Address, ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof,
+};
 use prost::Message;
 use std::path::Path;
 use tokio::fs;
@@ -285,6 +287,7 @@ pub async fn write_tx(tx_hash: &[u8], data: &[u8]) {
     let _ = fs::write(file_path, data).await;
 }
 
+#[allow(dead_code)]
 pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
     let filename = hex::encode(tx_hash);
     let new_filename = format!("new_{}", filename);
@@ -327,6 +330,7 @@ pub fn extract_tx_hash(raw_tx: RawTransaction) -> Option<Hash> {
     }
 }
 
+#[allow(dead_code)]
 pub async fn remove_tx(filename: &str) {
     let root_path = Path::new(".");
     let tx_path = root_path.join("txs").join(filename);
@@ -487,15 +491,13 @@ macro_rules! impl_multicast {
             let mut handle_vec = Vec::new();
 
             for node in nodes {
-                log::info!("send {} to {:x?}", $name, node);
+                log::info!("send {} to 0x{}", $name, hex::encode(&node.address));
 
                 let mut client = client.clone();
 
-                let origin = self
-                    .node_manager
-                    .get_origin(node.clone())
-                    .await
-                    .expect(format!("not get address: {:x?} origin", node).as_str());
+                let origin = self.node_manager.get_origin(&node).await.expect(
+                    format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
+                );
 
                 let mut buf = Vec::new();
 
@@ -515,7 +517,12 @@ macro_rules! impl_multicast {
                     match client.send_msg(request).await {
                         Ok(_) => {}
                         Err(status) => {
-                            log::warn!("multicast {} to {:x?} failed: {:?}", $name, node, status)
+                            log::warn!(
+                                "multicast {} to 0x{} failed: {:?}",
+                                $name,
+                                hex::encode(&node.address),
+                                status
+                            )
                         }
                     }
                 });
@@ -527,6 +534,7 @@ macro_rules! impl_multicast {
     };
 }
 
+// todo change return to handle panic & unwrap
 #[macro_export]
 macro_rules! impl_unicast {
     ($func_name:ident, $type:ident, $name:expr) => {
@@ -538,6 +546,11 @@ macro_rules! impl_unicast {
         ) -> tokio::task::JoinHandle<()> {
             let node = self.node_manager.get_address(origin).await;
 
+            if !h160_address_check(node.as_ref()) {
+                panic!("No correct address provide in unicast");
+            }
+            let node = hex::encode(node.unwrap().address);
+
             let network_addr = format!("http://127.0.0.1:{}", port);
 
             let mut client =
@@ -547,7 +560,7 @@ macro_rules! impl_unicast {
                 .await
                 .unwrap();
 
-            log::info!("send {} to {:x?}", $name, node);
+            log::info!("send {} to 0x{}", $name, node);
 
             let mut buf = Vec::new();
 
@@ -567,7 +580,7 @@ macro_rules! impl_unicast {
                 match client.send_msg(request).await {
                     Ok(_) => {}
                     Err(status) => {
-                        log::warn!("unicast {} to {:x?} failed: {:?}", $name, node, status)
+                        log::warn!("unicast {} to 0x{} failed: {:?}", $name, node, status)
                     }
                 }
             })
@@ -623,5 +636,12 @@ pub fn clean_0x(s: &str) -> &str {
         &s[2..]
     } else {
         s
+    }
+}
+
+pub fn h160_address_check(address: Option<&Address>) -> bool {
+    match address {
+        Some(addr) => addr.address.len() == 20,
+        None => false,
     }
 }

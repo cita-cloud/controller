@@ -23,8 +23,14 @@ pub enum Error {
     /// node in ban list
     BannedNode,
 
+    /// message not provide address
+    NoProvideAddress,
+
     /// not get the block
     NoBlock(u64),
+
+    /// proposal not found
+    NoProposal(Vec<u8>),
 
     /// block header is none
     NoneBlockHeader,
@@ -47,9 +53,6 @@ pub enum Error {
     /// find dup transaction
     DupTransaction(Hash),
 
-    /// find dup block
-    DupBlock(u64),
-
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
 
@@ -64,7 +67,9 @@ impl ::std::fmt::Display for Error {
         match self {
             Error::MisbehaveNode => write!(f, "Node already in misbehave list"),
             Error::BannedNode => write!(f, "Node already in ban list"),
+            Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
+            Error::NoProposal(hash) => write!(f, "proposal 0x{} not found", hex::encode(hash)),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be None"),
             Error::EarlyStatus => write!(f, "receive early status from same node"),
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
@@ -74,7 +79,6 @@ impl ::std::fmt::Display for Error {
             Error::DupTransaction(h) => {
                 write!(f, "Found dup transaction 0x{}", hex::encode(h.hash.clone()))
             }
-            Error::DupBlock(h) => write!(f, "Found the {}th block is dup", h),
             Error::InternalError(e) => write!(f, "Internal Error: {}", e),
             Error::ExpectError(s) => write!(f, "Expect error: {}", s),
         }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::util::{clean_0x, hash_data};
-use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody, Block, RawTransactions};
+use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
 use log::warn;
 use prost::Message;
 use serde_derive::Deserialize;
@@ -23,7 +23,7 @@ use tokio::time;
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
     pub timestamp: u64,
-    pub prev_hash: String,
+    pub prevhash: String,
 }
 
 impl GenesisBlock {
@@ -33,7 +33,7 @@ impl GenesisBlock {
     }
     pub fn genesis_block(&self) -> Block {
         let prev_hash =
-            hex::decode(clean_0x(&self.prev_hash)).expect("parsing prevhash in genesis failed!");
+            hex::decode(clean_0x(&self.prevhash)).expect("parsing prevhash in genesis failed!");
         let header = BlockHeader {
             prevhash: prev_hash,
             timestamp: self.timestamp,
@@ -82,7 +82,7 @@ mod tests {
     fn basic_test() {
         let toml_str = r#"
         timestamp = 123456
-        prevhash = "0x010203040506"
+        prev_hash = "0x010203040506"
         "#;
 
         let genesis = GenesisBlock::new(toml_str);

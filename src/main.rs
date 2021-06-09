@@ -159,7 +159,7 @@ impl RpcService for RPCServer {
         let raw_tx = request.into_inner();
 
         self.controller
-            .rpc_send_raw_transaction(raw_tx, false)
+            .rpc_send_raw_transaction(raw_tx, true)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e)),
@@ -493,7 +493,6 @@ use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
 use prost::Message;
 use std::fs;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
