@@ -38,6 +38,8 @@ const GIT_VERSION: &str = git_version!(
 );
 const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
+const DEFAULT_PACKAGE_LIMIT: usize = 4000;
+
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
 #[derive(Clap)]
@@ -110,7 +112,7 @@ async fn register_network_msg_handler(
 
 use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction};
 use cita_cloud_proto::common::{
-    ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof, SimpleResponse,
+    ConsensusConfiguration, Empty, Hash, Proposal, ProposalEnum, ProposalWithProof, SimpleResponse,
 };
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
@@ -405,19 +407,19 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         let height = proposal.height;
         let data = proposal.data;
 
-        self.controller
-            .chain_check_proposal(height, &data)
-            .await
-            .map_or_else(
-                |e| {
-                    warn!("rpc: check_proposal failed: {:?}", e);
-                    Err(Status::invalid_argument(e.to_string()))
-                },
-                |is_ok| {
-                    let reply = Response::new(SimpleResponse { is_success: is_ok });
-                    Ok(reply)
-                },
-            )
+        match self.controller.chain_check_proposal(height, &data).await {
+            Err(e) => {
+                warn!("rpc: check_proposal failed: {:?}", e);
+                Err(Status::invalid_argument(e.to_string()))
+            }
+            Ok(is_ok) => {
+                if !is_ok {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                let reply = Response::new(SimpleResponse { is_success: is_ok });
+                Ok(reply)
+            }
+        }
     }
     async fn commit_block(
         &self,

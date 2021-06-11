@@ -28,6 +28,7 @@ use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Co
 use log::{info, warn};
 use tonic::Request;
 
+use crate::error::Error;
 use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
@@ -272,7 +273,7 @@ pub async fn get_network_status(
 pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     for (i, hash) in chain.iter().enumerate() {
         info!(
-            "height: {} hash {}",
+            "height: {} hash 0x{}",
             i as u64 + block_number + 1,
             hex::encode(&hash)
         );
@@ -318,15 +319,38 @@ pub async fn db_get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
     Some(ret.unwrap())
 }
 
-pub fn extract_tx_hash(raw_tx: RawTransaction) -> Option<Hash> {
+pub fn get_tx_hash(raw_tx: &RawTransaction) -> Result<Vec<u8>, Error> {
     match raw_tx.tx {
-        Some(Tx::NormalTx(normal_tx)) => Some(Hash {
-            hash: normal_tx.transaction_hash,
-        }),
-        Some(Tx::UtxoTx(utxo_tx)) => Some(Hash {
-            hash: utxo_tx.transaction_hash,
-        }),
-        None => None,
+        Some(Tx::NormalTx(ref normal_tx)) => Ok(normal_tx.transaction_hash.clone()),
+
+        Some(Tx::UtxoTx(ref utxo_tx)) => Ok(utxo_tx.transaction_hash.clone()),
+
+        None => return Err(Error::NoneBlockBody),
+    }
+}
+
+pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Error> {
+    let mut hashes = Vec::new();
+    for raw_tx in &raw_txs.body {
+        hashes.push(get_tx_hash(raw_tx)?)
+    }
+    Ok(hashes)
+}
+
+pub async fn get_block_hash(kms_port: u16, header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
+    match header {
+        Some(header) => {
+            let mut block_header_bytes = Vec::new();
+            header
+                .encode(&mut block_header_bytes)
+                .expect("encode block header failed");
+            let block_hash = hash_data(kms_port, block_header_bytes)
+                .await
+                .map_err(Error::InternalError)?;
+            Ok(block_hash)
+        }
+
+        None => return Err(Error::NoneBlockHeader),
     }
 }
 
@@ -480,6 +504,11 @@ macro_rules! impl_multicast {
         pub async fn $func_name(&self, port: u16, item: $type) -> Vec<tokio::task::JoinHandle<()>> {
             let nodes = self.node_manager.grab_node().await;
 
+            let mut buf = Vec::new();
+
+            item.encode(&mut buf)
+                .expect(&($name.to_string() + " encode failed"));
+
             let network_addr = format!("http://127.0.0.1:{}", port);
 
             let client =
@@ -491,7 +520,12 @@ macro_rules! impl_multicast {
             let mut handle_vec = Vec::new();
 
             for node in nodes {
-                log::info!("send {} to 0x{}", $name, hex::encode(&node.address));
+                log::debug!(
+                    "multicast {} len: {} to 0x{}",
+                    $name,
+                    buf.len(),
+                    hex::encode(&node.address)
+                );
 
                 let mut client = client.clone();
 
@@ -499,23 +533,20 @@ macro_rules! impl_multicast {
                     format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
                 );
 
-                let mut buf = Vec::new();
-
-                item.encode(&mut buf)
-                    .expect(&($name.to_string() + " encode failed"));
-
                 let msg = cita_cloud_proto::network::NetworkMsg {
                     module: "controller".to_string(),
                     r#type: $name.into(),
                     origin,
-                    msg: buf,
+                    msg: buf.clone(),
                 };
 
                 let request = tonic::Request::new(msg);
 
                 let handle = tokio::spawn(async move {
                     match client.send_msg(request).await {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            log::debug!("multicast {} ok", $name)
+                        }
                         Err(status) => {
                             log::warn!(
                                 "multicast {} to 0x{} failed: {:?}",
@@ -560,12 +591,12 @@ macro_rules! impl_unicast {
                 .await
                 .unwrap();
 
-            log::info!("send {} to 0x{}", $name, node);
-
             let mut buf = Vec::new();
 
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
+
+            log::debug!("unicast {} len: {} to 0x{}", $name, buf.len(), node);
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -601,14 +632,12 @@ macro_rules! impl_broadcast {
                 .await
                 .unwrap();
 
-            log::info!("broadcast {}", $name);
-
             let mut buf = Vec::new();
 
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::info!("{} buf len: {}", $name, buf.clone().len());
+            log::debug!("broadcast {} buf len: {}", $name, buf.clone().len());
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),

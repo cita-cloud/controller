@@ -25,8 +25,8 @@ use crate::protocol::sync_manager::{
 };
 use crate::util::*;
 use crate::utxo_set::SystemConfig;
-use crate::GenesisBlock;
 use crate::{impl_broadcast, impl_multicast, impl_unicast};
+use crate::{GenesisBlock, DEFAULT_PACKAGE_LIMIT};
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     common::{
@@ -35,7 +35,7 @@ use cita_cloud_proto::{
     },
     network::NetworkMsg,
 };
-use log::{info, warn};
+use log::{debug, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -95,8 +95,11 @@ impl From<ControllerMsgType> for &str {
 pub struct Controller {
     pub network_port: u16,
     storage_port: u16,
+
     auth: Arc<RwLock<Authentication>>,
+
     pool: Arc<RwLock<Pool>>,
+
     chain: Arc<RwLock<Chain>>,
 
     consensus_port: u16,
@@ -136,7 +139,7 @@ impl Controller {
             storage_port,
             sys_config,
         )));
-        let pool = Arc::new(RwLock::new(Pool::new(1500)));
+        let pool = Arc::new(RwLock::new(Pool::new(DEFAULT_PACKAGE_LIMIT)));
         let chain = Arc::new(RwLock::new(Chain::new(
             storage_port,
             kms_port,
@@ -214,7 +217,10 @@ impl Controller {
         {
             let chain = self.chain.read().await;
             if chain.check_dup_tx(&tx_hash) {
-                return Err(format!("Dup transaction, hash: {}", hex::encode(&tx_hash)));
+                return Err(format!(
+                    "Dup transaction in chain, hash: {}",
+                    hex::encode(&tx_hash)
+                ));
             }
         }
 
@@ -228,8 +234,30 @@ impl Controller {
             }
             Ok(tx_hash)
         } else {
-            Err(format!("Dup transaction, hash: {}", hex::encode(tx_hash)))
+            Err(format!(
+                "Dup transaction in pool, hash: {}",
+                hex::encode(tx_hash)
+            ))
         }
+    }
+
+    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
+        let chain = self.chain.read().await;
+        let auth = self.auth.read().await;
+        let mut pool = self.pool.write().await;
+
+        // todo not do clone
+        for raw_tx in raw_txs.body.clone() {
+            let tx_hash = auth.check_raw_tx(raw_tx).await.map_err(|e| Error::ExpectError(e))?;
+
+            if chain.check_dup_tx(&tx_hash.clone()) || !pool.is_contain(&tx_hash) {
+                return Err(Error::DupTransaction(tx_hash));
+            }
+        }
+        for raw_tx in raw_txs.body {
+            pool.enqueue(get_tx_hash(&raw_tx)?, raw_tx);
+        }
+        Ok(())
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {
@@ -299,24 +327,35 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
-        let block = {
+        {
             let mut chain = self.chain.write().await;
             chain.add_proposal().await?
         };
-        // todo, fix network transport
-        let handles = self.multicast_send_proposal(self.network_port, block).await;
-        for handle in handles {
-            handle.await.unwrap()
-        }
         {
             let chain = self.chain.read().await;
             chain.get_proposal().await
         }
     }
 
-    pub async fn chain_check_proposal(&self, height: u64, proposal: &[u8]) -> Result<bool, Error> {
+    pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<bool, Error> {
+        let proposal_enum = ProposalEnum::decode(data)
+            .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?;
+        match proposal_enum.proposal.clone() {
+            Some(Proposal::BftProposal(bft_proposal)) => {
+                self.batch_transactions(
+                    bft_proposal
+                        .proposal
+                        .ok_or(Error::NoneProposal)?
+                        .body
+                        .ok_or(Error::NoneBlockBody)?,
+                )
+                .await?
+            }
+            None => return Err(Error::NoneProposal),
+        }
+
         let chain = self.chain.read().await;
-        chain.check_proposal(height, proposal).await
+        chain.check_proposal(height, proposal_enum).await
     }
 
     pub async fn chain_commit_block(
@@ -343,7 +382,7 @@ impl Controller {
     }
 
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
-        info!("get network msg: {}", msg.r#type);
+        debug!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
@@ -631,11 +670,7 @@ impl Controller {
                     ))
                 })?;
 
-                for raw_tx in send_txs.body {
-                    self.rpc_send_raw_transaction(raw_tx, false)
-                        .await
-                        .map_err(Error::ExpectError)?;
-                }
+                self.batch_transactions(send_txs).await?;
             }
 
             ControllerMsgType::SendProposalType => {
@@ -659,16 +694,12 @@ impl Controller {
                     let controller_clone = self.clone();
                     tokio::spawn(async move {
                         if let Some(body) = full_block.body.clone() {
-                            for raw_tx in body.body {
-                                let _ = controller_clone
-                                    .rpc_send_raw_transaction(raw_tx, false)
-                                    .await;
-                            }
+                            let _ = controller_clone.batch_transactions(body).await;
                         }
                         {
                             let mut wr = controller_clone.chain.write().await;
                             if !wr.add_remote_proposal(full_block).await {
-                                warn!("add remote proposal: {} failed", hex::encode(block_hash))
+                                warn!("add remote proposal: 0x{} failed", hex::encode(block_hash))
                             }
                         }
                     });
@@ -823,9 +854,9 @@ impl Controller {
 
             let proposal = ProposalEnum {
                 proposal: Some(Proposal::BftProposal(BftProposal {
-                    block_hash: vec![],
                     pre_state_root: vec![],
                     pre_proof: vec![],
+                    proposal: None,
                 })),
             };
 

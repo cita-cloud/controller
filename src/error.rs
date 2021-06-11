@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::common::Hash;
-
 /// The error types
 #[derive(Debug)]
 pub enum Error {
@@ -29,8 +27,11 @@ pub enum Error {
     /// not get the block
     NoBlock(u64),
 
-    /// proposal not found
-    NoProposal(Vec<u8>),
+    /// proposal is none
+    NoneProposal,
+
+    /// block body is none
+    NoneBlockBody,
 
     /// block header is none
     NoneBlockHeader,
@@ -51,7 +52,7 @@ pub enum Error {
     NoForkTree,
 
     /// find dup transaction
-    DupTransaction(Hash),
+    DupTransaction(Vec<u8>),
 
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
@@ -69,7 +70,8 @@ impl ::std::fmt::Display for Error {
             Error::BannedNode => write!(f, "Node already in ban list"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
-            Error::NoProposal(hash) => write!(f, "proposal 0x{} not found", hex::encode(hash)),
+            Error::NoneProposal => write!(f, "Proposal should not be none"),
+            Error::NoneBlockBody => write!(f, "BlockBody should not be None"),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be None"),
             Error::EarlyStatus => write!(f, "receive early status from same node"),
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
@@ -77,7 +79,7 @@ impl ::std::fmt::Display for Error {
             Error::NoCandidate => write!(f, "No candidate block"),
             Error::NoForkTree => write!(f, "Fork tree no block"),
             Error::DupTransaction(h) => {
-                write!(f, "Found dup transaction 0x{}", hex::encode(h.hash.clone()))
+                write!(f, "Found dup transaction 0x{}", hex::encode(h))
             }
             Error::InternalError(e) => write!(f, "Internal Error: {}", e),
             Error::ExpectError(s) => write!(f, "Expect error: {}", s),

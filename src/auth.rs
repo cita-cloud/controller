@@ -169,12 +169,12 @@ impl Authentication {
                         verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
                     {
                         if address == sender {
-                            return Ok(tx_hash);
+                            Ok(tx_hash)
                         } else {
-                            return Err("Invalid sender".to_owned());
+                            Err("Invalid sender".to_owned())
                         }
                     } else {
-                        return Err("internal err".to_owned());
+                        Err("internal err".to_owned())
                     }
                 }
                 UtxoTx(utxo_tx) => {
