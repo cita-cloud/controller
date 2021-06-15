@@ -248,7 +248,10 @@ impl Controller {
 
         // todo not do clone
         for raw_tx in raw_txs.body.clone() {
-            let tx_hash = auth.check_raw_tx(raw_tx).await.map_err(|e| Error::ExpectError(e))?;
+            let tx_hash = auth
+                .check_raw_tx(raw_tx)
+                .await
+                .map_err(|e| Error::ExpectError(e))?;
 
             if chain.check_dup_tx(&tx_hash.clone()) || !pool.is_contain(&tx_hash) {
                 return Err(Error::DupTransaction(tx_hash));
@@ -327,35 +330,48 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
-        {
-            let mut chain = self.chain.write().await;
-            chain.add_proposal().await?
-        };
-        {
-            let chain = self.chain.read().await;
-            chain.get_proposal().await
-        }
+        let mut chain = self.chain.write().await;
+        chain.add_proposal().await?;
+        chain.get_proposal().await
     }
 
     pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<bool, Error> {
         let proposal_enum = ProposalEnum::decode(data)
             .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?;
-        match proposal_enum.proposal.clone() {
-            Some(Proposal::BftProposal(bft_proposal)) => {
-                self.batch_transactions(
-                    bft_proposal
+
+        let ret = {
+            let chain = self.chain.read().await;
+            chain.check_proposal(height, proposal_enum.clone()).await
+        };
+
+        match ret {
+            Ok(true) => match proposal_enum.proposal {
+                Some(Proposal::BftProposal(bft_proposal)) => {
+                    let block = bft_proposal
                         .proposal
-                        .ok_or(Error::NoneProposal)?
-                        .body
-                        .ok_or(Error::NoneBlockBody)?,
-                )
-                .await?
-            }
-            None => return Err(Error::NoneProposal),
+                        .ok_or(Error::NoneProposal)?;
+
+                    // todo re-enter check
+                    {
+                        log::info!("add remote proposal through check_proposal");
+                        let mut chain = self.chain.write().await;
+                        chain.add_remote_proposal(block.clone()).await;
+                    }
+
+                    self.batch_transactions(
+                            block
+                            .body
+                            .ok_or(Error::NoneBlockBody)?,
+                    )
+                    .await?;
+
+                }
+                None => return Err(Error::NoneProposal),
+            },
+            _ => {}
         }
 
-        let chain = self.chain.read().await;
-        chain.check_proposal(height, proposal_enum).await
+        ret
     }
 
     pub async fn chain_commit_block(

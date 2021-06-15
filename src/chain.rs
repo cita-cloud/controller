@@ -215,7 +215,7 @@ impl Chain {
     }
 
     pub async fn add_proposal(&mut self) -> Result<(), Error> {
-        if let Some((_, _, full_block)) = self.candidate_block.clone() {
+        if self.candidate_block.is_some() {
             Ok(())
         } else {
             info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
@@ -495,7 +495,8 @@ impl Chain {
                 let mut candidate_chain = Vec::new();
                 let mut candidate_chain_tx_hash = Vec::new();
 
-                candidate_chain.push(get_block_hash(self.kms_port, full_block.header.as_ref()).await?);
+                candidate_chain
+                    .push(get_block_hash(self.kms_port, full_block.header.as_ref()).await?);
                 candidate_chain_tx_hash.extend_from_slice(&compact_block.body.unwrap().tx_hashes);
 
                 let mut prev_hash = full_block.header.clone().unwrap().prevhash;
