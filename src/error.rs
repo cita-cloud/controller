@@ -21,6 +21,9 @@ pub enum Error {
     /// node in ban list
     BannedNode,
 
+    /// provide address len is not 20
+    ProvideAddressError,
+
     /// message not provide address
     NoProvideAddress,
 
@@ -77,6 +80,7 @@ impl ::std::fmt::Display for Error {
         match self {
             Error::MisbehaveNode => write!(f, "Node already in misbehave list"),
             Error::BannedNode => write!(f, "Node already in ban list"),
+            Error::ProvideAddressError => write!(f, "Provide address len is not 20"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
             Error::NoneProposal => write!(f, "Proposal should not be none"),

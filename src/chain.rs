@@ -56,6 +56,7 @@ pub struct Chain {
     main_chain_tx_hash: Vec<Vec<u8>>,
     candidate_block: Option<(u64, Vec<u8>, Block)>,
     pool: Arc<RwLock<Pool>>,
+    // todo auth set in controller not chain
     auth: Arc<RwLock<Authentication>>,
     genesis: GenesisBlock,
     key_id: u64,
@@ -186,7 +187,7 @@ impl Chain {
 
     pub async fn add_remote_proposal(
         &mut self,
-        block_hash: Vec<u8>,
+        block_hash: &[u8],
         block: Block,
     ) -> Result<bool, Error> {
         let header = block.header.clone().unwrap();
@@ -199,14 +200,21 @@ impl Chain {
             return Err(Error::ProposalTooHigh(block_height, self.block_number));
         }
 
-        if !self.fork_tree[(block_height - self.block_number - 1) as usize]
-            .contains_key(&block_hash)
+        if !self.fork_tree[(block_height - self.block_number - 1) as usize].contains_key(block_hash)
         {
             self.fork_tree[(block_height - self.block_number - 1) as usize]
-                .insert(block_hash, block);
+                .insert(block_hash.to_vec(), block);
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    pub fn is_candidate(&self, block_hash: &[u8]) -> bool {
+        if let Some((_, hash, _)) = &self.candidate_block {
+            hash == block_hash
+        } else {
+            false
         }
     }
 
@@ -267,8 +275,9 @@ impl Chain {
                 height,
                 hex::encode(&block_hash)
             );
-            self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
-            self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
+            self.candidate_block = Some((height, block_hash, full_block));
+            // self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
+            // self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
 
             Ok(())
         }
@@ -292,6 +301,7 @@ impl Chain {
                 let pre_h = h - self.block_delay_number as u64 - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
+                // todo key not found panic
                 let state_root = load_data(self.storage_port, 6, key)
                     .await
                     .map_err(Error::InternalError)
@@ -455,7 +465,7 @@ impl Chain {
         height: u64,
         proposal: &[u8],
         proof: &[u8],
-    ) -> Result<ConsensusConfiguration, Error> {
+    ) -> Result<(ConsensusConfiguration, ChainStatus), Error> {
         let bft_proposal = match ProposalEnum::decode(proposal)
             .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?
             .proposal
@@ -550,20 +560,20 @@ impl Chain {
                         self.block_number += finalized_blocks_number as u64;
                         self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
 
-                        let sys_config = self.get_system_config().await;
-                        let csf = ChainStatusWithFlag {
-                            status: ChainStatus {
-                                version: sys_config.version,
-                                chain_id: sys_config.chain_id,
-                                height: self.block_number,
-                                hash: Some(Hash {
-                                    hash: self.block_hash.clone(),
-                                }),
-                                address: None,
-                            },
-                            broadcast_or_not: true,
-                        };
-                        self.task_sender.send(EventTask::UpdateStatus(csf)).unwrap();
+                        // let sys_config = self.get_system_config().await;
+                        // let csf = ChainStatusWithFlag {
+                        //     status: ChainStatus {
+                        //         version: sys_config.version,
+                        //         chain_id: sys_config.chain_id,
+                        //         height: self.block_number,
+                        //         hash: Some(Hash {
+                        //             hash: self.block_hash.clone(),
+                        //         }),
+                        //         address: None,
+                        //     },
+                        //     broadcast_or_not: true,
+                        // };
+                        // self.task_sender.send(EventTask::UpdateStatus(csf)).unwrap();
 
                         self.main_chain = new_main_chain;
                         // update main_chain_tx_hash
@@ -583,11 +593,22 @@ impl Chain {
 
                     let config = self.get_system_config().await;
 
-                    return Ok(ConsensusConfiguration {
-                        height,
-                        block_interval: config.block_interval,
-                        validators: config.validators,
-                    });
+                    return Ok((
+                        ConsensusConfiguration {
+                            height,
+                            block_interval: config.block_interval,
+                            validators: config.validators,
+                        },
+                        ChainStatus {
+                            version: config.version,
+                            chain_id: config.chain_id,
+                            height,
+                            hash: Some(Hash {
+                                hash: self.block_hash.clone(),
+                            }),
+                            address: None,
+                        },
+                    ));
                 }
                 break;
             }
@@ -602,7 +623,7 @@ impl Chain {
     }
 
     pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
-        if glob_status.height > self.block_number {
+        if self.fork_tree.is_empty() && glob_status.height > self.block_number {
             ChainStep::SyncStep
         } else {
             ChainStep::OnlineStep

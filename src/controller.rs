@@ -62,7 +62,7 @@ impl From<&str> for ControllerMsgType {
             "sync_block_respond" => Self::SyncBlockRespondType,
             "sync_tx" => Self::SyncTxType,
             "sync_tx_respond" => Self::SyncTxRespondType,
-            "send_txs" => Self::SendTxType,
+            "send_tx" => Self::SendTxType,
             "send_proposal" => Self::SendProposalType,
             _ => Self::Noop,
         }
@@ -84,7 +84,7 @@ impl From<ControllerMsgType> for &str {
             ControllerMsgType::SyncBlockRespondType => "sync_block_respond",
             ControllerMsgType::SyncTxType => "sync_tx",
             ControllerMsgType::SyncTxRespondType => "sync_tx_respond",
-            ControllerMsgType::SendTxType => "send_txs",
+            ControllerMsgType::SendTxType => "send_tx",
             ControllerMsgType::SendProposalType => "send_proposal",
             ControllerMsgType::Noop => "noop",
         }
@@ -229,8 +229,7 @@ impl Controller {
             pool.enqueue(tx_hash.clone(), raw_tx.clone())
         } {
             if broadcast {
-                let raw_txs = RawTransactions { body: vec![raw_tx] };
-                self.multicast_send_txs(self.network_port, raw_txs).await;
+                self.multicast_send_tx(self.network_port, raw_tx).await;
             }
             Ok(tx_hash)
         } else {
@@ -356,9 +355,10 @@ impl Controller {
                         log::info!("add remote proposal through check_proposal");
                         let mut chain = self.chain.write().await;
                         chain
-                            .add_remote_proposal(block_hash, block.clone())
+                            .add_remote_proposal(&block_hash, block.clone())
                             .await
                             .unwrap()
+                            && !chain.is_candidate(&block_hash)
                     } {
                         let _ = self
                             .batch_transactions(block.body.ok_or(Error::NoneBlockBody)?)
@@ -382,13 +382,11 @@ impl Controller {
         proposal: &[u8],
         proof: &[u8],
     ) -> Result<ConsensusConfiguration, Error> {
-        let mut chain = self.chain.write().await;
-
-        let (_, status) = self.get_global_status().await;
+        let status = self.get_status().await;
 
         if status.height >= height {
-            let rd = self.chain.read().await;
-            let config = rd.get_system_config().await;
+            let rd = self.auth.read().await;
+            let config = rd.get_system_config();
             return Ok(ConsensusConfiguration {
                 height,
                 block_interval: config.block_interval,
@@ -396,7 +394,21 @@ impl Controller {
             });
         }
 
-        chain.commit_block(height, proposal, proof).await
+        let mut chain = self.chain.write().await;
+        match chain.commit_block(height, proposal, proof).await {
+            Ok((config, status)) => {
+                self.set_status(status).await;
+                let gobal_status = self.get_global_status().await;
+                match chain.next_step(&gobal_status.1).await {
+                    ChainStep::SyncStep => {
+                        self.try_sync_block().await;
+                    }
+                    ChainStep::OnlineStep => {}
+                }
+                Ok(config)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
@@ -410,9 +422,7 @@ impl Controller {
                     ))
                 })?;
 
-                if !h160_address_check(chain_status.address.as_ref()) {
-                    return Err(Error::NoProvideAddress);
-                }
+                h160_address_check(chain_status.address.as_ref())?;
 
                 let controller_clone = self.clone();
                 tokio::spawn(async move {
@@ -516,16 +526,12 @@ impl Controller {
                 match chain_status_respond.respond {
                     Some(respond) => match respond {
                         Respond::NotSameChain(node) => {
-                            if !h160_address_check(Some(&node)) {
-                                return Err(Error::NoProvideAddress);
-                            }
+                            h160_address_check(Some(&node))?;
                             self.node_manager.set_ban_node(&node).await?;
                             self.delete_global_status(node).await;
                         }
                         Respond::Ok(chain_status) => {
-                            if !h160_address_check(chain_status.address.as_ref()) {
-                                return Err(Error::NoProvideAddress);
-                            }
+                            h160_address_check(chain_status.address.as_ref())?;
                             let _ = self.try_update_global_status(
                                 &chain_status.address.clone().unwrap(),
                                 chain_status,
@@ -612,14 +618,34 @@ impl Controller {
                         }
                         Some(Respond::Ok(sync_blocks)) => {
                             // todo handle error
-                            match controller_clone.handle_sync_blocks(sync_blocks).await {
+                            match controller_clone
+                                .handle_sync_blocks(sync_blocks.clone())
+                                .await
+                            {
                                 Ok(_) => {}
+                                Err(Error::ProvideAddressError) | Err(Error::NoProvideAddress) => {
+                                    warn!(
+                                        "sync_block_respond error, origin: {}, message: given address error",
+                                        msg.origin,
+                                    );
+                                }
                                 Err(e) => {
                                     warn!(
                                         "sync_block_respond error, origin: {}, message: {}",
                                         msg.origin,
                                         e.to_string()
                                     );
+
+                                    controller_clone
+                                        .node_manager
+                                        .set_misbehavior_node(
+                                            &sync_blocks.address.as_ref().unwrap(),
+                                        )
+                                        .await
+                                        .unwrap();
+                                    controller_clone
+                                        .delete_global_status(sync_blocks.address.unwrap())
+                                        .await;
                                 }
                             }
                         }
@@ -712,11 +738,11 @@ impl Controller {
                     {
                         let mut wr = controller_clone.chain.write().await;
                         if !wr
-                            .add_remote_proposal(block_hash.clone(), full_block)
+                            .add_remote_proposal(&block_hash, full_block)
                             .await
                             .unwrap()
                         {
-                            warn!("add remote proposal: 0x{} failed", hex::encode(block_hash))
+                            warn!("add remote proposal: 0x{} failed", hex::encode(&block_hash))
                         }
                     }
                 });
@@ -738,7 +764,7 @@ impl Controller {
 
     // impl_multicast!(multicast_send_proposal, Block, "send_proposal");
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
-    impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
+    impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
     impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
 
     impl_unicast!(unicast_sync_block, SyncBlockRequest, "sync_block");
@@ -858,9 +884,7 @@ impl Controller {
     }
 
     async fn handle_sync_blocks(&self, sync_blocks: SyncBlocks) -> Result<usize, Error> {
-        if !h160_address_check(sync_blocks.address.as_ref()) {
-            return Err(Error::NoProvideAddress);
-        }
+        h160_address_check(sync_blocks.address.as_ref())?;
 
         for sync_block in sync_blocks.sync_blocks.clone() {
             let block_height = sync_block

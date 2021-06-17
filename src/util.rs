@@ -577,9 +577,7 @@ macro_rules! impl_unicast {
         ) -> tokio::task::JoinHandle<()> {
             let node = self.node_manager.get_address(origin).await;
 
-            if !h160_address_check(node.as_ref()) {
-                panic!("No correct address provide in unicast");
-            }
+            h160_address_check(node.as_ref()).unwrap();
             let node = hex::encode(node.unwrap().address);
 
             let network_addr = format!("http://127.0.0.1:{}", port);
@@ -668,9 +666,15 @@ pub fn clean_0x(s: &str) -> &str {
     }
 }
 
-pub fn h160_address_check(address: Option<&Address>) -> bool {
+pub fn h160_address_check(address: Option<&Address>) -> Result<(), Error> {
     match address {
-        Some(addr) => addr.address.len() == 20,
-        None => false,
+        Some(addr) => {
+            if addr.address.len() == 20 {
+                Ok(())
+            } else {
+                Err(Error::ProvideAddressError)
+            }
+        }
+        None => Err(Error::NoProvideAddress),
     }
 }

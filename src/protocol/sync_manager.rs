@@ -96,15 +96,17 @@ pub struct SyncConfig {
 impl SyncManager {
     pub async fn insert_blocks(&self, remote_address: Address, blocks: Vec<Block>) -> usize {
         let mut heights = vec![];
-        let mut wr = self.syncing_block_list.write().await;
-        for block in blocks {
-            let height = block.header.clone().unwrap().height;
-            if wr.get(&height).is_some() {
-                continue;
-            }
+        {
+            let mut wr = self.syncing_block_list.write().await;
+            for block in blocks {
+                let height = block.header.clone().unwrap().height;
+                if wr.get(&height).is_some() {
+                    continue;
+                }
 
-            heights.push(height);
-            wr.insert(height, (remote_address.clone(), block));
+                heights.push(height);
+                wr.insert(height, (remote_address.clone(), block));
+            }
         }
         debug!("sync: insert_blocks: heights = {:?}", heights);
         heights.len()
