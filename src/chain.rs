@@ -184,34 +184,30 @@ impl Chain {
         Err(Error::NoCandidate)
     }
 
-    pub async fn add_remote_proposal(&mut self, full_block: Block) -> bool {
-        let header = full_block.header.clone().unwrap();
+    pub async fn add_remote_proposal(
+        &mut self,
+        block_hash: Vec<u8>,
+        block: Block,
+    ) -> Result<bool, Error> {
+        let header = block.header.clone().unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
-            warn!("block_height {} too low", block_height);
-            return false;
+            return Err(Error::ProposalTooLow(block_height, self.block_number));
         }
 
         if block_height - self.block_number > (self.block_delay_number * 2 + 2) as u64 {
-            warn!("block_height {} too high", block_height);
-            return false;
+            return Err(Error::ProposalTooHigh(block_height, self.block_number));
         }
 
-        let mut block_header_bytes = Vec::new();
-        header
-            .encode(&mut block_header_bytes)
-            .expect("encode block header failed");
-
-        let ret = hash_data(self.kms_port, block_header_bytes).await;
-        if let Ok(block_hash) = ret {
-            info!("add remote proposal 0x{}", hex::encode(&block_hash));
-            self.fork_tree[block_height as usize - self.block_number as usize - 1]
-                .entry(block_hash)
-                .or_insert(full_block);
+        if !self.fork_tree[(block_height - self.block_number - 1) as usize]
+            .contains_key(&block_hash)
+        {
+            self.fork_tree[(block_height - self.block_number - 1) as usize]
+                .insert(block_hash, block);
+            Ok(true)
         } else {
-            warn!("hash_data failed {:?}", ret);
+            Ok(false)
         }
-        true
     }
 
     pub async fn add_proposal(&mut self) -> Result<(), Error> {
@@ -282,16 +278,13 @@ impl Chain {
         self.candidate_block = None;
     }
 
-    // todo upper to controller, or controller should not use pool
     pub async fn check_proposal(&self, h: u64, proposal: ProposalEnum) -> Result<bool, Error> {
-        // old proposal
         if h <= self.block_number {
-            return Ok(true);
+            return Err(Error::ProposalTooLow(h, self.block_number));
         }
 
         if h > self.block_number + self.fork_tree.len() as u64 {
-            warn!("proposal {} too high", h);
-            return Ok(false);
+            return Err(Error::ProposalTooHigh(h, self.block_number));
         }
 
         match proposal.proposal {
@@ -299,27 +292,14 @@ impl Chain {
                 let pre_h = h - self.block_delay_number as u64 - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
-                let state_root = {
-                    let ret = load_data(self.storage_port, 6, key).await;
-                    if ret.is_err() {
-                        warn!("check_proposal get state_root failed");
-                        return Ok(false);
-                    }
-                    ret.unwrap()
-                };
+                let state_root = load_data(self.storage_port, 6, key)
+                    .await
+                    .map_err(Error::InternalError)
+                    .unwrap();
 
-                let proof = {
-                    let ret = get_compact_block(pre_h).await;
-                    if ret.is_none() {
-                        warn!("check_proposal get proof failed");
-                        return Ok(false);
-                    }
-                    ret.unwrap().1
-                };
+                let proof = get_compact_block(pre_h).await.unwrap().1;
 
-                return if bft_proposal.pre_state_root == state_root
-                    && bft_proposal.pre_proof == proof
-                {
+                if bft_proposal.pre_state_root == state_root && bft_proposal.pre_proof == proof {
                     Ok(true)
                 } else {
                     warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
@@ -328,8 +308,8 @@ impl Chain {
                           hex::encode(&bft_proposal.pre_proof),
                           hex::encode(&proof),
                     );
-                    Ok(false)
-                };
+                    Err(Error::ProposalCheckError)
+                }
             }
             None => Err(Error::NoneProposal),
         }
@@ -622,7 +602,7 @@ impl Chain {
     }
 
     pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
-        if self.fork_tree.is_empty() && glob_status.height > self.block_number {
+        if glob_status.height > self.block_number {
             ChainStep::SyncStep
         } else {
             ChainStep::OnlineStep

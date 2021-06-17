@@ -54,6 +54,15 @@ pub enum Error {
     /// find dup transaction
     DupTransaction(Vec<u8>),
 
+    /// proposal too high
+    ProposalTooHigh(u64, u64),
+
+    /// proposal too low
+    ProposalTooLow(u64, u64),
+
+    /// proposal check error
+    ProposalCheckError,
+
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
 
@@ -77,6 +86,17 @@ impl ::std::fmt::Display for Error {
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
             Error::DecodeError(s) => write!(f, "Proto struct decode error: {}", s),
             Error::NoCandidate => write!(f, "No candidate block"),
+            Error::ProposalTooHigh(proposal, current) => write!(
+                f,
+                "Proposal(h: {}) is higher than current(h: {})",
+                proposal, current
+            ),
+            Error::ProposalTooLow(proposal, current) => write!(
+                f,
+                "Proposal(h: {}) is lower than current(h: {})",
+                proposal, current
+            ),
+            Error::ProposalCheckError => write!(f, "Proposal check error"),
             Error::NoForkTree => write!(f, "Fork tree no block"),
             Error::DupTransaction(h) => {
                 write!(f, "Found dup transaction 0x{}", hex::encode(h))

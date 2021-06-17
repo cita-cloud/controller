@@ -347,27 +347,29 @@ impl Controller {
         match ret {
             Ok(true) => match proposal_enum.proposal {
                 Some(Proposal::BftProposal(bft_proposal)) => {
-                    let block = bft_proposal
-                        .proposal
-                        .ok_or(Error::NoneProposal)?;
+                    let block = bft_proposal.proposal.ok_or(Error::NoneProposal)?;
+
+                    let block_hash = get_block_hash(self.kms_port, block.header.as_ref()).await?;
 
                     // todo re-enter check
-                    {
+                    if {
                         log::info!("add remote proposal through check_proposal");
                         let mut chain = self.chain.write().await;
-                        chain.add_remote_proposal(block.clone()).await;
+                        chain
+                            .add_remote_proposal(block_hash, block.clone())
+                            .await
+                            .unwrap()
+                    } {
+                        let _ = self
+                            .batch_transactions(block.body.ok_or(Error::NoneBlockBody)?)
+                            .await;
                     }
-
-                    self.batch_transactions(
-                            block
-                            .body
-                            .ok_or(Error::NoneBlockBody)?,
-                    )
-                    .await?;
-
                 }
                 None => return Err(Error::NoneProposal),
             },
+            Err(Error::ProposalTooHigh(_, _)) => {
+                self.try_sync_block().await;
+            }
             _ => {}
         }
 
@@ -697,29 +699,27 @@ impl Controller {
                     ))
                 })?;
 
-                if let Some(header) = full_block.header.clone() {
-                    let mut block_header_bytes = Vec::new();
-                    header
-                        .encode(&mut block_header_bytes)
-                        .map_err(|_| Error::EncodeError(format!("encode block header failed")))?;
+                let controller_clone = self.clone();
+                tokio::spawn(async move {
+                    let block_hash =
+                        get_block_hash(controller_clone.kms_port, full_block.header.as_ref())
+                            .await
+                            .unwrap();
 
-                    let block_hash = hash_data(self.kms_port, block_header_bytes)
-                        .await
-                        .map_err(Error::InternalError)?;
-
-                    let controller_clone = self.clone();
-                    tokio::spawn(async move {
-                        if let Some(body) = full_block.body.clone() {
-                            let _ = controller_clone.batch_transactions(body).await;
-                        }
+                    if let Some(body) = full_block.body.clone() {
+                        let _ = controller_clone.batch_transactions(body).await;
+                    }
+                    {
+                        let mut wr = controller_clone.chain.write().await;
+                        if !wr
+                            .add_remote_proposal(block_hash.clone(), full_block)
+                            .await
+                            .unwrap()
                         {
-                            let mut wr = controller_clone.chain.write().await;
-                            if !wr.add_remote_proposal(full_block).await {
-                                warn!("add remote proposal: 0x{} failed", hex::encode(block_hash))
-                            }
+                            warn!("add remote proposal: 0x{} failed", hex::encode(block_hash))
                         }
-                    });
-                }
+                    }
+                });
             }
 
             ControllerMsgType::Noop => match self.node_manager.get_address(msg.origin).await {
@@ -736,7 +736,7 @@ impl Controller {
 
     impl_broadcast!(broadcast_chain_status, ChainStatus, "chain_status");
 
-    impl_multicast!(multicast_send_proposal, Block, "send_proposal");
+    // impl_multicast!(multicast_send_proposal, Block, "send_proposal");
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
     impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");

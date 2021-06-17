@@ -409,14 +409,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
 
         match self.controller.chain_check_proposal(height, &data).await {
             Err(e) => {
-                warn!("rpc: check_proposal failed: {:?}", e);
+                // todo delete
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                warn!("rpc: check_proposal failed: {:?}", e.to_string());
                 Err(Status::invalid_argument(e.to_string()))
             }
-            Ok(is_ok) => {
-                if !is_ok {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                let reply = Response::new(SimpleResponse { is_success: is_ok });
+            Ok(_) => {
+                let reply = Response::new(SimpleResponse { is_success: true });
                 Ok(reply)
             }
         }
