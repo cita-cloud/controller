@@ -275,9 +275,9 @@ impl Chain {
                 height,
                 hex::encode(&block_hash)
             );
-            self.candidate_block = Some((height, block_hash, full_block));
-            // self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
-            // self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
+
+            self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
+            self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
 
             Ok(())
         }
@@ -301,7 +301,6 @@ impl Chain {
                 let pre_h = h - self.block_delay_number as u64 - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
-                // todo key not found panic
                 let state_root = load_data(self.storage_port, 6, key)
                     .await
                     .map_err(Error::InternalError)
