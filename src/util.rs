@@ -47,17 +47,12 @@ pub fn unix_now() -> u64 {
 
 pub async fn reconfigure(
     consensus_port: u16,
-    height: u64,
-    sys_config: SystemConfig,
+    consensus_config: ConsensusConfiguration,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
     let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
 
-    let request = Request::new(ConsensusConfiguration {
-        height,
-        block_interval: sys_config.block_interval,
-        validators: sys_config.validators,
-    });
+    let request = Request::new(consensus_config);
 
     let response = client.reconfigure(request).await?;
     Ok(response.into_inner().is_success)

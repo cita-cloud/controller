@@ -409,8 +409,6 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
 
         match self.controller.chain_check_proposal(height, &data).await {
             Err(e) => {
-                // todo delete
-                tokio::time::sleep(Duration::from_millis(100)).await;
                 warn!("rpc: check_proposal failed: {:?}", e.to_string());
                 Err(Status::invalid_argument(e.to_string()))
             }
@@ -481,6 +479,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
     }
 }
 
+use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::event::EventTask;
@@ -630,8 +629,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                 info!("reconfigure consensus!");
                 let ret = reconfigure(
                     consensus_port,
-                    current_block_number,
-                    sys_config_clone.clone(),
+                    ConsensusConfiguration {
+                        height: current_block_number,
+                        block_interval: sys_config_clone.clone().block_interval,
+                        validators: sys_config_clone.clone().validators,
+                    },
                 )
                 .await;
                 if ret.is_ok() && ret.unwrap() {
@@ -678,7 +680,76 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
                 }
                 EventTask::SyncBlock => {
-                    controller_clone.try_sync_block().await;
+                    let mut chain = controller_clone.chain.write().await;
+                    let (global_address, global_status) =
+                        controller_clone.get_global_status().await;
+                    let own_status = controller_clone.get_status().await;
+                    match chain.next_step(&global_status).await {
+                        ChainStep::SyncStep => {
+                            if let Some((addr, block)) = controller_clone
+                                .sync_manager
+                                .pop_block(own_status.height + 1)
+                                .await
+                            {
+                                match chain.process_block(block).await {
+                                    Ok((consensus_config, status)) => {
+                                        controller_clone.set_status(status).await;
+                                        reconfigure(consensus_port, consensus_config)
+                                            .await
+                                            .unwrap();
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "sync block error: {}, node: 0x{} been misbehavior_node",
+                                            e.to_string(),
+                                            hex::encode(&addr.address)
+                                        );
+                                        controller_clone
+                                            .node_manager
+                                            .set_misbehavior_node(&addr)
+                                            .await;
+                                        if &global_address == &addr {
+                                            let (ex_addr, ex_status) =
+                                                controller_clone.node_manager.pick_node().await;
+                                            controller_clone
+                                                .update_global_status(ex_addr, ex_status.clone())
+                                                .await;
+                                        }
+                                        if let Some(range_heights) = controller_clone
+                                            .sync_manager
+                                            .clear_node_block(&addr)
+                                            .await
+                                        {
+                                            let (global_address, global_status) =
+                                                controller_clone.get_global_status().await;
+                                            let global_origin = controller_clone
+                                                .node_manager
+                                                .get_origin(&global_address)
+                                                .await
+                                                .unwrap();
+                                            for range_height in range_heights {
+                                                if let Some(reqs) = controller_clone
+                                                    .sync_manager
+                                                    .re_sync_block_req(range_height, &global_status)
+                                                {
+                                                    for req in reqs {
+                                                        controller_clone
+                                                            .unicast_sync_block(
+                                                                controller_clone.network_port,
+                                                                global_origin,
+                                                                req,
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 EventTask::SyncTx(tx_hash) => {
                     controller_clone

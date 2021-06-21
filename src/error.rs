@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// The error types
+/// The error types todo reorganize to different module
 #[derive(Debug)]
 pub enum Error {
     /// node in misbehave list
@@ -66,6 +66,9 @@ pub enum Error {
     /// proposal check error
     ProposalCheckError,
 
+    /// block hash check error
+    BlockCheckError,
+
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
 
@@ -105,6 +108,7 @@ impl ::std::fmt::Display for Error {
             Error::DupTransaction(h) => {
                 write!(f, "Found dup transaction 0x{}", hex::encode(h))
             }
+            Error::BlockCheckError => write!(f, "block hash check error"),
             Error::InternalError(e) => write!(f, "Internal Error: {}", e),
             Error::ExpectError(s) => write!(f, "Expect error: {}", s),
         }

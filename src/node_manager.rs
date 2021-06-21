@@ -14,6 +14,7 @@
 
 use crate::error::Error;
 use crate::error::Error::BannedNode;
+use crate::util::h160_address_check;
 use cita_cloud_proto::common::{Address, Hash};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -218,6 +219,28 @@ impl NodeManager {
         keys
     }
 
+    pub async fn pick_node(&self) -> (Address, ChainStatus) {
+        let mut out_addr = Address { address: vec![] };
+        let mut out_status = ChainStatus {
+            version: 0,
+            chain_id: vec![],
+            height: 0,
+            hash: None,
+            address: None,
+        };
+        let rd = self.nodes.read().await;
+        for (na, status) in rd.iter() {
+            if status.height > out_status.height {
+                out_status = status.clone();
+                out_addr = Address {
+                    address: na.0.to_vec(),
+                };
+            }
+        }
+
+        (out_addr, out_status)
+    }
+
     pub async fn in_misbehavior_node(&self, node: &Address) -> bool {
         let na = node.into();
         {
@@ -250,7 +273,6 @@ impl NodeManager {
         }
     }
 
-    #[allow(dead_code)]
     pub async fn set_misbehavior_node(
         &self,
         node: &Address,

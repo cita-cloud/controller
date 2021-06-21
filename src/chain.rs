@@ -61,8 +61,6 @@ pub struct Chain {
     genesis: GenesisBlock,
     key_id: u64,
     node_address: Vec<u8>,
-
-    task_sender: crossbeam::channel::Sender<EventTask>,
 }
 
 impl Chain {
@@ -80,7 +78,6 @@ impl Chain {
         genesis: GenesisBlock,
         key_id: u64,
         node_address: Vec<u8>,
-        task_sender: crossbeam::channel::Sender<EventTask>,
     ) -> Self {
         let fork_tree_size = (block_delay_number * 2 + 2) as usize;
         let mut fork_tree = Vec::with_capacity(fork_tree_size);
@@ -105,8 +102,6 @@ impl Chain {
             genesis,
             key_id,
             node_address,
-
-            task_sender,
         }
     }
 
@@ -116,6 +111,11 @@ impl Chain {
             self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
                 .await;
         }
+    }
+
+    pub async fn init_auth(&self, init_block_number: u64) {
+        let mut auth = self.auth.write().await;
+        auth.init(init_block_number).await;
     }
 
     pub fn get_genesis_block(&self) -> Block {
@@ -292,7 +292,7 @@ impl Chain {
             return Err(Error::ProposalTooLow(h, self.block_number));
         }
 
-        if h > self.block_number + self.fork_tree.len() as u64 {
+        if h > self.block_number + self.block_delay_number as u64 + 1 {
             return Err(Error::ProposalTooHigh(h, self.block_number));
         }
 
@@ -400,9 +400,16 @@ impl Chain {
                                     let auth = self.auth.read().await;
                                     auth.get_system_config()
                                 };
-                                reconfigure(self.consensus_port, block_height, sys_config)
-                                    .await
-                                    .expect("reconfigure failed");
+                                reconfigure(
+                                    self.consensus_port,
+                                    ConsensusConfiguration {
+                                        height: block_height,
+                                        block_interval: sys_config.block_interval,
+                                        validators: sys_config.validators,
+                                    },
+                                )
+                                .await
+                                .expect("reconfigure failed");
                             }
                         }
                         utxo_tx.transaction_hash
@@ -465,6 +472,14 @@ impl Chain {
         proposal: &[u8],
         proof: &[u8],
     ) -> Result<(ConsensusConfiguration, ChainStatus), Error> {
+        if height <= self.block_number {
+            return Err(Error::ProposalTooLow(height, self.block_number));
+        }
+
+        if height > self.block_number + self.block_delay_number as u64 + 1 {
+            return Err(Error::ProposalTooHigh(height, self.block_number));
+        }
+
         let bft_proposal = match ProposalEnum::decode(proposal)
             .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?
             .proposal
@@ -616,6 +631,53 @@ impl Chain {
         Err(Error::NoForkTree)
     }
 
+    pub async fn process_block(
+        &mut self,
+        block: Block,
+    ) -> Result<(ConsensusConfiguration, ChainStatus), Error> {
+        let header = block.header.clone().ok_or(Error::NoneBlockHeader)?;
+        let height = header.height;
+
+        if height <= self.block_number {
+            return Err(Error::ProposalTooLow(height, self.block_number));
+        }
+
+        if height > self.block_number + self.block_delay_number as u64 + 1 {
+            return Err(Error::ProposalTooHigh(height, self.block_number));
+        }
+
+        if &header.prevhash != &self.block_hash {
+            warn!(
+                "prev_hash of block({}) is not equal with self block hash",
+                height
+            );
+            return Err(Error::BlockCheckError);
+        }
+
+        self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?);
+
+        self.finalize_block(block, get_block_hash(self.kms_port, Some(&header)).await?);
+
+        let config = self.get_system_config().await;
+
+        Ok((
+            ConsensusConfiguration {
+                height,
+                block_interval: config.block_interval,
+                validators: config.validators,
+            },
+            ChainStatus {
+                version: config.version,
+                chain_id: config.chain_id,
+                height,
+                hash: Some(Hash {
+                    hash: self.block_hash.clone(),
+                }),
+                address: None,
+            },
+        ))
+    }
+
     pub async fn get_system_config(&self) -> SystemConfig {
         let rd = self.auth.read().await;
         rd.get_system_config()
@@ -631,6 +693,24 @@ impl Chain {
 
     pub fn check_dup_tx(&self, tx_hash: &Vec<u8>) -> bool {
         self.main_chain_tx_hash.contains(tx_hash)
+    }
+
+    // todo use &RawTransactions
+    pub async fn check_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
+        let auth = self.auth.read().await;
+
+        // todo not do clone
+        for raw_tx in raw_txs.body.clone() {
+            let tx_hash = auth
+                .check_raw_tx(raw_tx)
+                .await
+                .map_err(|e| Error::ExpectError(e))?;
+
+            if self.check_dup_tx(&tx_hash.clone()) {
+                return Err(Error::DupTransaction(tx_hash));
+            }
+        }
+        Ok(())
     }
 
     pub async fn chain_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {

@@ -112,15 +112,16 @@ impl SyncManager {
         heights.len()
     }
 
-    #[allow(dead_code)]
     pub async fn pop_block(&self, height: u64) -> Option<(Address, Block)> {
-        {
-            let mut wr = self.syncing_block_list.write().await;
-            wr.remove(&height)
-        }
+        let mut wr = self.syncing_block_list.write().await;
+        wr.remove(&height)
     }
 
-    #[allow(dead_code)]
+    pub async fn contains_block(&self, height: u64) -> bool {
+        let rd = self.syncing_block_list.read().await;
+        rd.contains_key(&height)
+    }
+
     pub async fn remove_blocks(&self, heights: Vec<u64>) {
         {
             let mut wr = self.syncing_block_list.write().await;
@@ -130,7 +131,36 @@ impl SyncManager {
         }
     }
 
-    #[allow(dead_code)]
+    pub async fn clear_node_block(&self, node: &Address) -> Option<Vec<(u64, u64)>> {
+        let mut range_vec = Vec::new();
+        let mut start = u64::MAX;
+        let mut end = u64::MAX;
+        let mut remove_heights = Vec::new();
+
+        {
+            let rd = self.syncing_block_list.read().await;
+            for (&height, (addr, _)) in rd.iter() {
+                if node == addr {
+                    remove_heights.push(height);
+                    if start == u64::MAX {
+                        start = height;
+                        end = height;
+                    } else {
+                        end = height;
+                    }
+                } else {
+                    if start != u64::MAX {
+                        range_vec.push((start, end));
+                    }
+                }
+            }
+        }
+
+        self.remove_blocks(remove_heights).await;
+
+        Some(range_vec)
+    }
+
     pub async fn clear(&self) {
         let mut wr = self.syncing_block_list.write().await;
         wr.clear();
@@ -140,18 +170,75 @@ impl SyncManager {
         &self,
         current_height: u64,
         global_status: &ChainStatus,
-    ) -> SyncBlockRequest {
+    ) -> Option<SyncBlockRequest> {
+        let current_height = {
+            let rd = self.syncing_block_list.read().await;
+            rd.keys().last().map_or_else(
+                || current_height,
+                |h| {
+                    if h > &current_height {
+                        h + 1
+                    } else {
+                        current_height
+                    }
+                },
+            )
+        };
+
         let end_height = {
             if current_height + self.sync_config.sync_interval <= global_status.height {
                 current_height + self.sync_config.sync_interval
+            } else if current_height >= global_status.height {
+                return None;
             } else {
                 global_status.height
             }
         };
 
-        SyncBlockRequest {
+        Some(SyncBlockRequest {
             start_height: current_height + 1,
             end_height,
+        })
+    }
+
+    pub fn re_sync_block_req(
+        &self,
+        height_range: (u64, u64),
+        global_status: &ChainStatus,
+    ) -> Option<Vec<SyncBlockRequest>> {
+        let mut req_vec = Vec::new();
+
+        let mut height_range = {
+            if global_status.height >= height_range.1 && global_status.height >= height_range.0 {
+                height_range
+            } else if global_status.height < height_range.1 {
+                (height_range.0, global_status.height)
+            } else {
+                return None;
+            }
+        };
+
+        loop {
+            let start_height = height_range.0;
+            let end_height = {
+                if height_range.0 + self.sync_config.sync_interval <= height_range.1 {
+                    height_range.0 + self.sync_config.sync_interval
+                } else {
+                    height_range.1
+                }
+            };
+            req_vec.push(SyncBlockRequest {
+                start_height,
+                end_height,
+            });
+
+            height_range.0 = end_height + 1;
+
+            if height_range.0 > height_range.1 {
+                break;
+            }
         }
+
+        Some(req_vec)
     }
 }

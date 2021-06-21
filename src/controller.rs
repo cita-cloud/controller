@@ -93,28 +93,30 @@ impl From<ControllerMsgType> for &str {
 
 #[derive(Clone)]
 pub struct Controller {
-    pub network_port: u16,
+    pub(crate) network_port: u16,
     storage_port: u16,
 
     auth: Arc<RwLock<Authentication>>,
 
     pool: Arc<RwLock<Pool>>,
 
-    chain: Arc<RwLock<Chain>>,
+    pub(crate) chain: Arc<RwLock<Chain>>,
 
     consensus_port: u16,
 
     kms_port: u16,
 
-    pub local_address: Address,
+    pub(crate) local_address: Address,
 
     current_status: Arc<RwLock<ChainStatus>>,
 
     global_status: Arc<RwLock<(Address, ChainStatus)>>,
 
-    node_manager: NodeManager,
+    pub(crate) node_manager: NodeManager,
 
-    sync_manager: SyncManager,
+    pub(crate) sync_manager: SyncManager,
+
+    task_sender: crossbeam::channel::Sender<EventTask>,
 }
 
 impl Controller {
@@ -134,6 +136,11 @@ impl Controller {
         node_address: Vec<u8>,
         task_sender: crossbeam::channel::Sender<EventTask>,
     ) -> Self {
+        h160_address_check(Some(&Address {
+            address: node_address.clone(),
+        }))
+        .unwrap();
+
         let auth = Arc::new(RwLock::new(Authentication::new(
             kms_port,
             storage_port,
@@ -153,7 +160,6 @@ impl Controller {
             genesis,
             key_id,
             node_address.clone(),
-            task_sender,
         )));
         Controller {
             network_port,
@@ -175,6 +181,7 @@ impl Controller {
             ))),
             node_manager: NodeManager::default(),
             sync_manager: SyncManager::default(),
+            task_sender,
         }
     }
 
@@ -182,10 +189,7 @@ impl Controller {
         {
             let chain = self.chain.write().await;
             chain.init(init_block_number).await;
-        }
-        {
-            let mut auth = self.auth.write().await;
-            auth.init(init_block_number).await;
+            chain.init_auth(init_block_number).await;
         }
         let status = self
             .init_status(init_block_number, sys_config)
@@ -241,21 +245,13 @@ impl Controller {
     }
 
     pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
-        let chain = self.chain.read().await;
-        let auth = self.auth.read().await;
-        let mut pool = self.pool.write().await;
-
-        // todo not do clone
-        for raw_tx in raw_txs.body.clone() {
-            let tx_hash = auth
-                .check_raw_tx(raw_tx)
-                .await
-                .map_err(|e| Error::ExpectError(e))?;
-
-            if chain.check_dup_tx(&tx_hash.clone()) || !pool.is_contain(&tx_hash) {
-                return Err(Error::DupTransaction(tx_hash));
-            }
+        {
+            let rd = self.chain.read().await;
+            // todo not clone
+            rd.check_transactions(raw_txs.clone()).await?;
         }
+
+        let mut pool = self.pool.write().await;
         for raw_tx in raw_txs.body {
             pool.enqueue(get_tx_hash(&raw_tx)?, raw_tx);
         }
@@ -367,8 +363,16 @@ impl Controller {
                 }
                 None => return Err(Error::NoneProposal),
             },
-            Err(Error::ProposalTooHigh(_, _)) => {
+            Err(Error::ProposalTooHigh(p, c)) => {
+                warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
                 self.try_sync_block().await;
+                if self
+                    .sync_manager
+                    .contains_block(self.get_status().await.height + 1)
+                    .await
+                {
+                    self.task_sender.send(EventTask::SyncBlock);
+                }
             }
             _ => {}
         }
@@ -397,15 +401,29 @@ impl Controller {
         let mut chain = self.chain.write().await;
         match chain.commit_block(height, proposal, proof).await {
             Ok((config, status)) => {
-                self.set_status(status).await;
-                let gobal_status = self.get_global_status().await;
-                match chain.next_step(&gobal_status.1).await {
+                self.set_status(status.clone()).await;
+                self.multicast_chain_status(self.network_port, status).await;
+                let (_, global_status) = self.get_global_status().await;
+                match chain.next_step(&global_status).await {
                     ChainStep::SyncStep => {
                         self.try_sync_block().await;
                     }
                     ChainStep::OnlineStep => {}
                 }
                 Ok(config)
+            }
+            Err(Error::ProposalTooHigh(p, c)) => {
+                warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
+                self.try_sync_block().await;
+                if self
+                    .sync_manager
+                    .contains_block(self.get_status().await.height + 1)
+                    .await
+                {
+                    self.task_sender.send(EventTask::SyncBlock);
+                    return Err(Error::ProposalTooHigh(p, c));
+                }
+                return Err(Error::ProposalTooHigh(p, c));
             }
             Err(e) => Err(e),
         }
@@ -780,12 +798,12 @@ impl Controller {
         "chain_status_respond"
     );
 
-    async fn get_global_status(&self) -> (Address, ChainStatus) {
+    pub async fn get_global_status(&self) -> (Address, ChainStatus) {
         let rd = self.global_status.read().await;
         rd.clone()
     }
 
-    async fn update_global_status(&self, node: Address, status: ChainStatus) {
+    pub async fn update_global_status(&self, node: Address, status: ChainStatus) {
         let mut wr = self.global_status.write().await;
         *wr = (node, status);
     }
@@ -857,12 +875,12 @@ impl Controller {
         })
     }
 
-    async fn get_status(&self) -> ChainStatus {
+    pub async fn get_status(&self) -> ChainStatus {
         let rd = self.current_status.read().await;
         rd.clone()
     }
 
-    async fn set_status(&self, status: ChainStatus) {
+    pub async fn set_status(&self, status: ChainStatus) {
         let mut wr = self.current_status.write().await;
         *wr = status;
     }
@@ -926,6 +944,10 @@ impl Controller {
 
         let (global_address, global_status) = { self.global_status.read().await.clone() };
 
+        if global_address.address.is_empty() {
+            return;
+        }
+
         let origin = { self.node_manager.get_origin(&global_address).await.unwrap() };
 
         match {
@@ -933,12 +955,14 @@ impl Controller {
             chain.next_step(&global_status).await
         } {
             ChainStep::SyncStep => {
-                let sync_req = self
+                if let Some(sync_req) = self
                     .sync_manager
                     .get_sync_block_req(current_height, &global_status)
-                    .await;
-                self.unicast_sync_block(self.network_port, origin, sync_req)
-                    .await;
+                    .await
+                {
+                    self.unicast_sync_block(self.network_port, origin, sync_req)
+                        .await;
+                }
             }
             _ => {}
         }
