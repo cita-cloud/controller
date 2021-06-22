@@ -654,9 +654,11 @@ impl Chain {
             return Err(Error::BlockCheckError);
         }
 
-        self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?);
+        self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?)
+            .await?;
 
-        self.finalize_block(block, get_block_hash(self.kms_port, Some(&header)).await?);
+        self.finalize_block(block, get_block_hash(self.kms_port, Some(&header)).await?)
+            .await;
 
         let config = self.get_system_config().await;
 
@@ -685,8 +687,10 @@ impl Chain {
 
     pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
         if self.fork_tree.is_empty() && glob_status.height > self.block_number {
+            info!("sync");
             ChainStep::SyncStep
         } else {
+            info!("online");
             ChainStep::OnlineStep
         }
     }
@@ -722,5 +726,9 @@ impl Chain {
         } else {
             db_get_tx(tx_hash).await
         }
+    }
+
+    pub async fn clear_fork_tree(&mut self) {
+        self.fork_tree.clear();
     }
 }

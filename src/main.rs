@@ -704,7 +704,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             e.to_string(),
                                             hex::encode(&addr.address)
                                         );
-                                        controller_clone
+                                        let _ = controller_clone
                                             .node_manager
                                             .set_misbehavior_node(&addr)
                                             .await;

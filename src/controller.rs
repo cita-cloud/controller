@@ -35,7 +35,7 @@ use cita_cloud_proto::{
     },
     network::NetworkMsg,
 };
-use log::{debug, warn};
+use log::{debug, info, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -365,14 +365,13 @@ impl Controller {
             },
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.try_sync_block().await;
-                if self
-                    .sync_manager
-                    .contains_block(self.get_status().await.height + 1)
-                    .await
                 {
-                    self.task_sender.send(EventTask::SyncBlock);
+                    let mut wr =self.chain.write().await;
+                    wr.clear_fork_tree();
+
                 }
+                self.try_sync_block().await;
+                let _ = self.task_sender.send(EventTask::SyncBlock);
             }
             _ => {}
         }
@@ -420,7 +419,7 @@ impl Controller {
                     .contains_block(self.get_status().await.height + 1)
                     .await
                 {
-                    self.task_sender.send(EventTask::SyncBlock);
+                    let _ = self.task_sender.send(EventTask::SyncBlock);
                     return Err(Error::ProposalTooHigh(p, c));
                 }
                 return Err(Error::ProposalTooHigh(p, c));
@@ -430,7 +429,7 @@ impl Controller {
     }
 
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
-        debug!("get network msg: {}", msg.r#type);
+        info!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
@@ -444,14 +443,13 @@ impl Controller {
 
                 let controller_clone = self.clone();
                 tokio::spawn(async move {
-                    let own_status = {
-                        let rd = controller_clone.current_status.read().await;
-                        rd.clone()
-                    };
+                    info!("get network msg again: {}", msg.r#type);
+                    let own_status = controller_clone.get_status().await;
 
                     if own_status.chain_id != chain_status.chain_id
                         || own_status.version != chain_status.version
                     {
+                        info!("chain id or version not identical, send not same chain");
                         let chain_status_respond = ChainStatusRespond {
                             respond: Some(Respond::NotSameChain(
                                 controller_clone.local_address.clone(),
@@ -465,6 +463,8 @@ impl Controller {
                                 chain_status_respond,
                             )
                             .await;
+
+                        return;
                     }
 
                     if own_status.height >= chain_status.height {
@@ -484,6 +484,7 @@ impl Controller {
 
                         if let Some(ext_hash) = chain_status.hash.clone() {
                             if ext_hash.hash != own_old_block_hash {
+                                info!("old block hash not identical, send not same chain");
                                 let chain_status_respond = ChainStatusRespond {
                                     respond: Some(Respond::NotSameChain(
                                         controller_clone.local_address.clone(),
@@ -497,6 +498,8 @@ impl Controller {
                                         chain_status_respond,
                                     )
                                     .await;
+
+                                return;
                             }
                         }
                     }
@@ -784,6 +787,7 @@ impl Controller {
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
     impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
+    impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 
     impl_unicast!(unicast_sync_block, SyncBlockRequest, "sync_block");
     impl_unicast!(
@@ -940,6 +944,8 @@ impl Controller {
     }
 
     pub async fn try_sync_block(&self) {
+        info!("enter try sync block");
+
         let current_height = { self.current_status.read().await.height };
 
         let (global_address, global_status) = { self.global_status.read().await.clone() };
@@ -948,7 +954,7 @@ impl Controller {
             return;
         }
 
-        let origin = { self.node_manager.get_origin(&global_address).await.unwrap() };
+        let origin = self.node_manager.get_origin(&global_address).await.unwrap();
 
         match {
             let chain = self.chain.read().await;

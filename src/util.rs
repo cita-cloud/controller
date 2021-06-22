@@ -589,7 +589,7 @@ macro_rules! impl_unicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::debug!("unicast {} len: {} to 0x{}", $name, buf.len(), node);
+            log::info!("unicast {} len: {} to 0x{}", $name, buf.len(), node);
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
