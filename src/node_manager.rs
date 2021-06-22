@@ -14,7 +14,6 @@
 
 use crate::error::Error;
 use crate::error::Error::BannedNode;
-use crate::util::h160_address_check;
 use cita_cloud_proto::common::{Address, Hash};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -23,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
+#[derive(Debug)]
 pub struct ChainStatusWithFlag {
     pub status: ChainStatus,
     pub broadcast_or_not: bool,

@@ -29,11 +29,10 @@ use log::{info, warn};
 use tonic::Request;
 
 use crate::error::Error;
-use crate::utxo_set::SystemConfig;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
 use cita_cloud_proto::common::{
-    Address, ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof,
+    Address, ConsensusConfiguration, Empty, Proposal, ProposalWithProof,
 };
 use prost::Message;
 use std::path::Path;

@@ -14,8 +14,7 @@
 
 use crate::auth::Authentication;
 use crate::error::Error;
-use crate::event::EventTask;
-use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
+use crate::node_manager::ChainStatus;
 use crate::pool::Pool;
 use crate::util::*;
 use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
@@ -564,7 +563,8 @@ impl Chain {
                         // save finalized blocks / txs / current height / current hash
                         for (index, block_hash) in self.main_chain.iter().enumerate() {
                             // get block
-                            let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
+                            // let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
+                            let block = full_block.clone();
                             self.finalize_block(block.clone(), block_hash.to_owned())
                                 .await;
                             let block_body = full_to_compact(block).body.unwrap();
@@ -729,6 +729,6 @@ impl Chain {
     }
 
     pub async fn clear_fork_tree(&mut self) {
-        self.fork_tree.clear();
+        self.fork_tree[0].clear();
     }
 }

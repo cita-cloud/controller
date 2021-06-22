@@ -38,7 +38,7 @@ use cita_cloud_proto::{
 use log::{debug, info, warn};
 use prost::Message;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
@@ -116,7 +116,7 @@ pub struct Controller {
 
     pub(crate) sync_manager: SyncManager,
 
-    task_sender: crossbeam::channel::Sender<EventTask>,
+    task_sender: mpsc::UnboundedSender<EventTask>,
 }
 
 impl Controller {
@@ -134,7 +134,7 @@ impl Controller {
         genesis: GenesisBlock,
         key_id: u64,
         node_address: Vec<u8>,
-        task_sender: crossbeam::channel::Sender<EventTask>,
+        task_sender: mpsc::UnboundedSender<EventTask>,
     ) -> Self {
         h160_address_check(Some(&Address {
             address: node_address.clone(),
@@ -365,13 +365,13 @@ impl Controller {
             },
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
+                self.multicast_chain_status(self.network_port, self.get_status().await).await;
                 {
-                    let mut wr =self.chain.write().await;
-                    wr.clear_fork_tree();
-
+                    let mut wr = self.chain.write().await;
+                    wr.clear_fork_tree().await;
                 }
                 self.try_sync_block().await;
-                let _ = self.task_sender.send(EventTask::SyncBlock);
+                self.task_sender.send(EventTask::SyncBlock).unwrap();
             }
             _ => {}
         }
@@ -399,7 +399,8 @@ impl Controller {
 
         let mut chain = self.chain.write().await;
         match chain.commit_block(height, proposal, proof).await {
-            Ok((config, status)) => {
+            Ok((config, mut status)) => {
+                status.address = Some(self.local_address.clone());
                 self.set_status(status.clone()).await;
                 self.multicast_chain_status(self.network_port, status).await;
                 let (_, global_status) = self.get_global_status().await;
@@ -413,15 +414,13 @@ impl Controller {
             }
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.try_sync_block().await;
-                if self
-                    .sync_manager
-                    .contains_block(self.get_status().await.height + 1)
-                    .await
+                self.multicast_chain_status(self.network_port, self.get_status().await).await;
                 {
-                    let _ = self.task_sender.send(EventTask::SyncBlock);
-                    return Err(Error::ProposalTooHigh(p, c));
+                    let mut wr = self.chain.write().await;
+                    wr.clear_fork_tree().await;
                 }
+                self.try_sync_block().await;
+                self.task_sender.send(EventTask::SyncBlock).unwrap();
                 return Err(Error::ProposalTooHigh(p, c));
             }
             Err(e) => Err(e),
@@ -441,98 +440,9 @@ impl Controller {
 
                 h160_address_check(chain_status.address.as_ref())?;
 
-                let controller_clone = self.clone();
-                tokio::spawn(async move {
-                    info!("get network msg again: {}", msg.r#type);
-                    let own_status = controller_clone.get_status().await;
-
-                    if own_status.chain_id != chain_status.chain_id
-                        || own_status.version != chain_status.version
-                    {
-                        info!("chain id or version not identical, send not same chain");
-                        let chain_status_respond = ChainStatusRespond {
-                            respond: Some(Respond::NotSameChain(
-                                controller_clone.local_address.clone(),
-                            )),
-                        };
-
-                        controller_clone
-                            .unicast_chain_status_respond(
-                                controller_clone.network_port,
-                                msg.origin,
-                                chain_status_respond,
-                            )
-                            .await;
-
-                        return;
-                    }
-
-                    if own_status.height >= chain_status.height {
-                        let own_old_compact_block = {
-                            let rd = controller_clone.chain.read().await;
-                            rd.get_block_by_number(chain_status.height)
-                                .await
-                                .expect("a specified block not get!")
-                        };
-
-                        let own_old_block_hash = header_to_block_hash(
-                            controller_clone.kms_port,
-                            own_old_compact_block.header.unwrap(),
-                        )
-                        .await
-                        .unwrap();
-
-                        if let Some(ext_hash) = chain_status.hash.clone() {
-                            if ext_hash.hash != own_old_block_hash {
-                                info!("old block hash not identical, send not same chain");
-                                let chain_status_respond = ChainStatusRespond {
-                                    respond: Some(Respond::NotSameChain(
-                                        controller_clone.local_address.clone(),
-                                    )),
-                                };
-
-                                controller_clone
-                                    .unicast_chain_status_respond(
-                                        controller_clone.network_port,
-                                        msg.origin,
-                                        chain_status_respond,
-                                    )
-                                    .await;
-
-                                return;
-                            }
-                        }
-                    }
-
-                    let node = chain_status.address.clone().unwrap();
-                    match controller_clone
-                        .node_manager
-                        .set_node(&node, chain_status)
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("{}", e.to_string());
-                            return;
-                        }
-                    }
-                    controller_clone
-                        .node_manager
-                        .set_origin(&node, msg.origin)
-                        .await;
-
-                    let chain_status_respond = ChainStatusRespond {
-                        respond: Some(Respond::Ok(own_status)),
-                    };
-
-                    controller_clone
-                        .unicast_chain_status_respond(
-                            controller_clone.network_port,
-                            msg.origin,
-                            chain_status_respond,
-                        )
-                        .await;
-                });
+                self.task_sender
+                    .send(EventTask::ChainStatusRep(chain_status, msg.origin))
+                    .unwrap();
             }
 
             ControllerMsgType::ChainStatusRespondType => {
@@ -553,11 +463,18 @@ impl Controller {
                         }
                         Respond::Ok(chain_status) => {
                             h160_address_check(chain_status.address.as_ref())?;
-                            let _ = self.try_update_global_status(
+                            match self.try_update_global_status(
                                 &chain_status.address.clone().unwrap(),
-                                chain_status,
+                                chain_status.clone(),
                                 msg.origin,
-                            );
+                            ).await {
+                                Err(Error::EarlyStatus) => {
+                                    self.task_sender.send(EventTask::ChainStatusRep(chain_status, msg.origin)).unwrap();
+                                    return Err(Error::EarlyStatus);
+                                },
+                                Err(e) => return Err(e),
+                                _ => {}
+                            }
                         }
                     },
                     None => {}
@@ -832,8 +749,8 @@ impl Controller {
         status: ChainStatus,
         origin: u64,
     ) -> Result<bool, Error> {
-        self.node_manager.set_node(node, status.clone()).await?;
         self.node_manager.set_origin(node, origin).await;
+        self.node_manager.set_node(node, status.clone()).await?;
 
         let old_status = self.get_global_status().await;
         let own_status = self.get_status().await;

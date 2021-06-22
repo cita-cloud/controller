@@ -12,15 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::node_manager::ChainStatusWithFlag;
+use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
 
+#[derive(Debug)]
 pub enum EventTask {
     // update current status & or multicast current status
     UpdateStatus(ChainStatusWithFlag),
 
-    // multicast sync block req
+    // chain status respond
+    ChainStatusRep(ChainStatus, u64),
+
+    // multicast sync block request
     SyncBlock,
 
     // multicast sync tx req
-    SyncTx(Vec<u8>),
+    SyncTransaction(Vec<u8>),
 }

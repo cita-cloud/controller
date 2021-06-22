@@ -112,7 +112,7 @@ async fn register_network_msg_handler(
 
 use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction};
 use cita_cloud_proto::common::{
-    ConsensusConfiguration, Empty, Hash, Proposal, ProposalEnum, ProposalWithProof, SimpleResponse,
+    ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof, SimpleResponse,
 };
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
@@ -472,7 +472,10 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
             Err(Status::invalid_argument("wrong module"))
         } else {
             self.controller.process_network_msg(msg).await.map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
+                |e| {
+                    warn!("rpc: process_network_msg failed: {:?}", e);
+                    Err(Status::invalid_argument(e.to_string()))
+                },
                 |r| Ok(Response::new(r)),
             )
         }
@@ -483,8 +486,12 @@ use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::event::EventTask;
+use crate::node_manager::chain_status_respond::Respond;
+use crate::node_manager::ChainStatusRespond;
 use crate::protocol::sync_manager::SyncTxRequest;
-use crate::util::{clean_0x, hash_data, load_data, load_data_maybe_empty, reconfigure};
+use crate::util::{
+    clean_0x, hash_data, header_to_block_hash, load_data, load_data_maybe_empty, reconfigure,
+};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
@@ -494,6 +501,7 @@ use genesis::GenesisBlock;
 use prost::Message;
 use std::fs;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time;
 
 #[tokio::main]
@@ -590,7 +598,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         warn!("get current block number failed! Retrying");
     }
     info!("current block number: {}", current_block_number);
-    info!("current block hash: {:?}", current_block_hash);
+    info!("current block hash: 0x{:?}", hex::encode(&current_block_hash));
 
     // load initial sys_config
     let buffer = fs::read_to_string("init_sys_config.toml")
@@ -644,9 +652,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         }
     });
 
-    let (task_sender, task_receiver) = crossbeam::channel::unbounded();
+    let (task_sender, mut task_receiver) = mpsc::unbounded_channel();
 
-    // todo local_address
     let controller = Controller::new(
         consensus_port,
         network_port,
@@ -667,8 +674,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
 
     let controller_clone = controller.clone();
     tokio::spawn(async move {
-        loop {
-            match task_receiver.recv().unwrap() {
+        while let Some(event_task) = task_receiver.recv().await {
+            match event_task {
                 EventTask::UpdateStatus(mut csf) => {
                     if controller_clone.update_from_chain(csf.status.clone()).await
                         && csf.broadcast_or_not
@@ -679,7 +686,98 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                             .await;
                     }
                 }
+                EventTask::ChainStatusRep(chain_status, origin) => {
+                    let node = chain_status.address.clone().unwrap();
+                    info!("send chain status respond to 0x{}", hex::encode(&node.address));
+
+                    let own_status = controller_clone.get_status().await;
+
+                    if own_status.chain_id != chain_status.chain_id
+                        || own_status.version != chain_status.version
+                    {
+                        warn!("chain id or version not identical, send not same chain");
+                        let chain_status_respond = ChainStatusRespond {
+                            respond: Some(Respond::NotSameChain(
+                                controller_clone.local_address.clone(),
+                            )),
+                        };
+
+                        controller_clone
+                            .unicast_chain_status_respond(
+                                controller_clone.network_port,
+                                origin,
+                                chain_status_respond,
+                            )
+                            .await;
+
+                        continue;
+                    }
+
+                    if own_status.height >= chain_status.height {
+                        let own_old_compact_block = {
+                            let rd = controller_clone.chain.read().await;
+                            rd.get_block_by_number(chain_status.height)
+                                .await
+                                .expect("a specified block not get!")
+                        };
+
+                        let own_old_block_hash =
+                            header_to_block_hash(kms_port, own_old_compact_block.header.unwrap())
+                                .await
+                                .unwrap();
+
+                        if let Some(ext_hash) = chain_status.hash.clone() {
+                            if ext_hash.hash != own_old_block_hash {
+                                warn!("old block hash not identical, send not same chain");
+                                let chain_status_respond = ChainStatusRespond {
+                                    respond: Some(Respond::NotSameChain(
+                                        controller_clone.local_address.clone(),
+                                    )),
+                                };
+
+                                controller_clone
+                                    .unicast_chain_status_respond(
+                                        controller_clone.network_port,
+                                        origin,
+                                        chain_status_respond,
+                                    )
+                                    .await;
+
+                                continue;
+                            }
+                        }
+                    }
+
+                    match controller_clone
+                        .node_manager
+                        .set_node(&node, chain_status)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("{}", e.to_string());
+                            continue;
+                        }
+                    }
+                    controller_clone
+                        .node_manager
+                        .set_origin(&node, origin)
+                        .await;
+
+                    let chain_status_respond = ChainStatusRespond {
+                        respond: Some(Respond::Ok(own_status)),
+                    };
+
+                    controller_clone
+                        .unicast_chain_status_respond(
+                            controller_clone.network_port,
+                            origin,
+                            chain_status_respond,
+                        )
+                        .await;
+                }
                 EventTask::SyncBlock => {
+                    info!("receive sync block event");
                     let mut chain = controller_clone.chain.write().await;
                     let (global_address, global_status) =
                         controller_clone.get_global_status().await;
@@ -751,7 +849,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         _ => {}
                     }
                 }
-                EventTask::SyncTx(tx_hash) => {
+                EventTask::SyncTransaction(tx_hash) => {
                     controller_clone
                         .multicast_sync_tx(controller_clone.network_port, SyncTxRequest { tx_hash })
                         .await;
