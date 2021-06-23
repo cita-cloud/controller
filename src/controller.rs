@@ -17,7 +17,7 @@ use crate::chain::{Chain, ChainStep};
 use crate::error::Error;
 use crate::event::EventTask;
 use crate::node_manager::{
-    chain_status_respond::Respond, ChainStatus, ChainStatusRespond, NodeManager,
+    chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
 };
 use crate::pool::Pool;
 use crate::protocol::sync_manager::{
@@ -42,6 +42,8 @@ use tokio::sync::{mpsc, RwLock};
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
+    ChainStatusInitType,
+    ChainStatusInitRequestType,
     ChainStatusType,
     ChainStatusRespondType,
     SyncBlockType,
@@ -56,6 +58,8 @@ pub enum ControllerMsgType {
 impl From<&str> for ControllerMsgType {
     fn from(s: &str) -> Self {
         match s {
+            "chain_status_init" => Self::ChainStatusInitType,
+            "chain_status_init_req" => Self::ChainStatusInitRequestType,
             "chain_status" => Self::ChainStatusType,
             "chain_status_respond" => Self::ChainStatusRespondType,
             "sync_block" => Self::SyncBlockType,
@@ -78,6 +82,8 @@ impl ::std::fmt::Display for ControllerMsgType {
 impl From<ControllerMsgType> for &str {
     fn from(t: ControllerMsgType) -> Self {
         match t {
+            ControllerMsgType::ChainStatusInitType => "chain_status_init",
+            ControllerMsgType::ChainStatusInitRequestType => "chain_status_init_req",
             ControllerMsgType::ChainStatusType => "chain_status",
             ControllerMsgType::ChainStatusRespondType => "chain_status_respond",
             ControllerMsgType::SyncBlockType => "sync_block",
@@ -196,10 +202,18 @@ impl Controller {
             .await
             .unwrap();
         self.set_status(status.clone()).await;
-        self.broadcast_chain_status(self.network_port, status)
-            .await
-            .await
-            .unwrap();
+        // todo
+        self.broadcast_chain_status_init(
+            self.network_port,
+            ChainStatusInit {
+                chain_status: Some(status),
+                signature: vec![],
+                public_key: vec![],
+            },
+        )
+        .await
+        .await
+        .unwrap();
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
@@ -365,7 +379,8 @@ impl Controller {
             },
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.multicast_chain_status(self.network_port, self.get_status().await).await;
+                self.multicast_chain_status(self.network_port, self.get_status().await)
+                    .await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_fork_tree().await;
@@ -414,7 +429,8 @@ impl Controller {
             }
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.multicast_chain_status(self.network_port, self.get_status().await).await;
+                self.multicast_chain_status(self.network_port, self.get_status().await)
+                    .await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_fork_tree().await;
@@ -430,6 +446,78 @@ impl Controller {
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
         info!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
+            ControllerMsgType::ChainStatusInitType => {
+                let chain_status_init =
+                    ChainStatusInit::decode(msg.msg.as_slice()).map_err(|_| {
+                        Error::DecodeError(format!(
+                            "decode {} msg failed",
+                            ControllerMsgType::ChainStatusInitType
+                        ))
+                    })?;
+
+                let own_status = self.get_status().await;
+                match chain_status_init.check(&own_status, self.kms_port).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        match e {
+                            Error::VersionOrIdCheckError | Error::HashCheckError => {
+                                self.unicast_chain_status_respond(
+                                    self.network_port,
+                                    msg.origin,
+                                    ChainStatusRespond {
+                                        respond: Some(Respond::NotSameChain(
+                                            self.local_address.clone(),
+                                        )),
+                                    },
+                                )
+                                .await;
+                                let node = chain_status_init
+                                    .chain_status
+                                    .clone()
+                                    .unwrap()
+                                    .address
+                                    .unwrap();
+                                self.delete_global_status(&node).await;
+                                self.node_manager.set_ban_node(&node).await?;
+                            }
+                            _ => {}
+                        }
+                        return Err(e);
+                    }
+                }
+
+                let status = chain_status_init.chain_status.unwrap();
+                let node = status.address.clone().unwrap();
+                self.node_manager.set_origin(&node, msg.origin).await;
+                if self.node_manager.set_node(&node, status).await?.is_none() {
+                    // todo sig
+                    self.unicast_chain_status_init(
+                        self.network_port,
+                        msg.origin,
+                        ChainStatusInit {
+                            chain_status: Some(own_status),
+                            signature: vec![],
+                            public_key: vec![],
+                        },
+                    )
+                    .await;
+                } else {
+                    self.unicast_chain_status(self.network_port, msg.origin, own_status)
+                        .await;
+                }
+            }
+            ControllerMsgType::ChainStatusInitRequestType => {
+                self.unicast_chain_status_init(
+                    self.network_port,
+                    msg.origin,
+                    ChainStatusInit {
+                        chain_status: Some(self.get_status().await),
+                        signature: vec![],
+                        public_key: vec![],
+                    },
+                )
+                .await;
+            }
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
                     Error::DecodeError(format!(
@@ -438,11 +526,51 @@ impl Controller {
                     ))
                 })?;
 
-                h160_address_check(chain_status.address.as_ref())?;
+                let own_status = self.get_status().await;
+                match chain_status.check(&own_status, self.kms_port).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        match e {
+                            Error::VersionOrIdCheckError | Error::HashCheckError => {
+                                self.unicast_chain_status_respond(
+                                    self.network_port,
+                                    msg.origin,
+                                    ChainStatusRespond {
+                                        respond: Some(Respond::NotSameChain(
+                                            self.local_address.clone(),
+                                        )),
+                                    },
+                                )
+                                .await;
+                                let node = chain_status.address.clone().unwrap();
+                                self.delete_global_status(&node).await;
+                                self.node_manager.set_ban_node(&node).await?;
+                            }
+                            _ => {}
+                        }
+                        return Err(e);
+                    }
+                }
 
-                self.task_sender
-                    .send(EventTask::ChainStatusRep(chain_status, msg.origin))
-                    .unwrap();
+                let node = chain_status.address.clone().unwrap();
+                match self
+                    .node_manager
+                    .check_address_origin(&node, msg.origin)
+                    .await
+                {
+                    Ok(false) => {
+                        self.unicast_chain_status_init_req(
+                            self.network_port,
+                            msg.origin,
+                            own_status,
+                        )
+                        .await;
+                    }
+                    Err(e) => return Err(e),
+                    _ => {}
+                }
+
+                self.node_manager.set_node(&node, chain_status).await?;
             }
 
             ControllerMsgType::ChainStatusRespondType => {
@@ -458,23 +586,8 @@ impl Controller {
                     Some(respond) => match respond {
                         Respond::NotSameChain(node) => {
                             h160_address_check(Some(&node))?;
+                            self.delete_global_status(&node).await;
                             self.node_manager.set_ban_node(&node).await?;
-                            self.delete_global_status(node).await;
-                        }
-                        Respond::Ok(chain_status) => {
-                            h160_address_check(chain_status.address.as_ref())?;
-                            match self.try_update_global_status(
-                                &chain_status.address.clone().unwrap(),
-                                chain_status.clone(),
-                                msg.origin,
-                            ).await {
-                                Err(Error::EarlyStatus) => {
-                                    self.task_sender.send(EventTask::ChainStatusRep(chain_status, msg.origin)).unwrap();
-                                    return Err(Error::EarlyStatus);
-                                },
-                                Err(e) => return Err(e),
-                                _ => {}
-                            }
                         }
                     },
                     None => {}
@@ -547,12 +660,12 @@ impl Controller {
                 tokio::spawn(async move {
                     match sync_block_respond.respond {
                         Some(Respond::MissBlock(node)) => {
+                            controller_clone.delete_global_status(&node).await;
                             controller_clone
                                 .node_manager
                                 .set_misbehavior_node(&node)
                                 .await
                                 .unwrap();
-                            controller_clone.delete_global_status(node).await;
                         }
                         Some(Respond::Ok(sync_blocks)) => {
                             // todo handle error
@@ -582,7 +695,7 @@ impl Controller {
                                         .await
                                         .unwrap();
                                     controller_clone
-                                        .delete_global_status(sync_blocks.address.unwrap())
+                                        .delete_global_status(sync_blocks.address.as_ref().unwrap())
                                         .await;
                                 }
                             }
@@ -633,7 +746,7 @@ impl Controller {
                 match sync_tx_respond.respond {
                     Some(Respond::MissTx(node)) => {
                         self.node_manager.set_misbehavior_node(&node).await?;
-                        self.delete_global_status(node).await;
+                        self.delete_global_status(&node).await;
                     }
                     Some(Respond::Ok(raw_tx)) => {
                         self.rpc_send_raw_transaction(raw_tx, false)
@@ -688,8 +801,8 @@ impl Controller {
 
             ControllerMsgType::Noop => match self.node_manager.get_address(msg.origin).await {
                 Some(address) => {
+                    self.delete_global_status(&address).await;
                     self.node_manager.set_ban_node(&address).await?;
-                    self.delete_global_status(address).await;
                 }
                 None => {}
             },
@@ -698,7 +811,11 @@ impl Controller {
         Ok(SimpleResponse { is_success: true })
     }
 
-    impl_broadcast!(broadcast_chain_status, ChainStatus, "chain_status");
+    impl_broadcast!(
+        broadcast_chain_status_init,
+        ChainStatusInit,
+        "chain_status_init"
+    );
 
     // impl_multicast!(multicast_send_proposal, Block, "send_proposal");
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
@@ -706,6 +823,17 @@ impl Controller {
     impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
     impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 
+    impl_unicast!(unicast_chain_status, ChainStatus, "chain_status");
+    impl_unicast!(
+        unicast_chain_status_init_req,
+        ChainStatus,
+        "chain_status_init_req"
+    );
+    impl_unicast!(
+        unicast_chain_status_init,
+        ChainStatusInit,
+        "chain_status_init"
+    );
     impl_unicast!(unicast_sync_block, SyncBlockRequest, "sync_block");
     impl_unicast!(
         unicast_sync_block_respond,
@@ -729,11 +857,11 @@ impl Controller {
         *wr = (node, status);
     }
 
-    async fn delete_global_status(&self, node: Address) -> bool {
+    async fn delete_global_status(&self, node: &Address) -> bool {
         if {
             let rd = self.global_status.read().await;
             let gs = rd.clone();
-            gs.0 == node
+            &gs.0 == node
         } {
             let mut wr = self.global_status.write().await;
             *wr = (Address { address: vec![] }, ChainStatus::default());

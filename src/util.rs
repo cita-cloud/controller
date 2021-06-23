@@ -672,3 +672,7 @@ pub fn h160_address_check(address: Option<&Address>) -> Result<(), Error> {
         None => Err(Error::NoProvideAddress),
     }
 }
+
+pub fn check_sig(sig: &[u8], pubk: &[u8]) -> Result<(), Error> {
+    return Ok(());
+}

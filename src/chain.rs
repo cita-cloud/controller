@@ -561,7 +561,7 @@ impl Chain {
                         let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
                         let mut finalized_tx_hash_list = Vec::new();
                         // save finalized blocks / txs / current height / current hash
-                        for (index, block_hash) in self.main_chain.iter().enumerate() {
+                        for (_index, block_hash) in self.main_chain.iter().enumerate() {
                             // get block
                             // let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
                             let block = full_block.clone();

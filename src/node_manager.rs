@@ -14,6 +14,7 @@
 
 use crate::error::Error;
 use crate::error::Error::BannedNode;
+use crate::util::{check_sig, get_block_hash, get_compact_block, h160_address_check};
 use cita_cloud_proto::common::{Address, Hash};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -42,6 +43,58 @@ pub struct ChainStatus {
     pub address: ::core::option::Option<Address>,
 }
 
+impl ChainStatus {
+    pub async fn check(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+        h160_address_check(self.address.as_ref())?;
+
+        if self.chain_id != own_status.chain_id || self.version != own_status.version {
+            Err(Error::VersionOrIdCheckError)
+        } else {
+            self.check_hash(own_status, kms_port).await?;
+            Ok(())
+        }
+    }
+
+    pub async fn check_hash(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+        if self.height != 0 && own_status.height >= self.height {
+            let compact_block = get_compact_block(self.height).await.map(|t| t.0).unwrap();
+            if get_block_hash(kms_port, compact_block.header.as_ref()).await?
+                != self.hash.clone().unwrap().hash
+            {
+                Err(Error::HashCheckError)
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChainStatusInit {
+    #[prost(message, optional, tag = "1")]
+    pub chain_status: ::core::option::Option<ChainStatus>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub public_key: ::prost::alloc::vec::Vec<u8>,
+}
+
+impl ChainStatusInit {
+    pub async fn check(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+        check_sig(&self.signature, &self.public_key)?;
+
+        self.chain_status
+            .clone()
+            .ok_or(Error::NoneChainStatus)?
+            .check(own_status, kms_port)
+            .await?;
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ChainStatusRespond {
     #[prost(oneof = "chain_status_respond::Respond", tags = "1, 2")]
@@ -55,8 +108,6 @@ pub mod chain_status_respond {
     pub enum Respond {
         #[prost(message, tag = "1")]
         NotSameChain(cita_cloud_proto::common::Address),
-        #[prost(message, tag = "2")]
-        Ok(super::ChainStatus),
     }
 }
 
@@ -137,10 +188,14 @@ pub struct NodeManager {
 impl NodeManager {
     pub async fn set_origin(&self, node: &Address, origin: u64) -> Option<u64> {
         let na = node.into();
-        {
-            let mut wr = self.node_origin.write().await;
-            wr.insert(na, origin)
-        }
+        let mut wr = self.node_origin.write().await;
+        wr.insert(na, origin)
+    }
+
+    pub async fn delete_origin(&self, node: &Address) {
+        let na = node.into();
+        let mut wr = self.node_origin.write().await;
+        wr.remove(&na);
     }
 
     pub async fn get_origin(&self, node: &Address) -> Option<u64> {
@@ -195,11 +250,13 @@ impl NodeManager {
             }
         }
         let na = node.into();
-        if {
+
+        let status = {
             let rd = self.nodes.read().await;
-            let status = rd.get(&na);
-            status.is_none() || status.unwrap().height < chain_status.height
-        } {
+            rd.get(&na).cloned()
+        };
+
+        if status.is_none() || status.unwrap().height < chain_status.height {
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(na, chain_status))
         } else {
@@ -277,6 +334,8 @@ impl NodeManager {
         &self,
         node: &Address,
     ) -> Result<Option<MisbehaviorStatus>, Error> {
+        self.delete_origin(node).await;
+
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
@@ -316,6 +375,8 @@ impl NodeManager {
     }
 
     pub async fn set_ban_node(&self, node: &Address) -> Result<bool, Error> {
+        self.delete_origin(node).await;
+
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
@@ -328,6 +389,21 @@ impl NodeManager {
         {
             let mut wr = self.ban_nodes.write().await;
             Ok(wr.insert(na))
+        }
+    }
+
+    pub async fn check_address_origin(&self, node: &Address, origin: u64) -> Result<bool, Error> {
+        let record_origin = {
+            let na = node.into();
+            self.node_origin.read().await.get(&na).cloned()
+        };
+
+        if record_origin.is_none() {
+            return Ok(false);
+        } else if record_origin != Some(origin) {
+            Err(Error::AddressOriginCheckError)
+        } else {
+            Ok(true)
         }
     }
 }

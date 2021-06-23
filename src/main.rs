@@ -485,6 +485,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
+use crate::error::Error;
 use crate::event::EventTask;
 use crate::node_manager::chain_status_respond::Respond;
 use crate::node_manager::ChainStatusRespond;
@@ -598,7 +599,10 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         warn!("get current block number failed! Retrying");
     }
     info!("current block number: {}", current_block_number);
-    info!("current block hash: 0x{:?}", hex::encode(&current_block_hash));
+    info!(
+        "current block hash: 0x{:?}",
+        hex::encode(&current_block_hash)
+    );
 
     // load initial sys_config
     let buffer = fs::read_to_string("init_sys_config.toml")
@@ -688,7 +692,10 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                 }
                 EventTask::ChainStatusRep(chain_status, origin) => {
                     let node = chain_status.address.clone().unwrap();
-                    info!("send chain status respond to 0x{}", hex::encode(&node.address));
+                    info!(
+                        "send chain status respond to 0x{}",
+                        hex::encode(&node.address)
+                    );
 
                     let own_status = controller_clone.get_status().await;
 
@@ -748,33 +755,34 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         }
                     }
 
-                    match controller_clone
-                        .node_manager
-                        .set_node(&node, chain_status)
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            warn!("{}", e.to_string());
-                            continue;
-                        }
-                    }
                     controller_clone
                         .node_manager
                         .set_origin(&node, origin)
                         .await;
 
-                    let chain_status_respond = ChainStatusRespond {
-                        respond: Some(Respond::Ok(own_status)),
-                    };
+                    match controller_clone
+                        .node_manager
+                        .set_node(&node, chain_status)
+                        .await
+                    {
+                        Ok(_) | Err(Error::EarlyStatus) => {}
+                        Err(e) => {
+                            warn!("{}", e.to_string());
+                            continue;
+                        }
+                    }
 
-                    controller_clone
-                        .unicast_chain_status_respond(
-                            controller_clone.network_port,
-                            origin,
-                            chain_status_respond,
-                        )
-                        .await;
+                    // let chain_status_respond = ChainStatusRespond {
+                    //     respond: Some(Respond::Ok(own_status)),
+                    // };
+                    //
+                    // controller_clone
+                    //     .unicast_chain_status_respond(
+                    //         controller_clone.network_port,
+                    //         origin,
+                    //         chain_status_respond,
+                    //     )
+                    //     .await;
                 }
                 EventTask::SyncBlock => {
                     info!("receive sync block event");

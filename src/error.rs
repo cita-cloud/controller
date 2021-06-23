@@ -21,6 +21,9 @@ pub enum Error {
     /// node in ban list
     BannedNode,
 
+    /// address not consistent with record origin
+    AddressOriginCheckError,
+
     /// provide address len is not 20
     ProvideAddressError,
 
@@ -38,6 +41,9 @@ pub enum Error {
 
     /// block header is none
     NoneBlockHeader,
+
+    /// chain status is none
+    NoneChainStatus,
 
     /// early status received
     EarlyStatus,
@@ -69,6 +75,15 @@ pub enum Error {
     /// block hash check error
     BlockCheckError,
 
+    /// the sig of chain status init check error
+    CSISigCheckError,
+
+    /// chain version or chain id check error
+    VersionOrIdCheckError,
+
+    /// chain hash check error
+    HashCheckError,
+
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
 
@@ -83,12 +98,16 @@ impl ::std::fmt::Display for Error {
         match self {
             Error::MisbehaveNode => write!(f, "Node already in misbehave list"),
             Error::BannedNode => write!(f, "Node already in ban list"),
+            Error::AddressOriginCheckError => {
+                write!(f, "Address not consistent with record origin")
+            }
             Error::ProvideAddressError => write!(f, "Provide address len is not 20"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
             Error::NoneProposal => write!(f, "Proposal should not be none"),
-            Error::NoneBlockBody => write!(f, "BlockBody should not be None"),
-            Error::NoneBlockHeader => write!(f, "BlockHeader should not be None"),
+            Error::NoneBlockBody => write!(f, "BlockBody should not be none"),
+            Error::NoneBlockHeader => write!(f, "BlockHeader should not be none"),
+            Error::NoneChainStatus => write!(f, "Chain status should not be none"),
             Error::EarlyStatus => write!(f, "receive early status from same node"),
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
             Error::DecodeError(s) => write!(f, "Proto struct decode error: {}", s),
@@ -109,6 +128,9 @@ impl ::std::fmt::Display for Error {
                 write!(f, "Found dup transaction 0x{}", hex::encode(h))
             }
             Error::BlockCheckError => write!(f, "block hash check error"),
+            Error::CSISigCheckError => write!(f, "The sig of chain status init check error"),
+            Error::VersionOrIdCheckError => write!(f, "Chain version or chain id check error"),
+            Error::HashCheckError => write!(f, "Chain hash check error"),
             Error::InternalError(e) => write!(f, "Internal Error: {}", e),
             Error::ExpectError(s) => write!(f, "Expect error: {}", s),
         }
