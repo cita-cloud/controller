@@ -569,11 +569,6 @@ macro_rules! impl_unicast {
             origin: u64,
             item: $type,
         ) -> tokio::task::JoinHandle<()> {
-            let node = self.node_manager.get_address(origin).await;
-
-            h160_address_check(node.as_ref()).unwrap();
-            let node = hex::encode(node.unwrap().address);
-
             let network_addr = format!("http://127.0.0.1:{}", port);
 
             let mut client =
@@ -588,7 +583,7 @@ macro_rules! impl_unicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::info!("unicast {} len: {} to 0x{}", $name, buf.len(), node);
+            log::info!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -603,7 +598,12 @@ macro_rules! impl_unicast {
                 match client.send_msg(request).await {
                     Ok(_) => {}
                     Err(status) => {
-                        log::warn!("unicast {} to 0x{} failed: {:?}", $name, node, status)
+                        log::warn!(
+                            "unicast {} to origin[{}] failed: {:?}",
+                            $name,
+                            origin,
+                            status
+                        )
                     }
                 }
             })

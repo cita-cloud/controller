@@ -56,7 +56,7 @@ impl ChainStatus {
     }
 
     pub async fn check_hash(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
-        if self.height != 0 && own_status.height >= self.height {
+        if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await.map(|t| t.0).unwrap();
             if get_block_hash(kms_port, compact_block.header.as_ref()).await?
                 != self.hash.clone().unwrap().hash
@@ -187,13 +187,15 @@ pub struct NodeManager {
 
 impl NodeManager {
     pub async fn set_origin(&self, node: &Address, origin: u64) -> Option<u64> {
-        let na = node.into();
+        let na: NodeAddress = node.into();
+        log::info!("set origin[{}] to node: 0x{}", origin, hex::encode(&na.0));
         let mut wr = self.node_origin.write().await;
         wr.insert(na, origin)
     }
 
     pub async fn delete_origin(&self, node: &Address) {
-        let na = node.into();
+        let na: NodeAddress = node.into();
+        log::info!("delete origin of node: 0x{}", hex::encode(&na.0));
         let mut wr = self.node_origin.write().await;
         wr.remove(&na);
     }
@@ -220,7 +222,7 @@ impl NodeManager {
     }
 
     pub async fn in_node(&self, node: &Address) -> bool {
-        let na = node.into();
+        let na: NodeAddress = node.into();
         {
             let rd = self.nodes.read().await;
             rd.contains_key(&na)
@@ -228,7 +230,8 @@ impl NodeManager {
     }
 
     pub async fn delete_node(&self, node: &Address) -> Option<ChainStatus> {
-        let na = node.into();
+        let na: NodeAddress = node.into();
+        log::info!("delete node: 0x{}", hex::encode(&na.0));
         {
             let mut wr = self.nodes.write().await;
             wr.remove(&na)
@@ -249,7 +252,7 @@ impl NodeManager {
                 return Err(Error::MisbehaveNode);
             }
         }
-        let na = node.into();
+        let na: NodeAddress = node.into();
 
         let status = {
             let rd = self.nodes.read().await;
@@ -257,6 +260,7 @@ impl NodeManager {
         };
 
         if status.is_none() || status.unwrap().height < chain_status.height {
+            log::info!("add node: 0x{}", hex::encode(&na.0));
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(na, chain_status))
         } else {
@@ -307,7 +311,7 @@ impl NodeManager {
     }
 
     pub async fn try_delete_misbehavior_node(&self, misbehavior_node: &Address) -> bool {
-        let na = misbehavior_node.into();
+        let na: NodeAddress = misbehavior_node.into();
         if {
             let rd = self.misbehavior_nodes.read().await;
             rd.get(&na).unwrap().free()
@@ -323,7 +327,8 @@ impl NodeManager {
         &self,
         misbehavior_node: &Address,
     ) -> Option<MisbehaviorStatus> {
-        let na = misbehavior_node.into();
+        let na: NodeAddress = misbehavior_node.into();
+        log::info!("delete misbehavior node: 0x{}", hex::encode(&na.0));
         {
             let mut wr = self.misbehavior_nodes.write().await;
             wr.remove(&na)
@@ -344,7 +349,8 @@ impl NodeManager {
             return Err(BannedNode);
         }
 
-        let na = node.into();
+        let na: NodeAddress = node.into();
+        log::info!("set misbehavior node: 0x{}", hex::encode(&na.0));
         if let Some(mis_status) = {
             let rd = self.misbehavior_nodes.read().await;
             rd.get(&na).cloned()
@@ -367,7 +373,8 @@ impl NodeManager {
 
     #[allow(dead_code)]
     pub async fn delete_ban_node(&self, ban_node: &Address) -> bool {
-        let na = ban_node.into();
+        let na: NodeAddress = ban_node.into();
+        log::info!("delete ban node: 0x{}", hex::encode(&na.0));
         {
             let mut wr = self.ban_nodes.write().await;
             wr.remove(&na)
@@ -385,7 +392,8 @@ impl NodeManager {
             self.delete_misbehavior_node(node).await;
         }
 
-        let na = node.into();
+        let na: NodeAddress = node.into();
+        log::info!("set ban node: 0x{}", hex::encode(&na.0));
         {
             let mut wr = self.ban_nodes.write().await;
             Ok(wr.insert(na))

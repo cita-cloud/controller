@@ -147,6 +147,18 @@ impl Controller {
         }))
         .unwrap();
 
+        let own_status = ChainStatus {
+            version: sys_config.version,
+            chain_id: sys_config.chain_id.clone(),
+            height: 0,
+            hash: Some(Hash {
+                hash: current_block_hash.clone(),
+            }),
+            address: Some(Address {
+                address: node_address.clone(),
+            }),
+        };
+
         let auth = Arc::new(RwLock::new(Authentication::new(
             kms_port,
             storage_port,
@@ -167,6 +179,7 @@ impl Controller {
             key_id,
             node_address.clone(),
         )));
+
         Controller {
             network_port,
             storage_port,
@@ -178,7 +191,7 @@ impl Controller {
             local_address: Address {
                 address: node_address,
             },
-            current_status: Arc::new(RwLock::new(ChainStatus::default())),
+            current_status: Arc::new(RwLock::new(own_status)),
             global_status: Arc::new(RwLock::new((
                 Address {
                     address: Vec::new(),
@@ -340,7 +353,9 @@ impl Controller {
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
         let mut chain = self.chain.write().await;
-        chain.add_proposal().await?;
+        chain
+            .add_proposal(&self.get_global_status().await.1)
+            .await?;
         chain.get_proposal().await
     }
 
@@ -383,7 +398,7 @@ impl Controller {
                     .await;
                 {
                     let mut wr = self.chain.write().await;
-                    wr.clear_fork_tree().await;
+                    wr.clear_candidate().await;
                 }
                 self.try_sync_block().await;
                 self.task_sender.send(EventTask::SyncBlock).unwrap();
@@ -433,7 +448,7 @@ impl Controller {
                     .await;
                 {
                     let mut wr = self.chain.write().await;
-                    wr.clear_fork_tree().await;
+                    wr.clear_candidate().await;
                 }
                 self.try_sync_block().await;
                 self.task_sender.send(EventTask::SyncBlock).unwrap();
@@ -489,7 +504,12 @@ impl Controller {
                 let status = chain_status_init.chain_status.unwrap();
                 let node = status.address.clone().unwrap();
                 self.node_manager.set_origin(&node, msg.origin).await;
-                if self.node_manager.set_node(&node, status).await?.is_none() {
+                if self
+                    .node_manager
+                    .set_node(&node, status.clone())
+                    .await?
+                    .is_none()
+                {
                     // todo sig
                     self.unicast_chain_status_init(
                         self.network_port,
@@ -505,6 +525,7 @@ impl Controller {
                     self.unicast_chain_status(self.network_port, msg.origin, own_status)
                         .await;
                 }
+                self.try_update_global_status(&node, status).await?;
             }
             ControllerMsgType::ChainStatusInitRequestType => {
                 self.unicast_chain_status_init(
@@ -558,6 +579,12 @@ impl Controller {
                     .check_address_origin(&node, msg.origin)
                     .await
                 {
+                    Ok(true) => {
+                        self.node_manager
+                            .set_node(&node, chain_status.clone())
+                            .await?;
+                        self.try_update_global_status(&node, chain_status).await?;
+                    }
                     Ok(false) => {
                         self.unicast_chain_status_init_req(
                             self.network_port,
@@ -567,10 +594,7 @@ impl Controller {
                         .await;
                     }
                     Err(e) => return Err(e),
-                    _ => {}
                 }
-
-                self.node_manager.set_node(&node, chain_status).await?;
             }
 
             ControllerMsgType::ChainStatusRespondType => {
@@ -875,17 +899,19 @@ impl Controller {
         &self,
         node: &Address,
         status: ChainStatus,
-        origin: u64,
     ) -> Result<bool, Error> {
-        self.node_manager.set_origin(node, origin).await;
-        self.node_manager.set_node(node, status.clone()).await?;
-
         let old_status = self.get_global_status().await;
         let own_status = self.get_status().await;
         if status.height > old_status.1.height && status.height >= own_status.height {
-            self.update_global_status(node.to_owned(), status.clone())
-                .await;
+            self.update_global_status(node.to_owned(), status).await;
             self.try_sync_block().await;
+            if self
+                .sync_manager
+                .contains_block(own_status.height + 1)
+                .await
+            {
+                self.task_sender.send(EventTask::SyncBlock).unwrap();
+            }
 
             return Ok(true);
         }
@@ -989,9 +1015,7 @@ impl Controller {
     }
 
     pub async fn try_sync_block(&self) {
-        info!("enter try sync block");
-
-        let current_height = { self.current_status.read().await.height };
+        let current_height = self.get_status().await.height;
 
         let (global_address, global_status) = { self.global_status.read().await.clone() };
 

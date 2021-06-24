@@ -599,10 +599,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         warn!("get current block number failed! Retrying");
     }
     info!("current block number: {}", current_block_number);
-    info!(
-        "current block hash: 0x{:?}",
-        hex::encode(&current_block_hash)
-    );
+    info!("current block hash: 0x{}", hex::encode(&current_block_hash));
 
     // load initial sys_config
     let buffer = fs::read_to_string("init_sys_config.toml")
@@ -786,23 +783,25 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                 }
                 EventTask::SyncBlock => {
                     info!("receive sync block event");
-                    let mut chain = controller_clone.chain.write().await;
                     let (global_address, global_status) =
                         controller_clone.get_global_status().await;
-                    let own_status = controller_clone.get_status().await;
+                    let mut own_status = controller_clone.get_status().await;
+                    let mut chain = controller_clone.chain.write().await;
                     match chain.next_step(&global_status).await {
                         ChainStep::SyncStep => {
-                            if let Some((addr, block)) = controller_clone
+                            chain.clear_candidate().await;
+                            while let Some((addr, block)) = controller_clone
                                 .sync_manager
                                 .pop_block(own_status.height + 1)
                                 .await
                             {
                                 match chain.process_block(block).await {
                                     Ok((consensus_config, status)) => {
-                                        controller_clone.set_status(status).await;
+                                        controller_clone.set_status(status.clone()).await;
                                         reconfigure(consensus_port, consensus_config)
                                             .await
                                             .unwrap();
+                                        own_status = status;
                                     }
                                     Err(e) => {
                                         warn!(
@@ -853,6 +852,8 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     }
                                 }
                             }
+                            chain.downgrade();
+                            controller_clone.try_sync_block().await;
                         }
                         _ => {}
                     }

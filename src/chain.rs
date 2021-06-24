@@ -32,6 +32,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+const FORCE_IN_SYNC: u64 = 6;
+
+#[derive(PartialEq)]
 pub enum ChainStep {
     SyncStep,
     OnlineStep,
@@ -217,8 +220,10 @@ impl Chain {
         }
     }
 
-    pub async fn add_proposal(&mut self) -> Result<(), Error> {
-        if self.candidate_block.is_some() {
+    pub async fn add_proposal(&mut self, global_status: &ChainStatus) -> Result<(), Error> {
+        if self.candidate_block.is_some()
+            || self.next_step(global_status).await == ChainStep::SyncStep
+        {
             Ok(())
         } else {
             info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
@@ -635,7 +640,8 @@ impl Chain {
         &mut self,
         block: Block,
     ) -> Result<(ConsensusConfiguration, ChainStatus), Error> {
-        let header = block.header.clone().ok_or(Error::NoneBlockHeader)?;
+        let block_hash = get_block_hash(self.kms_port, block.header.as_ref()).await?;
+        let header = block.header.clone().unwrap();
         let height = header.height;
 
         if height <= self.block_number {
@@ -659,6 +665,9 @@ impl Chain {
 
         self.finalize_block(block, get_block_hash(self.kms_port, Some(&header)).await?)
             .await;
+
+        self.block_number = height;
+        self.block_hash = block_hash;
 
         let config = self.get_system_config().await;
 
@@ -686,7 +695,10 @@ impl Chain {
     }
 
     pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
-        if self.fork_tree.is_empty() && glob_status.height > self.block_number {
+        if glob_status.height > self.block_number
+            && (self.fork_tree[0].is_empty()
+                || glob_status.height >= self.block_number + FORCE_IN_SYNC)
+        {
             info!("sync");
             ChainStep::SyncStep
         } else {
@@ -728,7 +740,8 @@ impl Chain {
         }
     }
 
-    pub async fn clear_fork_tree(&mut self) {
+    pub async fn clear_candidate(&mut self) {
         self.fork_tree[0].clear();
+        self.candidate_block = None;
     }
 }

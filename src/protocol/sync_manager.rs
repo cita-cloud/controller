@@ -20,6 +20,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+const DEFAULT_SYNC_INTERVAL: u64 = 20;
+
 #[derive(Clone, Default)]
 pub struct SyncManager {
     syncing_block_list: Arc<RwLock<BTreeMap<u64, (Address, Block)>>>,
@@ -88,9 +90,17 @@ pub mod sync_tx_respond {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct SyncConfig {
     sync_interval: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            sync_interval: DEFAULT_SYNC_INTERVAL,
+        }
+    }
 }
 
 impl SyncManager {
@@ -108,7 +118,7 @@ impl SyncManager {
                 wr.insert(height, (remote_address.clone(), block));
             }
         }
-        debug!("sync: insert_blocks: heights = {:?}", heights);
+        log::info!("sync: insert_blocks: heights = {:?}", heights);
         heights.len()
     }
 
@@ -175,9 +185,9 @@ impl SyncManager {
             let rd = self.syncing_block_list.read().await;
             rd.keys().last().map_or_else(
                 || current_height,
-                |h| {
-                    if h > &current_height {
-                        h + 1
+                |&h| {
+                    if h > current_height {
+                        h
                     } else {
                         current_height
                     }
@@ -194,6 +204,12 @@ impl SyncManager {
                 global_status.height
             }
         };
+
+        log::info!(
+            "SyncBlockRequest: start {}, end {}",
+            current_height + 1,
+            end_height
+        );
 
         Some(SyncBlockRequest {
             start_height: current_height + 1,
