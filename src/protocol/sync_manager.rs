@@ -15,7 +15,6 @@
 use crate::node_manager::ChainStatus;
 use cita_cloud_proto::blockchain::Block;
 use cita_cloud_proto::common::Address;
-use log::debug;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -171,6 +170,7 @@ impl SyncManager {
         Some(range_vec)
     }
 
+    #[allow(dead_code)]
     pub async fn clear(&self) {
         let mut wr = self.syncing_block_list.write().await;
         wr.clear();

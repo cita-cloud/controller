@@ -15,6 +15,7 @@
 use crate::node_manager::{ChainStatus, ChainStatusWithFlag};
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum EventTask {
     // update current status & or multicast current status
     UpdateStatus(ChainStatusWithFlag),

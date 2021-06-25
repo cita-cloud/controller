@@ -35,7 +35,7 @@ use cita_cloud_proto::{
     },
     network::NetworkMsg,
 };
-use log::{debug, info, warn};
+use log::{info, warn};
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -845,7 +845,7 @@ impl Controller {
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
     impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
-    impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
+    // impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 
     impl_unicast!(unicast_chain_status, ChainStatus, "chain_status");
     impl_unicast!(

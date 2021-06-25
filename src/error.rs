@@ -14,6 +14,7 @@
 
 /// The error types todo reorganize to different module
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Error {
     /// node in misbehave list
     MisbehaveNode,

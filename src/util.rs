@@ -323,6 +323,7 @@ pub fn get_tx_hash(raw_tx: &RawTransaction) -> Result<Vec<u8>, Error> {
     }
 }
 
+#[allow(dead_code)]
 pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Error> {
     let mut hashes = Vec::new();
     for raw_tx in &raw_txs.body {
@@ -673,6 +674,6 @@ pub fn h160_address_check(address: Option<&Address>) -> Result<(), Error> {
     }
 }
 
-pub fn check_sig(sig: &[u8], pubk: &[u8]) -> Result<(), Error> {
+pub fn check_sig(_sig: &[u8], _pubk: &[u8]) -> Result<(), Error> {
     return Ok(());
 }

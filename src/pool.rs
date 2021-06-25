@@ -105,6 +105,7 @@ impl Pool {
         self.order_set.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_contain(&self, tx_hash: &[u8]) -> bool {
         self.txs.get(tx_hash).is_some()
     }
