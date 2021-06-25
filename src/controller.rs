@@ -697,7 +697,12 @@ impl Controller {
                                 .handle_sync_blocks(sync_blocks.clone())
                                 .await
                             {
-                                Ok(_) => {}
+                                Ok(_) => {
+                                    controller_clone
+                                        .task_sender
+                                        .send(EventTask::SyncBlock)
+                                        .unwrap();
+                                }
                                 Err(Error::ProvideAddressError) | Err(Error::NoProvideAddress) => {
                                     warn!(
                                         "sync_block_respond error, origin: {}, message: given address error",
