@@ -14,11 +14,8 @@
 
 use crate::util::{clean_0x, hash_data};
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
-use log::warn;
 use prost::Message;
 use serde_derive::Deserialize;
-use std::time::Duration;
-use tokio::time;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
@@ -49,7 +46,7 @@ impl GenesisBlock {
         }
     }
 
-    pub async fn genesis_block_hash(&self, kms_port: u16) -> Vec<u8> {
+    pub fn genesis_block_hash(&self) -> Vec<u8> {
         let block = self.genesis_block();
         let header = block.header.unwrap();
 
@@ -58,19 +55,7 @@ impl GenesisBlock {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        let genesis_block_hash;
-        let mut interval = time::interval(Duration::from_secs(3));
-        loop {
-            interval.tick().await;
-            let ret = hash_data(kms_port, block_header_bytes.clone()).await;
-
-            if let Ok(block_hash) = ret {
-                genesis_block_hash = block_hash;
-                break;
-            }
-            warn!("hash block failed! Retrying");
-        }
-        genesis_block_hash
+        hash_data(&block_header_bytes)
     }
 }
 

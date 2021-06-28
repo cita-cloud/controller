@@ -82,8 +82,14 @@ pub enum Error {
     /// chain version or chain id check error
     VersionOrIdCheckError,
 
-    /// chain hash check error
+    /// hash check error
     HashCheckError,
+
+    /// hash len is not correct
+    HashLenError,
+
+    /// signature len is not correct
+    SigLenError,
 
     /// internal error, todo
     InternalError(Box<dyn std::error::Error + Send + Sync>),
@@ -131,7 +137,9 @@ impl ::std::fmt::Display for Error {
             Error::BlockCheckError => write!(f, "block hash check error"),
             Error::CSISigCheckError => write!(f, "The sig of chain status init check error"),
             Error::VersionOrIdCheckError => write!(f, "Chain version or chain id check error"),
-            Error::HashCheckError => write!(f, "Chain hash check error"),
+            Error::HashCheckError => write!(f, "Hash check error"),
+            Error::HashLenError => write!(f, "Hash len is not correct"),
+            Error::SigLenError => write!(f, "Signature is not correct"),
             Error::InternalError(e) => write!(f, "Internal Error: {}", e),
             Error::ExpectError(s) => write!(f, "Expect error: {}", s),
         }

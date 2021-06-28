@@ -44,23 +44,21 @@ pub struct ChainStatus {
 }
 
 impl ChainStatus {
-    pub async fn check(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), Error> {
         h160_address_check(self.address.as_ref())?;
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
             Err(Error::VersionOrIdCheckError)
         } else {
-            self.check_hash(own_status, kms_port).await?;
+            self.check_hash(own_status).await?;
             Ok(())
         }
     }
 
-    pub async fn check_hash(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+    pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), Error> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await.map(|t| t.0).unwrap();
-            if get_block_hash(kms_port, compact_block.header.as_ref()).await?
-                != self.hash.clone().unwrap().hash
-            {
+            if get_block_hash(compact_block.header.as_ref())? != self.hash.clone().unwrap().hash {
                 Err(Error::HashCheckError)
             } else {
                 Ok(())
@@ -82,13 +80,13 @@ pub struct ChainStatusInit {
 }
 
 impl ChainStatusInit {
-    pub async fn check(&self, own_status: &ChainStatus, kms_port: u16) -> Result<(), Error> {
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), Error> {
         check_sig(&self.signature, &self.public_key)?;
 
         self.chain_status
             .clone()
             .ok_or(Error::NoneChainStatus)?
-            .check(own_status, kms_port)
+            .check(own_status)
             .await?;
 
         Ok(())
@@ -409,7 +407,13 @@ impl NodeManager {
         if record_origin.is_none() {
             return Ok(false);
         } else if record_origin != Some(origin) {
-            Err(Error::AddressOriginCheckError)
+            let e = Error::AddressOriginCheckError;
+            log::warn!(
+                "check_address_origin: node(0x{}) {} ",
+                hex::encode(&node.address),
+                e.to_string()
+            );
+            Err(e)
         } else {
             Ok(true)
         }

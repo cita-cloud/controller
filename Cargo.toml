@@ -26,6 +26,8 @@ hex = "*"
 crossbeam = "*"
 backtrace = "*"
 bincode = "*"
+libsm = "0.4"
+efficient-sm2 = "0.1"
 
 [build-dependencies]
 tonic-build = "*"

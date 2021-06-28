@@ -238,9 +238,7 @@ impl Chain {
             for hash in tx_hash_list.iter() {
                 data.extend_from_slice(hash);
             }
-            let transactions_root = hash_data(self.kms_port, data)
-                .await
-                .map_err(Error::InternalError)?;
+            let transactions_root = hash_data(&data);
 
             let prevhash = if self.main_chain.is_empty() {
                 self.block_hash.clone()
@@ -270,9 +268,7 @@ impl Chain {
                 .encode(&mut block_header_bytes)
                 .expect("encode block header failed");
 
-            let block_hash = hash_data(self.kms_port, block_header_bytes)
-                .await
-                .map_err(Error::InternalError)?;
+            let block_hash = hash_data(&block_header_bytes);
 
             info!(
                 "proposal {} block_hash 0x{}",
@@ -281,7 +277,7 @@ impl Chain {
             );
 
             self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
-            self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
+            self.fork_tree[self.main_chain.len()].insert(block_hash, full_block);
 
             Ok(())
         }
@@ -503,8 +499,7 @@ impl Chain {
                 let mut candidate_chain = Vec::new();
                 let mut candidate_chain_tx_hash = Vec::new();
 
-                candidate_chain
-                    .push(get_block_hash(self.kms_port, full_block.header.as_ref()).await?);
+                candidate_chain.push(get_block_hash(full_block.header.as_ref())?);
                 candidate_chain_tx_hash.extend_from_slice(&compact_block.body.unwrap().tx_hashes);
 
                 let mut prev_hash = full_block.header.clone().unwrap().prevhash;
@@ -640,7 +635,7 @@ impl Chain {
         &mut self,
         block: Block,
     ) -> Result<(ConsensusConfiguration, ChainStatus), Error> {
-        let block_hash = get_block_hash(self.kms_port, block.header.as_ref()).await?;
+        let block_hash = get_block_hash(block.header.as_ref())?;
         let header = block.header.clone().unwrap();
         let height = header.height;
 
@@ -663,7 +658,7 @@ impl Chain {
         self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?)
             .await?;
 
-        self.finalize_block(block, get_block_hash(self.kms_port, Some(&header)).await?)
+        self.finalize_block(block, get_block_hash(Some(&header))?)
             .await;
 
         self.block_number = height;

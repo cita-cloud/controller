@@ -155,26 +155,14 @@ impl Authentication {
 
                     self.check_tx_hash(&tx_hash)?;
 
-                    if let Ok(is_ok) =
-                        verify_tx_hash(self.kms_port, tx_hash.clone(), tx_bytes).await
-                    {
-                        if !is_ok {
-                            return Err("Invalid tx_hash".to_owned());
-                        }
-                    } else {
-                        return Err("internal err".to_owned());
-                    }
+                    verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
 
-                    if let Ok(address) =
-                        verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
+                    if verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                        == sender
                     {
-                        if address == sender {
-                            Ok(tx_hash)
-                        } else {
-                            Err("Invalid sender".to_owned())
-                        }
+                        Ok(tx_hash)
                     } else {
-                        Err("internal err".to_owned())
+                        Err("Invalid sender".to_owned())
                     }
                 }
                 UtxoTx(utxo_tx) => {
@@ -202,29 +190,16 @@ impl Authentication {
                     }
 
                     let tx_hash = utxo_tx.transaction_hash;
-                    if let Ok(is_ok) =
-                        verify_tx_hash(self.kms_port, tx_hash.clone(), tx_bytes).await
-                    {
-                        if !is_ok {
-                            return Err("Invalid utxo tx hash".to_owned());
-                        }
-                    } else {
-                        return Err("internal err".to_owned());
-                    }
+                    verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
 
                     for (i, w) in witnesses.into_iter().enumerate() {
                         let signature = w.signature;
                         let sender = w.sender;
 
-                        if let Ok(address) =
-                            verify_tx_signature(self.kms_port, tx_hash.clone(), signature).await
+                        if verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                            != sender
                         {
-                            if address != sender {
-                                let err_str = format!("Invalid sender index: {}", i);
-                                return Err(err_str);
-                            }
-                        } else {
-                            return Err("internal err".to_owned());
+                            return Err(format!("Invalid sender index: {}", i));
                         }
                     }
                     Ok(tx_hash)

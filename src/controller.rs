@@ -373,7 +373,7 @@ impl Controller {
                 Some(Proposal::BftProposal(bft_proposal)) => {
                     let block = bft_proposal.proposal.ok_or(Error::NoneProposal)?;
 
-                    let block_hash = get_block_hash(self.kms_port, block.header.as_ref()).await?;
+                    let block_hash = get_block_hash(block.header.as_ref())?;
 
                     // todo re-enter check
                     if {
@@ -471,7 +471,7 @@ impl Controller {
                     })?;
 
                 let own_status = self.get_status().await;
-                match chain_status_init.check(&own_status, self.kms_port).await {
+                match chain_status_init.check(&own_status).await {
                     Ok(()) => {}
                     Err(e) => {
                         match e {
@@ -548,7 +548,7 @@ impl Controller {
                 })?;
 
                 let own_status = self.get_status().await;
-                match chain_status.check(&own_status, self.kms_port).await {
+                match chain_status.check(&own_status).await {
                     Ok(()) => {}
                     Err(e) => {
                         match e {
@@ -585,7 +585,8 @@ impl Controller {
                             .await?;
                         self.try_update_global_status(&node, chain_status).await?;
                     }
-                    Ok(false) => {
+                    // give Ok or Err for process_network_msg is same
+                    Err(Error::AddressOriginCheckError) | Ok(false) => {
                         self.unicast_chain_status_init_req(
                             self.network_port,
                             msg.origin,
@@ -787,14 +788,17 @@ impl Controller {
             }
 
             ControllerMsgType::SendTxType => {
-                let send_txs = RawTransactions::decode(msg.msg.as_slice()).map_err(|_| {
+                let send_tx = RawTransaction::decode(msg.msg.as_slice()).map_err(|_| {
                     Error::DecodeError(format!(
                         "decode {} msg failed",
                         ControllerMsgType::SendTxType
                     ))
                 })?;
 
-                self.batch_transactions(send_txs).await?;
+                self.batch_transactions(RawTransactions {
+                    body: vec![send_tx],
+                })
+                .await?;
             }
 
             ControllerMsgType::SendProposalType => {
@@ -807,10 +811,7 @@ impl Controller {
 
                 let controller_clone = self.clone();
                 tokio::spawn(async move {
-                    let block_hash =
-                        get_block_hash(controller_clone.kms_port, full_block.header.as_ref())
-                            .await
-                            .unwrap();
+                    let block_hash = get_block_hash(full_block.header.as_ref()).unwrap();
 
                     if let Some(body) = full_block.body.clone() {
                         let _ = controller_clone.batch_transactions(body).await;
@@ -942,9 +943,7 @@ impl Controller {
             .unwrap()
             .encode(&mut header_bytes)
             .map_err(|_| Error::EncodeError(format!("encode compact block error")))?;
-        let block_hash = hash_data(self.kms_port, header_bytes)
-            .await
-            .map_err(Error::InternalError)?;
+        let block_hash = hash_data(&header_bytes);
 
         Ok(ChainStatus {
             version: config.version,
@@ -1022,7 +1021,7 @@ impl Controller {
     pub async fn try_sync_block(&self) {
         let current_height = self.get_status().await.height;
 
-        let (global_address, global_status) = { self.global_status.read().await.clone() };
+        let (global_address, global_status) = self.get_global_status().await;
 
         if global_address.address.is_empty() {
             return;

@@ -38,7 +38,7 @@ const GIT_VERSION: &str = git_version!(
 );
 const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
-const DEFAULT_PACKAGE_LIMIT: usize = 4000;
+const DEFAULT_PACKAGE_LIMIT: usize = 6000;
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -473,7 +473,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
         } else {
             self.controller.process_network_msg(msg).await.map_or_else(
                 |e| {
-                    warn!("rpc: process_network_msg failed: {:?}", e);
+                    warn!("rpc: process_network_msg failed: {}", e.to_string());
                     Err(Status::invalid_argument(e.to_string()))
                 },
                 |r| Ok(Response::new(r)),
@@ -491,7 +491,7 @@ use crate::node_manager::chain_status_respond::Respond;
 use crate::node_manager::ChainStatusRespond;
 use crate::protocol::sync_manager::SyncTxRequest;
 use crate::util::{
-    clean_0x, hash_data, header_to_block_hash, load_data, load_data_maybe_empty, reconfigure,
+    clean_0x, get_block_hash, get_compact_block, load_data, load_data_maybe_empty, reconfigure,
 };
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
@@ -534,19 +534,19 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         warn!("register network msg handler failed! Retrying");
     }
 
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        interval.tick().await;
-        // register endpoint
-        {
-            let ret = hash_data(kms_port, vec![0u8; 32]).await;
-            if ret.is_ok() {
-                info!("kms is ready!");
-                break;
-            }
-        }
-        warn!("kms not ready! Retrying");
-    }
+    // let mut interval = time::interval(Duration::from_secs(3));
+    // loop {
+    //     interval.tick().await;
+    //     // register endpoint
+    //     {
+    //         let ret = hash_data(kms_port, vec![0u8; 32]).await;
+    //         if ret.is_ok() {
+    //             info!("kms is ready!");
+    //             break;
+    //         }
+    //     }
+    //     warn!("kms not ready! Retrying");
+    // }
 
     // load key_id
     let buffer = fs::read_to_string("key_id")
@@ -580,7 +580,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     if current_block_number_bytes.is_empty() {
                         info!("this is a new chain!");
                         current_block_number = 0u64;
-                        current_block_hash = genesis.genesis_block_hash(kms_port).await;
+                        current_block_hash = genesis.genesis_block_hash();
                     } else {
                         info!("this is an old chain!");
                         let mut bytes: [u8; 8] = [0; 8];
@@ -718,17 +718,13 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
 
                     if own_status.height >= chain_status.height {
-                        let own_old_compact_block = {
-                            let rd = controller_clone.chain.read().await;
-                            rd.get_block_by_number(chain_status.height)
-                                .await
-                                .expect("a specified block not get!")
-                        };
+                        let own_old_compact_block = get_compact_block(chain_status.height)
+                            .await
+                            .map(|t| t.0)
+                            .expect("a specified block not get!");
 
                         let own_old_block_hash =
-                            header_to_block_hash(kms_port, own_old_compact_block.header.unwrap())
-                                .await
-                                .unwrap();
+                            get_block_hash(own_old_compact_block.header.as_ref()).unwrap();
 
                         if let Some(ext_hash) = chain_status.hash.clone() {
                             if ext_hash.hash != own_old_block_hash {

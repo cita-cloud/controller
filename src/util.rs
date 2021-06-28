@@ -17,10 +17,10 @@ use cita_cloud_proto::blockchain::{
 };
 use cita_cloud_proto::consensus::consensus_service_client::ConsensusServiceClient;
 use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
-use cita_cloud_proto::kms::{
-    kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
-    VerifyDataHashRequest,
-};
+// use cita_cloud_proto::kms::{
+//     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
+//     VerifyDataHashRequest,
+// };
 use cita_cloud_proto::network::{
     network_service_client::NetworkServiceClient, NetworkStatusResponse,
 };
@@ -38,6 +38,10 @@ use prost::Message;
 use std::path::Path;
 use tokio::fs;
 use tonic::Code;
+
+pub const ADDR_BYTES_LEN: usize = 20;
+pub const HASH_BYTES_LEN: usize = 32;
+pub const SM2_SIGNATURE_BYTES_LEN: usize = 128;
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -73,59 +77,113 @@ pub async fn check_block(
     Ok(response.into_inner().is_success)
 }
 
-pub async fn verify_tx_signature(
-    kms_port: u16,
-    tx_hash: Vec<u8>,
-    signature: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    let mut client = KmsServiceClient::connect(kms_addr).await?;
+pub fn verify_tx_signature(
+    // kms_port: u16,
+    tx_hash: &[u8],
+    signature: &[u8],
+) -> Result<Vec<u8>, Error> {
+    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
+    // let mut client = KmsServiceClient::connect(kms_addr).await?;
+    //
+    // let request = Request::new(RecoverSignatureRequest {
+    //     msg: tx_hash,
+    //     signature,
+    // });
+    //
+    // match client.recover_signature(request).await {
+    //     Ok(response) => Ok(response.into_inner().address),
+    //     Err(e) => {
+    //         if e.code() == Code::InvalidArgument {
+    //             Ok(vec![])
+    //         } else {
+    //             Err(Box::new(e))
+    //         }
+    //     }
+    // }
 
-    let request = Request::new(RecoverSignatureRequest {
-        msg: tx_hash,
-        signature,
-    });
+    if signature.len() != SM2_SIGNATURE_BYTES_LEN {
+        warn!(
+            "signature len is not correct, item len: {}, correct len: {}",
+            signature.len(),
+            SM2_SIGNATURE_BYTES_LEN
+        );
+        Err(Error::SigLenError)
+    } else {
+        Ok(pk2address(&sm2_recover(signature, tx_hash)?))
+    }
+}
 
-    match client.recover_signature(request).await {
-        Ok(response) => Ok(response.into_inner().address),
-        Err(e) => {
-            if e.code() == Code::InvalidArgument {
-                Ok(vec![])
-            } else {
-                Err(Box::new(e))
-            }
+fn sm2_recover(signature: &[u8], message: &[u8]) -> Result<Vec<u8>, Error> {
+    let r = &signature[0..32];
+    let s = &signature[32..64];
+    let pk = &signature[64..];
+
+    let signature =
+        efficient_sm2::Signature::new(r, s).map_err(|e| Error::ExpectError(e.to_string()))?;
+    let public_key = efficient_sm2::PublicKey::new(&pk[..32], &pk[32..]);
+
+    signature.verify(&public_key, message).map_or_else(
+        |e| Err(Error::ExpectError(e.to_string())),
+        |_| Ok(pk.to_vec()),
+    )
+}
+
+pub fn pk2address(pk: &[u8]) -> Vec<u8> {
+    hash_data(pk)[HASH_BYTES_LEN - ADDR_BYTES_LEN..].to_vec()
+}
+
+pub fn verify_tx_hash(
+    // kms_port: u16,
+    tx_hash: &[u8],
+    tx_bytes: &[u8],
+) -> Result<(), Error> {
+    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
+    // let mut client = KmsServiceClient::connect(kms_addr).await?;
+    //
+    // let request = Request::new(VerifyDataHashRequest {
+    //     data: tx_bytes,
+    //     hash: tx_hash,
+    // });
+    //
+    // let response = client.verify_data_hash(request).await?;
+    // Ok(response.into_inner().is_success)
+
+    if tx_hash.len() != HASH_BYTES_LEN {
+        warn!(
+            "tx_hash len is not correct, item len: {}, correct len: {}",
+            tx_hash.len(),
+            HASH_BYTES_LEN
+        );
+        Err(Error::HashLenError)
+    } else {
+        let computed_hash = hash_data(tx_bytes);
+        if tx_hash != computed_hash {
+            warn!(
+                "tx_hash is not consistent, item hash: {}, computed hash: {}",
+                hex::encode(tx_hash),
+                hex::encode(&hash_data(tx_bytes))
+            );
+            Err(Error::HashCheckError)
+        } else {
+            Ok(())
         }
     }
 }
 
-pub async fn verify_tx_hash(
-    kms_port: u16,
-    tx_hash: Vec<u8>,
-    tx_bytes: Vec<u8>,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    let mut client = KmsServiceClient::connect(kms_addr).await?;
+// todo wrap in library
+pub fn hash_data(
+    // kms_port: u16,
+    data: &[u8],
+) -> Vec<u8> {
+    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
+    // let mut client = KmsServiceClient::connect(kms_addr).await?;
+    //
+    // let request = Request::new(HashDataRequest { data });
+    //
+    // let response = client.hash_data(request).await?;
+    // Ok(response.into_inner().hash)
 
-    let request = Request::new(VerifyDataHashRequest {
-        data: tx_bytes,
-        hash: tx_hash,
-    });
-
-    let response = client.verify_data_hash(request).await?;
-    Ok(response.into_inner().is_success)
-}
-
-pub async fn hash_data(
-    kms_port: u16,
-    data: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    let mut client = KmsServiceClient::connect(kms_addr).await?;
-
-    let request = Request::new(HashDataRequest { data });
-
-    let response = client.hash_data(request).await?;
-    Ok(response.into_inner().hash)
+    libsm::sm3::hash::Sm3Hash::new(data).get_hash().to_vec()
 }
 
 pub async fn store_data(
@@ -225,20 +283,6 @@ pub fn full_to_compact(block: Block) -> CompactBlock {
     }
 }
 
-pub async fn header_to_block_hash(
-    kms_port: u16,
-    block_header: BlockHeader,
-) -> Result<Vec<u8>, crate::error::Error> {
-    let mut block_header_bytes = Vec::new();
-    block_header
-        .encode(&mut block_header_bytes)
-        .map_err(|_| crate::error::Error::EncodeError(format!("encode block header failed")))?;
-
-    hash_data(kms_port, block_header_bytes)
-        .await
-        .map_err(crate::error::Error::InternalError)
-}
-
 pub async fn exec_block(
     executor_port: u16,
     block: Block,
@@ -332,16 +376,14 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Error
     Ok(hashes)
 }
 
-pub async fn get_block_hash(kms_port: u16, header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
+pub fn get_block_hash(header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
     match header {
         Some(header) => {
             let mut block_header_bytes = Vec::new();
             header
                 .encode(&mut block_header_bytes)
                 .expect("encode block header failed");
-            let block_hash = hash_data(kms_port, block_header_bytes)
-                .await
-                .map_err(Error::InternalError)?;
+            let block_hash = hash_data(&block_header_bytes);
             Ok(block_hash)
         }
 
@@ -584,7 +626,7 @@ macro_rules! impl_unicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::info!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
+            log::debug!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
