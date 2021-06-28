@@ -58,6 +58,9 @@ pub enum Error {
     /// no candidate block
     NoCandidate,
 
+    /// not get early status
+    NoEarlyStatus,
+
     /// fork tree no block
     NoForkTree,
 
@@ -72,6 +75,9 @@ pub enum Error {
 
     /// proposal check error
     ProposalCheckError,
+
+    /// consensus check proposal error
+    ConsensusProposalCheckError,
 
     /// block hash check error
     BlockCheckError,
@@ -119,6 +125,7 @@ impl ::std::fmt::Display for Error {
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
             Error::DecodeError(s) => write!(f, "Proto struct decode error: {}", s),
             Error::NoCandidate => write!(f, "No candidate block"),
+            Error::NoEarlyStatus => write!(f, "Early status can not be queried"),
             Error::ProposalTooHigh(proposal, current) => write!(
                 f,
                 "Proposal(h: {}) is higher than current(h: {})",
@@ -130,6 +137,7 @@ impl ::std::fmt::Display for Error {
                 proposal, current
             ),
             Error::ProposalCheckError => write!(f, "Proposal check error"),
+            Error::ConsensusProposalCheckError => write!(f, "consensus proposal check error"),
             Error::NoForkTree => write!(f, "Fork tree no block"),
             Error::DupTransaction(h) => {
                 write!(f, "Found dup transaction 0x{}", hex::encode(h))

@@ -167,24 +167,31 @@ impl Chain {
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
         if let Some((h, _, block)) = self.candidate_block.clone() {
-            if let Some((pre_state_root, pre_proof)) = self.extract_proposal_info(h).await {
-                let proposal = ProposalEnum {
-                    proposal: Some(Proposal::BftProposal(BftProposal {
-                        proposal: Some(block),
-                        pre_state_root,
-                        pre_proof,
-                    })),
-                };
-
-                let mut proposal_bytes = Vec::new();
-                proposal
-                    .encode(&mut proposal_bytes)
-                    .expect("get_proposal: encode proposal failed.");
-
-                return Ok((h, proposal_bytes));
-            }
+            return Ok((h, self.assemble_proposal(block, h).await?));
         }
         Err(Error::NoCandidate)
+    }
+
+    pub async fn assemble_proposal(&self, mut block: Block, height: u64) -> Result<Vec<u8>, Error> {
+        block.proof = Vec::new();
+        if let Some((pre_state_root, pre_proof)) = self.extract_proposal_info(height).await {
+            let proposal = ProposalEnum {
+                proposal: Some(Proposal::BftProposal(BftProposal {
+                    proposal: Some(block),
+                    pre_state_root,
+                    pre_proof,
+                })),
+            };
+
+            let mut proposal_bytes = Vec::new();
+            proposal
+                .encode(&mut proposal_bytes)
+                .map_err(|_| Error::EncodeError(format!("encode proposal error")))?;
+
+            Ok(proposal_bytes)
+        } else {
+            Err(Error::NoEarlyStatus)
+        }
     }
 
     pub async fn add_remote_proposal(
@@ -333,7 +340,11 @@ impl Chain {
         let block_height = block_header.height;
         let key = block_height.to_be_bytes().to_vec();
 
-        info!("finalize_block: {}", block_height);
+        info!(
+            "finalize_block: {}, block_hash: 0x{}",
+            block_height,
+            hex::encode(&block_hash)
+        );
 
         // region 5 : block_height - proof
         // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
@@ -557,7 +568,6 @@ impl Chain {
                     if self.main_chain.len() > self.block_delay_number as usize {
                         let finalized_blocks_number =
                             self.main_chain.len() - self.block_delay_number as usize;
-                        info!("{} blocks finalized", finalized_blocks_number);
                         let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
                         let mut finalized_tx_hash_list = Vec::new();
                         // save finalized blocks / txs / current height / current hash
@@ -655,6 +665,26 @@ impl Chain {
             return Err(Error::BlockCheckError);
         }
 
+        let proposal_bytes = self.assemble_proposal(block.clone(), height).await?;
+
+        check_block(
+            self.consensus_port,
+            height,
+            proposal_bytes,
+            block.proof.clone(),
+        )
+        .await
+        .map_or_else(
+            |e| Err(Error::InternalError(e)),
+            |res| {
+                if !res {
+                    Err(Error::ConsensusProposalCheckError)
+                } else {
+                    Ok(())
+                }
+            },
+        )?;
+
         self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?)
             .await?;
 
@@ -694,10 +724,10 @@ impl Chain {
             && (self.fork_tree[0].is_empty()
                 || glob_status.height >= self.block_number + FORCE_IN_SYNC)
         {
-            info!("sync");
+            log::debug!("in sync mod");
             ChainStep::SyncStep
         } else {
-            info!("online");
+            log::debug!("in online mod");
             ChainStep::OnlineStep
         }
     }

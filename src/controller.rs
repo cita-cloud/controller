@@ -30,12 +30,12 @@ use crate::{GenesisBlock, DEFAULT_PACKAGE_LIMIT};
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     common::{
-        proposal_enum::Proposal, Address, BftProposal, ConsensusConfiguration, Hash, ProposalEnum,
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Hash, ProposalEnum,
         SimpleResponse,
     },
     network::NetworkMsg,
 };
-use log::{info, warn};
+use log::warn;
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -377,7 +377,10 @@ impl Controller {
 
                     // todo re-enter check
                     if {
-                        log::info!("add remote proposal through check_proposal");
+                        log::info!(
+                            "add remote proposal(0x{}) through check_proposal",
+                            hex::encode(&block_hash)
+                        );
                         let mut chain = self.chain.write().await;
                         chain
                             .add_remote_proposal(&block_hash, block.clone())
@@ -459,7 +462,7 @@ impl Controller {
     }
 
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
-        info!("get network msg: {}", msg.r#type);
+        log::debug!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
             ControllerMsgType::ChainStatusInitType => {
                 let chain_status_init =
@@ -982,35 +985,6 @@ impl Controller {
 
     async fn handle_sync_blocks(&self, sync_blocks: SyncBlocks) -> Result<usize, Error> {
         h160_address_check(sync_blocks.address.as_ref())?;
-
-        for sync_block in sync_blocks.sync_blocks.clone() {
-            let block_height = sync_block
-                .header
-                .ok_or_else(|| Error::NoneBlockHeader)?
-                .height;
-
-            let proposal = ProposalEnum {
-                proposal: Some(Proposal::BftProposal(BftProposal {
-                    pre_state_root: vec![],
-                    pre_proof: vec![],
-                    proposal: None,
-                })),
-            };
-
-            let mut proposal_bytes = Vec::new();
-            proposal
-                .encode(&mut proposal_bytes)
-                .map_err(|_| Error::EncodeError("encode proposal failed".to_string()))?;
-
-            check_block(
-                self.consensus_port,
-                block_height,
-                proposal_bytes,
-                sync_block.proof.clone(),
-            )
-            .await
-            .map_err(|e| Error::InternalError(e))?;
-        }
 
         Ok(self
             .sync_manager

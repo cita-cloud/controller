@@ -813,7 +813,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             let (ex_addr, ex_status) =
                                                 controller_clone.node_manager.pick_node().await;
                                             controller_clone
-                                                .update_global_status(ex_addr, ex_status.clone())
+                                                .update_global_status(ex_addr, ex_status)
                                                 .await;
                                         }
                                         if let Some(range_heights) = controller_clone
@@ -823,24 +823,29 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                         {
                                             let (global_address, global_status) =
                                                 controller_clone.get_global_status().await;
-                                            let global_origin = controller_clone
-                                                .node_manager
-                                                .get_origin(&global_address)
-                                                .await
-                                                .unwrap();
-                                            for range_height in range_heights {
-                                                if let Some(reqs) = controller_clone
-                                                    .sync_manager
-                                                    .re_sync_block_req(range_height, &global_status)
-                                                {
-                                                    for req in reqs {
-                                                        controller_clone
-                                                            .unicast_sync_block(
-                                                                controller_clone.network_port,
-                                                                global_origin,
-                                                                req,
-                                                            )
-                                                            .await;
+                                            if !global_address.address.is_empty() {
+                                                let global_origin = controller_clone
+                                                    .node_manager
+                                                    .get_origin(&global_address)
+                                                    .await
+                                                    .unwrap();
+                                                for range_height in range_heights {
+                                                    if let Some(reqs) = controller_clone
+                                                        .sync_manager
+                                                        .re_sync_block_req(
+                                                            range_height,
+                                                            &global_status,
+                                                        )
+                                                    {
+                                                        for req in reqs {
+                                                            controller_clone
+                                                                .unicast_sync_block(
+                                                                    controller_clone.network_port,
+                                                                    global_origin,
+                                                                    req,
+                                                                )
+                                                                .await;
+                                                        }
                                                     }
                                                 }
                                             }
