@@ -258,7 +258,7 @@ impl NodeManager {
         };
 
         if status.is_none() || status.unwrap().height < chain_status.height {
-            log::info!("add node: 0x{}", hex::encode(&na.0));
+            log::debug!("update node: 0x{}", hex::encode(&na.0));
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(na, chain_status))
         } else {

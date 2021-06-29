@@ -489,7 +489,6 @@ use crate::error::Error;
 use crate::event::EventTask;
 use crate::node_manager::chain_status_respond::Respond;
 use crate::node_manager::ChainStatusRespond;
-use crate::protocol::sync_manager::SyncTxRequest;
 use crate::util::{
     clean_0x, get_block_hash, get_compact_block, load_data, load_data_maybe_empty, reconfigure,
 };
@@ -677,16 +676,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
     tokio::spawn(async move {
         while let Some(event_task) = task_receiver.recv().await {
             match event_task {
-                EventTask::UpdateStatus(mut csf) => {
-                    if controller_clone.update_from_chain(csf.status.clone()).await
-                        && csf.broadcast_or_not
-                    {
-                        csf.status.address = Some(controller_clone.local_address.clone());
-                        controller_clone
-                            .multicast_chain_status(network_port, csf.status)
-                            .await;
-                    }
-                }
                 EventTask::ChainStatusRep(chain_status, origin) => {
                     let node = chain_status.address.clone().unwrap();
                     info!(
@@ -778,7 +767,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     //     .await;
                 }
                 EventTask::SyncBlock => {
-                    info!("receive sync block event");
+                    log::debug!("receive sync block event");
                     let (global_address, global_status) =
                         controller_clone.get_global_status().await;
                     let mut own_status = controller_clone.get_status().await;
@@ -858,11 +847,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         }
                         _ => {}
                     }
-                }
-                EventTask::SyncTransaction(tx_hash) => {
-                    controller_clone
-                        .multicast_sync_tx(controller_clone.network_port, SyncTxRequest { tx_hash })
-                        .await;
                 }
             }
         }

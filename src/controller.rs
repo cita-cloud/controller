@@ -853,7 +853,7 @@ impl Controller {
     // impl_multicast!(multicast_send_proposal, Block, "send_proposal");
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
-    impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
+    // impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
     // impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 
     impl_unicast!(unicast_chain_status, ChainStatus, "chain_status");
@@ -965,22 +965,6 @@ impl Controller {
     pub async fn set_status(&self, status: ChainStatus) {
         let mut wr = self.current_status.write().await;
         *wr = status;
-    }
-
-    pub async fn update_from_chain(&self, status: ChainStatus) -> bool {
-        let old_status = {
-            let rd = self.current_status.read().await;
-            rd.clone()
-        };
-
-        if old_status.height < status.height {
-            let mut wr = self.current_status.write().await;
-            wr.height = status.height;
-            wr.hash = status.hash;
-            true
-        } else {
-            false
-        }
     }
 
     async fn handle_sync_blocks(&self, sync_blocks: SyncBlocks) -> Result<usize, Error> {
