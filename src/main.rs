@@ -842,6 +842,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     }
                                 }
                             }
+                            // todo delete it & keep sync block in a thread atom operate a flag
                             chain.downgrade();
                             controller_clone.try_sync_block().await;
                         }
