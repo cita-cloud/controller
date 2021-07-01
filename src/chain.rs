@@ -340,12 +340,6 @@ impl Chain {
         let block_height = block_header.height;
         let key = block_height.to_be_bytes().to_vec();
 
-        info!(
-            "finalize_block: {}, block_hash: 0x{}",
-            block_height,
-            hex::encode(&block_hash)
-        );
-
         // region 5 : block_height - proof
         // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
         //    .await
@@ -463,6 +457,12 @@ impl Chain {
             pool.update(&tx_hash_list);
         }
 
+        info!(
+            "finalize_block: {}, block_hash: 0x{}",
+            block_height,
+            hex::encode(&block_hash)
+        );
+
         // region 0: 0 - current height; 1 - current hash
         store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
             .await
@@ -471,7 +471,7 @@ impl Chain {
             self.storage_port,
             0,
             1u64.to_be_bytes().to_vec(),
-            block_hash.to_owned(),
+            block_hash,
         )
         .await
         .expect("store_data failed");

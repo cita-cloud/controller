@@ -384,8 +384,7 @@ impl Controller {
                         let mut chain = self.chain.write().await;
                         chain
                             .add_remote_proposal(&block_hash, block.clone())
-                            .await
-                            .unwrap()
+                            .await?
                             && !chain.is_candidate(&block_hash)
                     } {
                         let _ = self
