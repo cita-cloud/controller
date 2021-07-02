@@ -123,6 +123,8 @@ pub struct Controller {
     pub(crate) sync_manager: SyncManager,
 
     task_sender: mpsc::UnboundedSender<EventTask>,
+    // sync state flag
+    is_sync: Arc<RwLock<bool>>,
 }
 
 impl Controller {
@@ -201,6 +203,7 @@ impl Controller {
             node_manager: NodeManager::default(),
             sync_manager: SyncManager::default(),
             task_sender,
+            is_sync: Arc::new(RwLock::new(false)),
         }
     }
 
@@ -291,10 +294,10 @@ impl Controller {
         Ok(())
     }
 
-    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, String> {
+    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
         let block_number = load_data(self.storage_port, 8, hash)
             .await
-            .map_err(|_| "load block number failed".to_owned())
+            .map_err(|_| {Error::NoBlockHeight})
             .map(|v| {
                 let mut bytes: [u8; 8] = [0; 8];
                 bytes[..8].clone_from_slice(&v[..8]);
@@ -332,14 +335,11 @@ impl Controller {
             .map(|status| status.peer_count)
     }
 
-    pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, String> {
-        let chain = self.chain.read().await;
-        let ret = chain.get_block_by_number(block_number).await;
-        if ret.is_none() {
-            Err("can't find block by number".to_owned())
-        } else {
-            Ok(ret.unwrap())
-        }
+    pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, Error> {
+        get_compact_block(block_number)
+            .await
+            .map(|t| t.0)
+            .ok_or(Error::NoBlock(block_number))
     }
 
     pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, String> {
@@ -985,31 +985,58 @@ impl Controller {
     }
 
     pub async fn try_sync_block(&self) {
-        let current_height = self.get_status().await.height;
-
-        let (global_address, global_status) = self.get_global_status().await;
-
-        if global_address.address.is_empty() {
+        if self.get_sync_state().await {
             return;
         }
 
-        let origin = self.node_manager.get_origin(&global_address).await.unwrap();
+        let mut current_height = self.get_status().await.height;
 
-        match {
-            let chain = self.chain.read().await;
-            chain.next_step(&global_status).await
-        } {
-            ChainStep::SyncStep => {
-                if let Some(sync_req) = self
-                    .sync_manager
-                    .get_sync_block_req(current_height, &global_status)
+        let controller_clone = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let (global_address, global_status) = controller_clone.get_global_status().await;
+
+                if global_address.address.is_empty() {
+                    return;
+                }
+
+                let origin = controller_clone
+                    .node_manager
+                    .get_origin(&global_address)
                     .await
-                {
-                    self.unicast_sync_block(self.network_port, origin, sync_req)
-                        .await;
+                    .unwrap();
+
+                match {
+                    let chain = controller_clone.chain.read().await;
+                    chain.next_step(&global_status).await
+                } {
+                    ChainStep::SyncStep => {
+                        if let Some(sync_req) = controller_clone
+                            .sync_manager
+                            .get_sync_block_req(current_height, &global_status)
+                            .await
+                        {
+                            current_height = sync_req.end_height;
+                            controller_clone
+                                .unicast_sync_block(controller_clone.network_port, origin, sync_req)
+                                .await
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    ChainStep::OnlineStep => return,
                 }
             }
-            _ => {}
-        }
+        });
+    }
+
+    pub async fn get_sync_state(&self) -> bool {
+        let rd = self.is_sync.read().await;
+        rd.clone()
+    }
+
+    pub async fn set_sync_state(&self, state: bool) {
+        let mut wr = self.is_sync.write().await;
+        *wr = state;
     }
 }
