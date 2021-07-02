@@ -164,7 +164,7 @@ impl RpcService for RPCServer {
             .rpc_send_raw_transaction(raw_tx, true)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |tx_hash| {
                     let reply = Response::new(Hash { hash: tx_hash });
                     Ok(reply)

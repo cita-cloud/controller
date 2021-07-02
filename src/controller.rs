@@ -239,21 +239,26 @@ impl Controller {
         &self,
         raw_tx: RawTransaction,
         broadcast: bool,
-    ) -> Result<Vec<u8>, String> {
-        let tx_hash = {
-            let auth = self.auth.read().await;
-            auth.check_raw_tx(raw_tx.clone()).await?
-        };
+    ) -> Result<Vec<u8>, Error> {
+        let tx_hash = get_tx_hash(&raw_tx)?;
 
         {
             let chain = self.chain.read().await;
             if chain.check_dup_tx(&tx_hash) {
-                return Err(format!(
-                    "Dup transaction in chain, hash: {}",
+                warn!(
+                    "rpc_send_raw_transaction: found dup tx(0x{}) in main_chain_tx_hash",
                     hex::encode(&tx_hash)
-                ));
+                );
+                return Err(Error::DupTransaction(tx_hash.to_vec()));
             }
         }
+
+        {
+            let auth = self.auth.read().await;
+            auth.check_raw_tx(raw_tx.clone())
+                .await
+                .map_err(Error::ExpectError)?;
+        };
 
         if {
             let mut pool = self.pool.write().await;
@@ -264,10 +269,11 @@ impl Controller {
             }
             Ok(tx_hash)
         } else {
-            Err(format!(
-                "Dup transaction in pool, hash: {}",
-                hex::encode(tx_hash)
-            ))
+            warn!(
+                "rpc_send_raw_transaction: found dup tx(0x{}) in pool",
+                hex::encode(&tx_hash)
+            );
+            Err(Error::DupTransaction(tx_hash.to_vec()))
         }
     }
 
@@ -429,14 +435,19 @@ impl Controller {
             });
         }
 
-        let mut chain = self.chain.write().await;
-        match chain.commit_block(height, proposal, proof).await {
+        match {
+            let mut chain = self.chain.write().await;
+            chain.commit_block(height, proposal, proof).await
+        } {
             Ok((config, mut status)) => {
                 status.address = Some(self.local_address.clone());
                 self.set_status(status.clone()).await;
                 self.multicast_chain_status(self.network_port, status).await;
                 let (_, global_status) = self.get_global_status().await;
-                match chain.next_step(&global_status).await {
+                match {
+                    let chain = self.chain.read().await;
+                    chain.next_step(&global_status).await
+                } {
                     ChainStep::SyncStep => {
                         self.try_sync_block().await;
                     }
@@ -781,9 +792,7 @@ impl Controller {
                         self.delete_global_status(&node).await;
                     }
                     Some(Respond::Ok(raw_tx)) => {
-                        self.rpc_send_raw_transaction(raw_tx, false)
-                            .await
-                            .map_err(Error::ExpectError)?;
+                        self.rpc_send_raw_transaction(raw_tx, false).await?;
                     }
                     None => {}
                 }
