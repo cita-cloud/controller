@@ -183,7 +183,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_hash(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -202,7 +202,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_number(block_number.block_number)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -772,14 +772,17 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         controller_clone.get_global_status().await;
                     let mut own_status = controller_clone.get_status().await;
                     let mut chain = controller_clone.chain.write().await;
+                    // get chain lock means syncing
+                    controller_clone.set_sync_state(true).await;
+
                     match chain.next_step(&global_status).await {
                         ChainStep::SyncStep => {
-                            chain.clear_candidate().await;
                             while let Some((addr, block)) = controller_clone
                                 .sync_manager
                                 .pop_block(own_status.height + 1)
                                 .await
                             {
+                                chain.clear_candidate().await;
                                 match chain.process_block(block).await {
                                     Ok((consensus_config, status)) => {
                                         controller_clone.set_status(status.clone()).await;
@@ -842,12 +845,10 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                     }
                                 }
                             }
-                            // todo delete it & keep sync block in a thread atom operate a flag
-                            chain.downgrade();
-                            controller_clone.try_sync_block().await;
                         }
                         _ => {}
                     }
+                    controller_clone.set_sync_state(false).await;
                 }
             }
         }

@@ -21,7 +21,7 @@ use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::{
-    Block, BlockHeader, CompactBlock, RawTransaction, RawTransactions,
+    Block, BlockHeader, RawTransaction, RawTransactions,
 };
 use cita_cloud_proto::common::{
     proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum,
@@ -129,14 +129,6 @@ impl Chain {
             self.block_number + self.main_chain.len() as u64
         } else {
             self.block_number
-        }
-    }
-
-    pub async fn get_block_by_number(&self, block_number: u64) -> Option<CompactBlock> {
-        if block_number == 0 {
-            Some(full_to_compact(self.genesis.genesis_block()))
-        } else {
-            get_compact_block(block_number).await.map(|t| t.0)
         }
     }
 
@@ -719,10 +711,10 @@ impl Chain {
         rd.get_system_config()
     }
 
-    pub async fn next_step(&self, glob_status: &ChainStatus) -> ChainStep {
-        if glob_status.height > self.block_number
+    pub async fn next_step(&self, global_status: &ChainStatus) -> ChainStep {
+        if global_status.height > self.block_number
             && (self.fork_tree[0].is_empty()
-                || glob_status.height >= self.block_number + FORCE_IN_SYNC)
+                || global_status.height >= self.block_number + FORCE_IN_SYNC)
         {
             log::debug!("in sync mod");
             ChainStep::SyncStep

@@ -34,6 +34,9 @@ pub enum Error {
     /// not get the block
     NoBlock(u64),
 
+    /// not get the block height base on hash
+    NoBlockHeight,
+
     /// proposal is none
     NoneProposal,
 
@@ -117,6 +120,7 @@ impl ::std::fmt::Display for Error {
             Error::ProvideAddressError => write!(f, "Provide address len is not 20"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
+            Error::NoBlockHeight => write!(f, "Can't get block height base on hash"),
             Error::NoneProposal => write!(f, "Proposal should not be none"),
             Error::NoneBlockBody => write!(f, "BlockBody should not be none"),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be none"),
