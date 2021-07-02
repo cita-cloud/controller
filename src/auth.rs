@@ -19,12 +19,14 @@ use cita_cloud_proto::blockchain::RawTransaction;
 use cita_cloud_proto::blockchain::{Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use prost::Message;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::iter::FromIterator;
 
 pub const BLOCKLIMIT: u64 = 100;
 
 #[derive(Clone)]
 pub struct Authentication {
-    history_hashes: HashMap<u64, Vec<Vec<u8>>>,
+    history_hashes: HashMap<u64, HashSet<Vec<u8>>>,
     current_block_number: u64,
     sys_config: SystemConfig,
 }
@@ -56,13 +58,13 @@ impl Authentication {
         for h in begin_block_number..(init_block_number + 1) {
             let block = get_compact_block(h).await.unwrap().0;
             let block_body = block.body.unwrap();
-            self.history_hashes.insert(h, block_body.tx_hashes);
+            self.history_hashes.insert(h, HashSet::from_iter(block_body.tx_hashes));
         }
         self.current_block_number = init_block_number;
     }
 
     pub fn insert_tx_hash(&mut self, h: u64, hash_list: Vec<Vec<u8>>) {
-        self.history_hashes.insert(h, hash_list);
+        self.history_hashes.insert(h, HashSet::from_iter(hash_list));
         if h >= BLOCKLIMIT {
             self.history_hashes.remove(&(h - BLOCKLIMIT));
         }
