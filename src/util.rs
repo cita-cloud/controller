@@ -592,7 +592,7 @@ macro_rules! impl_multicast {
                     hex::encode(&node.address)
                 );
 
-                let mut client = network_client();
+                let mut client = crate::util::network_client();
 
                 let origin = self.node_manager.get_origin(&node).await.expect(
                     format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
@@ -635,7 +635,7 @@ macro_rules! impl_multicast {
 macro_rules! impl_unicast {
     ($func_name:ident, $type:ident, $name:expr) => {
         pub async fn $func_name(&self, origin: u64, item: $type) -> tokio::task::JoinHandle<()> {
-            let mut client = network_client();
+            let mut client = crate::util::network_client();
 
             let mut buf = Vec::new();
 
@@ -674,7 +674,7 @@ macro_rules! impl_unicast {
 macro_rules! impl_broadcast {
     ($func_name:ident, $type:ident, $name:expr) => {
         pub async fn $func_name(&self, item: $type) -> tokio::task::JoinHandle<()> {
-            let mut client = network_client();
+            let mut client = crate::util::network_client();
 
             let mut buf = Vec::new();
 
