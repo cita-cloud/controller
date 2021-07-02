@@ -89,15 +89,12 @@ fn main() {
     }
 }
 
-use cita_cloud_proto::network::network_service_client::NetworkServiceClient;
 use cita_cloud_proto::network::RegisterInfo;
 
 async fn register_network_msg_handler(
-    network_port: u16,
     port: String,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let network_addr = format!("http://127.0.0.1:{}", network_port);
-    let mut client = NetworkServiceClient::connect(network_addr).await?;
+    let mut client = network_client();
 
     let request = Request::new(RegisterInfo {
         module_name: "controller".to_owned(),
@@ -447,6 +444,7 @@ use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
     network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
 };
+use util::network_client;
 
 // grpc server of network msg handler
 pub struct ControllerNetworkMsgHandlerServer {
@@ -490,7 +488,8 @@ use crate::event::EventTask;
 use crate::node_manager::chain_status_respond::Respond;
 use crate::node_manager::ChainStatusRespond;
 use crate::util::{
-    clean_0x, get_block_hash, get_compact_block, load_data, load_data_maybe_empty, reconfigure,
+    clean_0x, get_block_hash, get_compact_block, init_grpc_client, load_data,
+    load_data_maybe_empty, reconfigure,
 };
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
@@ -511,11 +510,13 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
     let config = ControllerConfig::new(&buffer);
 
-    let network_port = config.network_port;
-    let consensus_port = config.consensus_port;
-    let storage_port = config.storage_port;
-    let kms_port = config.kms_port;
-    let executor_port = config.executor_port;
+    init_grpc_client(
+        config.consensus_port,
+        config.storage_port,
+        config.executor_port,
+        config.network_port,
+    );
+
     let block_delay_number = config.block_delay_number;
 
     let grpc_port_clone = opts.grpc_port.clone();
@@ -524,7 +525,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         interval.tick().await;
         // register endpoint
         {
-            let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
+            let ret = register_network_msg_handler(grpc_port_clone.clone()).await;
             if ret.is_ok() && ret.unwrap() {
                 info!("register network msg handler success!");
                 break;
@@ -573,7 +574,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
     loop {
         interval.tick().await;
         {
-            match load_data_maybe_empty(storage_port, 0, 0u64.to_be_bytes().to_vec()).await {
+            match load_data_maybe_empty(0, 0u64.to_be_bytes().to_vec()).await {
                 Ok(current_block_number_bytes) => {
                     info!("get current block number success!");
                     if current_block_number_bytes.is_empty() {
@@ -586,9 +587,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
                         current_block_number = u64::from_be_bytes(bytes);
                         current_block_hash =
-                            load_data(storage_port, 0, 1u64.to_be_bytes().to_vec())
-                                .await
-                                .unwrap();
+                            load_data(0, 1u64.to_be_bytes().to_vec()).await.unwrap();
                     }
                     break;
                 }
@@ -609,12 +608,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
             // region 0 global
-            let tx_hash = load_data_maybe_empty(storage_port, 0, key).await.unwrap();
+            let tx_hash = load_data_maybe_empty(0, key).await.unwrap();
             if tx_hash.is_empty() {
                 continue;
             }
             // region 1: tx_hash - tx
-            let raw_tx_bytes = load_data(storage_port, 1, tx_hash).await.unwrap();
+            let raw_tx_bytes = load_data(1, tx_hash).await.unwrap();
             let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
             let tx = raw_tx.tx.unwrap();
             if let UtxoTx(utxo_tx) = tx {
@@ -635,14 +634,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
-                let ret = reconfigure(
-                    consensus_port,
-                    ConsensusConfiguration {
-                        height: current_block_number,
-                        block_interval: sys_config_clone.clone().block_interval,
-                        validators: sys_config_clone.clone().validators,
-                    },
-                )
+                let ret = reconfigure(ConsensusConfiguration {
+                    height: current_block_number,
+                    block_interval: sys_config_clone.clone().block_interval,
+                    validators: sys_config_clone.clone().validators,
+                })
                 .await;
                 if ret.is_ok() && ret.unwrap() {
                     info!("reconfigure success!");
@@ -655,11 +651,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
     let (task_sender, mut task_receiver) = mpsc::unbounded_channel();
 
     let controller = Controller::new(
-        consensus_port,
-        network_port,
-        storage_port,
-        kms_port,
-        executor_port,
         block_delay_number,
         current_block_number,
         current_block_hash,
@@ -696,11 +687,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         };
 
                         controller_clone
-                            .unicast_chain_status_respond(
-                                controller_clone.network_port,
-                                origin,
-                                chain_status_respond,
-                            )
+                            .unicast_chain_status_respond(origin, chain_status_respond)
                             .await;
 
                         continue;
@@ -725,11 +712,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 };
 
                                 controller_clone
-                                    .unicast_chain_status_respond(
-                                        controller_clone.network_port,
-                                        origin,
-                                        chain_status_respond,
-                                    )
+                                    .unicast_chain_status_respond(origin, chain_status_respond)
                                     .await;
 
                                 continue;
@@ -786,9 +769,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 match chain.process_block(block).await {
                                     Ok((consensus_config, status)) => {
                                         controller_clone.set_status(status.clone()).await;
-                                        reconfigure(consensus_port, consensus_config)
-                                            .await
-                                            .unwrap();
+                                        reconfigure(consensus_config).await.unwrap();
                                         own_status = status;
                                     }
                                     Err(e) => {
@@ -832,7 +813,6 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                                         for req in reqs {
                                                             controller_clone
                                                                 .unicast_sync_block(
-                                                                    controller_clone.network_port,
                                                                     global_origin,
                                                                     req,
                                                                 )

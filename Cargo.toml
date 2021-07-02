@@ -17,6 +17,7 @@ prost = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-stream = "*"
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
+futures = "0.3"
 futures-util = "*"
 rand = "*"
 toml = "*"

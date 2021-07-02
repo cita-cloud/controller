@@ -24,18 +24,14 @@ pub const BLOCKLIMIT: u64 = 100;
 
 #[derive(Clone)]
 pub struct Authentication {
-    kms_port: u16,
-    storage_port: u16,
     history_hashes: HashMap<u64, Vec<Vec<u8>>>,
     current_block_number: u64,
     sys_config: SystemConfig,
 }
 
 impl Authentication {
-    pub fn new(kms_port: u16, storage_port: u16, sys_config: SystemConfig) -> Self {
+    pub fn new(sys_config: SystemConfig) -> Self {
         Authentication {
-            kms_port,
-            storage_port,
             history_hashes: HashMap::new(),
             current_block_number: 0,
             sys_config,

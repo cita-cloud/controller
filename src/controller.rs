@@ -99,18 +99,11 @@ impl From<ControllerMsgType> for &str {
 
 #[derive(Clone)]
 pub struct Controller {
-    pub(crate) network_port: u16,
-    storage_port: u16,
-
     auth: Arc<RwLock<Authentication>>,
 
     pool: Arc<RwLock<Pool>>,
 
     pub(crate) chain: Arc<RwLock<Chain>>,
-
-    consensus_port: u16,
-
-    kms_port: u16,
 
     pub(crate) local_address: Address,
 
@@ -130,11 +123,6 @@ pub struct Controller {
 impl Controller {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        consensus_port: u16,
-        network_port: u16,
-        storage_port: u16,
-        kms_port: u16,
-        executor_port: u16,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -161,17 +149,9 @@ impl Controller {
             }),
         };
 
-        let auth = Arc::new(RwLock::new(Authentication::new(
-            kms_port,
-            storage_port,
-            sys_config,
-        )));
+        let auth = Arc::new(RwLock::new(Authentication::new(sys_config)));
         let pool = Arc::new(RwLock::new(Pool::new(DEFAULT_PACKAGE_LIMIT)));
         let chain = Arc::new(RwLock::new(Chain::new(
-            storage_port,
-            kms_port,
-            executor_port,
-            consensus_port,
             block_delay_number,
             current_block_number,
             current_block_hash,
@@ -183,13 +163,9 @@ impl Controller {
         )));
 
         Controller {
-            network_port,
-            storage_port,
             auth,
             pool,
             chain,
-            consensus_port,
-            kms_port,
             local_address: Address {
                 address: node_address,
             },
@@ -219,14 +195,11 @@ impl Controller {
             .unwrap();
         self.set_status(status.clone()).await;
         // todo
-        self.broadcast_chain_status_init(
-            self.network_port,
-            ChainStatusInit {
-                chain_status: Some(status),
-                signature: vec![],
-                public_key: vec![],
-            },
-        )
+        self.broadcast_chain_status_init(ChainStatusInit {
+            chain_status: Some(status),
+            signature: vec![],
+            public_key: vec![],
+        })
         .await
         .await
         .unwrap();
@@ -268,7 +241,7 @@ impl Controller {
             pool.enqueue(tx_hash.clone(), raw_tx.clone())
         } {
             if broadcast {
-                self.multicast_send_tx(self.network_port, raw_tx).await;
+                self.multicast_send_tx(raw_tx).await;
             }
             Ok(tx_hash)
         } else {
@@ -295,7 +268,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
-        let block_number = load_data(self.storage_port, 8, hash)
+        let block_number = load_data(8, hash)
             .await
             .map_err(|_| {Error::NoBlockHeight})
             .map(|v| {
@@ -307,7 +280,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, String> {
-        load_data(self.storage_port, 4, block_number.to_be_bytes().to_vec())
+        load_data(4, block_number.to_be_bytes().to_vec())
             .await
             .map_err(|_| "load block hash failed".to_owned())
     }
@@ -329,7 +302,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
-        get_network_status(self.network_port)
+        get_network_status()
             .await
             .map_err(|_| "get network status failed".to_owned())
             .map(|status| status.peer_count)
@@ -402,8 +375,7 @@ impl Controller {
             },
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.multicast_chain_status(self.network_port, self.get_status().await)
-                    .await;
+                self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_candidate().await;
@@ -442,7 +414,7 @@ impl Controller {
             Ok((config, mut status)) => {
                 status.address = Some(self.local_address.clone());
                 self.set_status(status.clone()).await;
-                self.multicast_chain_status(self.network_port, status).await;
+                self.multicast_chain_status(status).await;
                 let (_, global_status) = self.get_global_status().await;
                 match {
                     let chain = self.chain.read().await;
@@ -457,8 +429,7 @@ impl Controller {
             }
             Err(Error::ProposalTooHigh(p, c)) => {
                 warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
-                self.multicast_chain_status(self.network_port, self.get_status().await)
-                    .await;
+                self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_candidate().await;
@@ -490,7 +461,6 @@ impl Controller {
                         match e {
                             Error::VersionOrIdCheckError | Error::HashCheckError => {
                                 self.unicast_chain_status_respond(
-                                    self.network_port,
                                     msg.origin,
                                     ChainStatusRespond {
                                         respond: Some(Respond::NotSameChain(
@@ -525,7 +495,6 @@ impl Controller {
                 {
                     // todo sig
                     self.unicast_chain_status_init(
-                        self.network_port,
                         msg.origin,
                         ChainStatusInit {
                             chain_status: Some(own_status),
@@ -535,14 +504,12 @@ impl Controller {
                     )
                     .await;
                 } else {
-                    self.unicast_chain_status(self.network_port, msg.origin, own_status)
-                        .await;
+                    self.unicast_chain_status(msg.origin, own_status).await;
                 }
                 self.try_update_global_status(&node, status).await?;
             }
             ControllerMsgType::ChainStatusInitRequestType => {
                 self.unicast_chain_status_init(
-                    self.network_port,
                     msg.origin,
                     ChainStatusInit {
                         chain_status: Some(self.get_status().await),
@@ -567,7 +534,6 @@ impl Controller {
                         match e {
                             Error::VersionOrIdCheckError | Error::HashCheckError => {
                                 self.unicast_chain_status_respond(
-                                    self.network_port,
                                     msg.origin,
                                     ChainStatusRespond {
                                         respond: Some(Respond::NotSameChain(
@@ -600,12 +566,8 @@ impl Controller {
                     }
                     // give Ok or Err for process_network_msg is same
                     Err(Error::AddressOriginCheckError) | Ok(false) => {
-                        self.unicast_chain_status_init_req(
-                            self.network_port,
-                            msg.origin,
-                            own_status,
-                        )
-                        .await;
+                        self.unicast_chain_status_init_req(msg.origin, own_status)
+                            .await;
                     }
                     Err(e) => return Err(e),
                 }
@@ -656,11 +618,7 @@ impl Controller {
                                 respond: Some(Respond::MissBlock(controller.local_address.clone())),
                             };
                             controller
-                                .unicast_sync_block_respond(
-                                    controller.network_port,
-                                    msg.origin,
-                                    sync_block_respond,
-                                )
+                                .unicast_sync_block_respond(msg.origin, sync_block_respond)
                                 .await;
                         }
                     }
@@ -673,11 +631,7 @@ impl Controller {
                         respond: Some(Respond::Ok(sync_block)),
                     };
                     controller
-                        .unicast_sync_block_respond(
-                            controller.network_port,
-                            msg.origin,
-                            sync_block_respond,
-                        )
+                        .unicast_sync_block_respond(msg.origin, sync_block_respond)
                         .await;
                 });
             }
@@ -766,7 +720,6 @@ impl Controller {
                     } {
                         controller_clone
                             .unicast_sync_tx_respond(
-                                controller_clone.network_port,
                                 msg.origin,
                                 SyncTxRespond {
                                     respond: Some(Respond::Ok(raw_tx)),
@@ -1018,7 +971,7 @@ impl Controller {
                         {
                             current_height = sync_req.end_height;
                             controller_clone
-                                .unicast_sync_block(controller_clone.network_port, origin, sync_req)
+                                .unicast_sync_block(origin, sync_req)
                                 .await
                                 .await
                                 .unwrap();
