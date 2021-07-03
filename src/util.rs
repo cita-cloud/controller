@@ -37,11 +37,72 @@ use cita_cloud_proto::common::{
 use prost::Message;
 use std::path::Path;
 use tokio::fs;
+use tokio::sync::OnceCell;
+use tonic::transport::Channel;
+use tonic::transport::Endpoint;
 use tonic::Code;
 
 pub const ADDR_BYTES_LEN: usize = 20;
 pub const HASH_BYTES_LEN: usize = 32;
 pub const SM2_SIGNATURE_BYTES_LEN: usize = 128;
+
+pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCell::const_new();
+pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();
+pub static EXECUTOR_CLIENT: OnceCell<ExecutorServiceClient<Channel>> = OnceCell::const_new();
+pub static NETWORK_CLIENT: OnceCell<NetworkServiceClient<Channel>> = OnceCell::const_new();
+
+// This must be called before access to clients.
+pub fn init_grpc_client(
+    consensus_port: u16,
+    storage_port: u16,
+    executor_port: u16,
+    network_port: u16,
+) {
+    CONSENSUS_CLIENT
+        .set({
+            let addr = format!("http://127.0.0.1:{}", consensus_port);
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            ConsensusServiceClient::new(channel)
+        })
+        .unwrap();
+    STORAGE_CLIENT
+        .set({
+            let addr = format!("http://127.0.0.1:{}", storage_port);
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            StorageServiceClient::new(channel)
+        })
+        .unwrap();
+    EXECUTOR_CLIENT
+        .set({
+            let addr = format!("http://127.0.0.1:{}", executor_port);
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            ExecutorServiceClient::new(channel)
+        })
+        .unwrap();
+    NETWORK_CLIENT
+        .set({
+            let addr = format!("http://127.0.0.1:{}", network_port);
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            NetworkServiceClient::new(channel)
+        })
+        .unwrap();
+}
+
+pub fn consensus_client() -> ConsensusServiceClient<Channel> {
+    CONSENSUS_CLIENT.get().cloned().unwrap()
+}
+
+pub fn storage_client() -> StorageServiceClient<Channel> {
+    STORAGE_CLIENT.get().cloned().unwrap()
+}
+
+pub fn executor_client() -> ExecutorServiceClient<Channel> {
+    EXECUTOR_CLIENT.get().cloned().unwrap()
+}
+
+pub fn network_client() -> NetworkServiceClient<Channel> {
+    NETWORK_CLIENT.get().cloned().unwrap()
+}
 
 pub fn unix_now() -> u64 {
     let d = ::std::time::UNIX_EPOCH.elapsed().unwrap();
@@ -49,11 +110,9 @@ pub fn unix_now() -> u64 {
 }
 
 pub async fn reconfigure(
-    consensus_port: u16,
     consensus_config: ConsensusConfiguration,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
-    let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
+    let mut client = consensus_client();
 
     let request = Request::new(consensus_config);
 
@@ -62,13 +121,11 @@ pub async fn reconfigure(
 }
 
 pub async fn check_block(
-    consensus_port: u16,
     height: u64,
     data: Vec<u8>,
     proof: Vec<u8>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let consensus_addr = format!("http://127.0.0.1:{}", consensus_port);
-    let mut client = ConsensusServiceClient::connect(consensus_addr).await?;
+    let mut client = consensus_client();
 
     let proposal = Some(Proposal { height, data });
     let request = Request::new(ProposalWithProof { proposal, proof });
@@ -187,42 +244,31 @@ pub fn hash_data(
 }
 
 pub async fn store_data(
-    storage_port: u16,
     region: u32,
     key: Vec<u8>,
     value: Vec<u8>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
-    let mut client = StorageServiceClient::connect(storage_addr).await?;
-
+    let mut client = storage_client();
     let request = Request::new(Content { region, key, value });
-
     let response = client.store(request).await?;
     Ok(response.into_inner().is_success)
 }
 
 pub async fn load_data(
-    storage_port: u16,
     region: u32,
     key: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
-    let mut client = StorageServiceClient::connect(storage_addr).await?;
-
+    let mut client = storage_client();
     let request = Request::new(ExtKey { region, key });
-
     let response = client.load(request).await?;
-
     Ok(response.into_inner().value)
 }
 
 pub async fn load_data_maybe_empty(
-    storage_port: u16,
     region: u32,
     key: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let storage_addr = format!("http://127.0.0.1:{}", storage_port);
-    let mut client = StorageServiceClient::connect(storage_addr).await?;
+    let mut client = storage_client();
 
     let request = Request::new(ExtKey { region, key });
 
@@ -283,27 +329,17 @@ pub fn full_to_compact(block: Block) -> CompactBlock {
     }
 }
 
-pub async fn exec_block(
-    executor_port: u16,
-    block: Block,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let executor_addr = format!("http://127.0.0.1:{}", executor_port);
-    let mut client = ExecutorServiceClient::connect(executor_addr).await?;
-
+pub async fn exec_block(block: Block) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut client = executor_client();
     let request = Request::new(block);
-
     let response = client.exec(request).await?;
     Ok(response.into_inner().hash)
 }
 
 pub async fn get_network_status(
-    network_port: u16,
 ) -> Result<NetworkStatusResponse, Box<dyn std::error::Error + Send + Sync>> {
-    let network_addr = format!("http://127.0.0.1:{}", network_port);
-    let mut client = NetworkServiceClient::connect(network_addr).await?;
-
+    let mut client = network_client();
     let request = Request::new(Empty {});
-
     let response = client.get_network_status(request).await?;
     Ok(response.into_inner())
 }
@@ -538,7 +574,7 @@ pub async fn get_compact_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
 #[macro_export]
 macro_rules! impl_multicast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(&self, port: u16, item: $type) -> Vec<tokio::task::JoinHandle<()>> {
+        pub async fn $func_name(&self, item: $type) -> Vec<tokio::task::JoinHandle<()>> {
             let nodes = self.node_manager.grab_node().await;
 
             let mut buf = Vec::new();
@@ -546,14 +582,6 @@ macro_rules! impl_multicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            let network_addr = format!("http://127.0.0.1:{}", port);
-
-            let client =
-                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
-                    network_addr,
-                )
-                .await
-                .unwrap();
             let mut handle_vec = Vec::new();
 
             for node in nodes {
@@ -564,7 +592,7 @@ macro_rules! impl_multicast {
                     hex::encode(&node.address)
                 );
 
-                let mut client = client.clone();
+                let mut client = crate::util::network_client();
 
                 let origin = self.node_manager.get_origin(&node).await.expect(
                     format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
@@ -606,20 +634,8 @@ macro_rules! impl_multicast {
 #[macro_export]
 macro_rules! impl_unicast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(
-            &self,
-            port: u16,
-            origin: u64,
-            item: $type,
-        ) -> tokio::task::JoinHandle<()> {
-            let network_addr = format!("http://127.0.0.1:{}", port);
-
-            let mut client =
-                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
-                    network_addr,
-                )
-                .await
-                .unwrap();
+        pub async fn $func_name(&self, origin: u64, item: $type) -> tokio::task::JoinHandle<()> {
+            let mut client = crate::util::network_client();
 
             let mut buf = Vec::new();
 
@@ -657,15 +673,8 @@ macro_rules! impl_unicast {
 #[macro_export]
 macro_rules! impl_broadcast {
     ($func_name:ident, $type:ident, $name:expr) => {
-        pub async fn $func_name(&self, port: u16, item: $type) -> tokio::task::JoinHandle<()> {
-            let network_addr = format!("http://127.0.0.1:{}", port);
-
-            let mut client =
-                cita_cloud_proto::network::network_service_client::NetworkServiceClient::connect(
-                    network_addr,
-                )
-                .await
-                .unwrap();
+        pub async fn $func_name(&self, item: $type) -> tokio::task::JoinHandle<()> {
+            let mut client = crate::util::network_client();
 
             let mut buf = Vec::new();
 

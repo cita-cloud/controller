@@ -42,10 +42,6 @@ pub enum ChainStep {
 
 #[allow(dead_code)]
 pub struct Chain {
-    kms_port: u16,
-    storage_port: u16,
-    executor_port: u16,
-    consensus_port: u16,
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
@@ -68,10 +64,6 @@ pub struct Chain {
 impl Chain {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        storage_port: u16,
-        kms_port: u16,
-        executor_port: u16,
-        consensus_port: u16,
         block_delay_number: u32,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -88,10 +80,6 @@ impl Chain {
         }
 
         Chain {
-            kms_port,
-            storage_port,
-            executor_port,
-            consensus_port,
             block_number: current_block_number,
             block_hash: current_block_hash,
             block_delay_number,
@@ -137,7 +125,7 @@ impl Chain {
         let key = pre_h.to_be_bytes().to_vec();
 
         let state_root = {
-            let ret = load_data(self.storage_port, 6, key.clone()).await;
+            let ret = load_data(6, key.clone()).await;
             if ret.is_err() {
                 warn!("get_proposal get state_root failed");
                 return None;
@@ -300,7 +288,7 @@ impl Chain {
                 let pre_h = h - self.block_delay_number as u64 - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
-                let state_root = load_data(self.storage_port, 6, key)
+                let state_root = load_data(6, key)
                     .await
                     .map_err(Error::InternalError)
                     .unwrap();
@@ -338,12 +326,12 @@ impl Chain {
         //    .expect("store proof failed");
 
         // region 4 : block_height - block hash
-        store_data(self.storage_port, 4, key.clone(), block_hash.clone())
+        store_data(4, key.clone(), block_hash.clone())
             .await
             .expect("store_data failed");
 
         // region 8 : block hash - block_height
-        store_data(self.storage_port, 8, block_hash.clone(), key.clone())
+        store_data(8, block_hash.clone(), key.clone())
             .await
             .expect("store_data failed");
 
@@ -388,7 +376,7 @@ impl Chain {
                             // if sys_config changed, store utxo tx hash into global region
                             let lock_id = utxo_tx.transaction.unwrap().lock_id;
                             let key = lock_id.to_be_bytes().to_vec();
-                            store_data(self.storage_port, 0, key, utxo_tx.transaction_hash.clone())
+                            store_data(0, key, utxo_tx.transaction_hash.clone())
                                 .await
                                 .expect("store_data failed");
 
@@ -397,14 +385,11 @@ impl Chain {
                                     let auth = self.auth.read().await;
                                     auth.get_system_config()
                                 };
-                                reconfigure(
-                                    self.consensus_port,
-                                    ConsensusConfiguration {
-                                        height: block_height,
-                                        block_interval: sys_config.block_interval,
-                                        validators: sys_config.validators,
-                                    },
-                                )
+                                reconfigure(ConsensusConfiguration {
+                                    height: block_height,
+                                    block_interval: sys_config.block_interval,
+                                    validators: sys_config.validators,
+                                })
                                 .await
                                 .expect("reconfigure failed");
                             }
@@ -430,11 +415,11 @@ impl Chain {
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
         // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
         // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(self.executor_port, full_block)
+        let executed_block_hash = exec_block(full_block)
             .await
             .unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
-        store_data(self.storage_port, 6, key.clone(), executed_block_hash)
+        store_data(6, key.clone(), executed_block_hash)
             .await
             .expect("store result failed");
 
@@ -456,17 +441,12 @@ impl Chain {
         );
 
         // region 0: 0 - current height; 1 - current hash
-        store_data(self.storage_port, 0, 0u64.to_be_bytes().to_vec(), key)
+        store_data(0, 0u64.to_be_bytes().to_vec(), key)
             .await
             .expect("store_data failed");
-        store_data(
-            self.storage_port,
-            0,
-            1u64.to_be_bytes().to_vec(),
-            block_hash,
-        )
-        .await
-        .expect("store_data failed");
+        store_data(0, 1u64.to_be_bytes().to_vec(), block_hash)
+            .await
+            .expect("store_data failed");
     }
 
     pub async fn commit_block(
@@ -659,23 +639,18 @@ impl Chain {
 
         let proposal_bytes = self.assemble_proposal(block.clone(), height).await?;
 
-        check_block(
-            self.consensus_port,
-            height,
-            proposal_bytes,
-            block.proof.clone(),
-        )
-        .await
-        .map_or_else(
-            |e| Err(Error::InternalError(e)),
-            |res| {
-                if !res {
-                    Err(Error::ConsensusProposalCheckError)
-                } else {
-                    Ok(())
-                }
-            },
-        )?;
+        check_block(height, proposal_bytes, block.proof.clone())
+            .await
+            .map_or_else(
+                |e| Err(Error::InternalError(e)),
+                |res| {
+                    if !res {
+                        Err(Error::ConsensusProposalCheckError)
+                    } else {
+                        Ok(())
+                    }
+                },
+            )?;
 
         self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?)
             .await?;
