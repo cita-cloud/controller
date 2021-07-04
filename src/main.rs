@@ -17,10 +17,14 @@ mod chain;
 mod config;
 mod controller;
 mod genesis;
+mod node_manager;
 mod panic_hook;
 mod pool;
-mod sync;
+mod protocol;
+#[macro_use]
 mod util;
+mod error;
+mod event;
 mod utxo_set;
 
 use crate::panic_hook::set_panic_handler;
@@ -33,6 +37,8 @@ const GIT_VERSION: &str = git_version!(
     fallback = "unknown"
 );
 const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
+
+const DEFAULT_PACKAGE_LIMIT: usize = 6000;
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -83,15 +89,12 @@ fn main() {
     }
 }
 
-use cita_cloud_proto::network::network_service_client::NetworkServiceClient;
 use cita_cloud_proto::network::RegisterInfo;
 
 async fn register_network_msg_handler(
-    network_port: u16,
     port: String,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let network_addr = format!("http://127.0.0.1:{}", network_port);
-    let mut client = NetworkServiceClient::connect(network_addr).await?;
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let mut client = network_client();
 
     let request = Request::new(RegisterInfo {
         module_name: "controller".to_owned(),
@@ -104,12 +107,14 @@ async fn register_network_msg_handler(
     Ok(response.into_inner().is_success)
 }
 
-use cita_cloud_proto::blockchain::CompactBlock;
-use cita_cloud_proto::common::{Empty, Hash, Proposal, ProposalWithProof, SimpleResponse};
+use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction};
+use cita_cloud_proto::common::{
+    ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof, SimpleResponse,
+};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-    PeerCount, RawTransaction, SoftwareVersion, TransactionIndex,
+    PeerCount, SoftwareVersion, TransactionIndex,
 };
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -137,7 +142,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_number(flag.flag)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_number| {
                     let reply = Response::new(BlockNumber { block_number });
                     Ok(reply)
@@ -153,10 +158,10 @@ impl RpcService for RPCServer {
         let raw_tx = request.into_inner();
 
         self.controller
-            .rpc_send_raw_transaction(raw_tx)
+            .rpc_send_raw_transaction(raw_tx, true)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |tx_hash| {
                     let reply = Response::new(Hash { hash: tx_hash });
                     Ok(reply)
@@ -175,7 +180,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_hash(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -194,7 +199,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_by_number(block_number.block_number)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |block| {
                     let reply = Response::new(block);
                     Ok(reply)
@@ -213,7 +218,7 @@ impl RpcService for RPCServer {
             .rpc_get_transaction(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |raw_tx| {
                     let reply = Response::new(raw_tx);
                     Ok(reply)
@@ -227,7 +232,7 @@ impl RpcService for RPCServer {
         debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
-            |e| Err(Status::internal(e)),
+            |e| Err(Status::invalid_argument(e)),
             |sys_config| {
                 let reply = Response::new(ProtoSystemConfig {
                     version: sys_config.version,
@@ -295,7 +300,7 @@ impl RpcService for RPCServer {
             .rpc_get_block_hash(block_number.block_number)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_hash| {
                     let reply = Response::new(Hash { hash: block_hash });
                     Ok(reply)
@@ -315,7 +320,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_block_number(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |block_number| {
                     let reply = Response::new(BlockNumber { block_number });
                     Ok(reply)
@@ -335,7 +340,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_index(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
+                |e| Err(Status::invalid_argument(e)),
                 |tx_index| {
                     let reply = Response::new(TransactionIndex { tx_index });
                     Ok(reply)
@@ -347,7 +352,7 @@ impl RpcService for RPCServer {
         debug!("get_peer_count request: {:?}", request);
 
         self.controller.rpc_get_peer_count().await.map_or_else(
-            |e| Err(Status::internal(e)),
+            |e| Err(Status::invalid_argument(e)),
             |peer_count| {
                 let reply = Response::new(PeerCount { peer_count });
                 Ok(reply)
@@ -378,10 +383,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
-            |e| Err(Status::internal(e)),
+            |e| {
+                warn!("rpc: get_proposal failed: {:?}", e);
+                Err(Status::invalid_argument(e.to_string()))
+            },
             |(height, data)| {
-                let reply = Response::new(Proposal { height, data });
-                Ok(reply)
+                let proposal = Proposal { height, data };
+                Ok(Response::new(proposal))
             },
         )
     }
@@ -396,21 +404,21 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         let height = proposal.height;
         let data = proposal.data;
 
-        self.controller
-            .chain_check_proposal(height, &data)
-            .await
-            .map_or_else(
-                |e| Err(Status::internal(e)),
-                |is_ok| {
-                    let reply = Response::new(SimpleResponse { is_success: is_ok });
-                    Ok(reply)
-                },
-            )
+        match self.controller.chain_check_proposal(height, &data).await {
+            Err(e) => {
+                warn!("rpc: check_proposal failed: {:?}", e.to_string());
+                Err(Status::invalid_argument(e.to_string()))
+            }
+            Ok(_) => {
+                let reply = Response::new(SimpleResponse { is_success: true });
+                Ok(reply)
+            }
+        }
     }
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<ConsensusConfiguration>, Status> {
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
@@ -423,8 +431,11 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             .chain_commit_block(height, &data, &proof)
             .await
             .map_or_else(
-                |e| Err(Status::internal(e)),
-                |_| Ok(Response::new(Empty {})),
+                |e| {
+                    warn!("rpc: commit_block failed: {:?}", e);
+                    Err(Status::invalid_argument(e.to_string()))
+                },
+                |r| Ok(Response::new(r)),
             )
     }
 }
@@ -433,6 +444,7 @@ use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
     network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
 };
+use util::network_client;
 
 // grpc server of network msg handler
 pub struct ControllerNetworkMsgHandlerServer {
@@ -458,44 +470,53 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
             Err(Status::invalid_argument("wrong module"))
         } else {
             self.controller.process_network_msg(msg).await.map_or_else(
-                |e| Err(Status::internal(e)),
-                |_| {
-                    let reply = SimpleResponse { is_success: true };
-                    Ok(Response::new(reply))
+                |e| {
+                    warn!("rpc: process_network_msg failed: {}", e.to_string());
+                    Err(Status::invalid_argument(e.to_string()))
                 },
+                |r| Ok(Response::new(r)),
             )
         }
     }
 }
 
+use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
-use crate::sync::Notifier;
-use crate::util::{hash_data, load_data, load_data_maybe_empty, reconfigure};
+use crate::error::Error;
+use crate::event::EventTask;
+use crate::node_manager::chain_status_respond::Respond;
+use crate::node_manager::ChainStatusRespond;
+use crate::util::{
+    clean_0x, get_block_hash, get_compact_block, init_grpc_client, load_data,
+    load_data_maybe_empty, reconfigure,
+};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
-use cita_cloud_proto::controller::raw_transaction::Tx::UtxoTx;
+use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
 use genesis::GenesisBlock;
 use prost::Message;
 use std::fs;
-use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time;
 
 #[tokio::main]
-async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // read consensus-config.toml
     let buffer = fs::read_to_string("controller-config.toml")
         .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
     let config = ControllerConfig::new(&buffer);
 
-    let network_port = config.network_port;
-    let consensus_port = config.consensus_port;
-    let storage_port = config.storage_port;
-    let kms_port = config.kms_port;
-    let executor_port = config.executor_port;
+    init_grpc_client(
+        config.consensus_port,
+        config.storage_port,
+        config.executor_port,
+        config.network_port,
+    );
+
     let block_delay_number = config.block_delay_number;
 
     let grpc_port_clone = opts.grpc_port.clone();
@@ -504,7 +525,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         interval.tick().await;
         // register endpoint
         {
-            let ret = register_network_msg_handler(network_port, grpc_port_clone.clone()).await;
+            let ret = register_network_msg_handler(grpc_port_clone.clone()).await;
             if ret.is_ok() && ret.unwrap() {
                 info!("register network msg handler success!");
                 break;
@@ -513,19 +534,19 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         warn!("register network msg handler failed! Retrying");
     }
 
-    let mut interval = time::interval(Duration::from_secs(3));
-    loop {
-        interval.tick().await;
-        // register endpoint
-        {
-            let ret = hash_data(kms_port, vec![0u8; 32]).await;
-            if ret.is_ok() {
-                info!("kms is ready!");
-                break;
-            }
-        }
-        warn!("kms not ready! Retrying");
-    }
+    // let mut interval = time::interval(Duration::from_secs(3));
+    // loop {
+    //     interval.tick().await;
+    //     // register endpoint
+    //     {
+    //         let ret = hash_data(kms_port, vec![0u8; 32]).await;
+    //         if ret.is_ok() {
+    //             info!("kms is ready!");
+    //             break;
+    //         }
+    //     }
+    //     warn!("kms not ready! Retrying");
+    // }
 
     // load key_id
     let buffer = fs::read_to_string("key_id")
@@ -539,7 +560,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     let buffer = fs::read_to_string("node_address")
         .unwrap_or_else(|err| panic!("Error while loading node_address: [{}]", err));
     // skip 0x prefix
-    let node_address = hex::decode(&buffer[2..])
+    let node_address = hex::decode(clean_0x(&buffer))
         .unwrap_or_else(|err| panic!("Error while parsing node_address: [{}]", err));
     info!("node_address: {:?}", buffer);
 
@@ -553,29 +574,30 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         interval.tick().await;
         {
-            let ret = load_data_maybe_empty(storage_port, 0, 0u64.to_be_bytes().to_vec()).await;
-            if let Ok(current_block_number_bytes) = ret {
-                info!("get current block number success!");
-                if current_block_number_bytes.is_empty() {
-                    info!("this is a new chain!");
-                    current_block_number = 0u64;
-                    current_block_hash = genesis.genesis_block_hash(kms_port).await;
-                } else {
-                    info!("this is an old chain!");
-                    let mut bytes: [u8; 8] = [0; 8];
-                    bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
-                    current_block_number = u64::from_be_bytes(bytes);
-                    current_block_hash = load_data(storage_port, 0, 1u64.to_be_bytes().to_vec())
-                        .await
-                        .unwrap();
+            match load_data_maybe_empty(0, 0u64.to_be_bytes().to_vec()).await {
+                Ok(current_block_number_bytes) => {
+                    info!("get current block number success!");
+                    if current_block_number_bytes.is_empty() {
+                        info!("this is a new chain!");
+                        current_block_number = 0u64;
+                        current_block_hash = genesis.genesis_block_hash();
+                    } else {
+                        info!("this is an old chain!");
+                        let mut bytes: [u8; 8] = [0; 8];
+                        bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
+                        current_block_number = u64::from_be_bytes(bytes);
+                        current_block_hash =
+                            load_data(0, 1u64.to_be_bytes().to_vec()).await.unwrap();
+                    }
+                    break;
                 }
-                break;
+                Err(e) => warn!("{}", e.to_string()),
             }
         }
         warn!("get current block number failed! Retrying");
     }
     info!("current block number: {}", current_block_number);
-    info!("current block hash: {:?}", current_block_hash);
+    info!("current block hash: 0x{}", hex::encode(&current_block_hash));
 
     // load initial sys_config
     let buffer = fs::read_to_string("init_sys_config.toml")
@@ -586,12 +608,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
             // region 0 global
-            let tx_hash = load_data_maybe_empty(storage_port, 0, key).await.unwrap();
+            let tx_hash = load_data_maybe_empty(0, key).await.unwrap();
             if tx_hash.is_empty() {
                 continue;
             }
             // region 1: tx_hash - tx
-            let raw_tx_bytes = load_data(storage_port, 1, tx_hash).await.unwrap();
+            let raw_tx_bytes = load_data(1, tx_hash).await.unwrap();
             let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
             let tx = raw_tx.tx.unwrap();
             if let UtxoTx(utxo_tx) = tx {
@@ -612,11 +634,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
             // reconfigure consensus
             {
                 info!("reconfigure consensus!");
-                let ret = reconfigure(
-                    consensus_port,
-                    current_block_number,
-                    sys_config_clone.clone(),
-                )
+                let ret = reconfigure(ConsensusConfiguration {
+                    height: current_block_number,
+                    block_interval: sys_config_clone.clone().block_interval,
+                    validators: sys_config_clone.clone().validators,
+                })
                 .await;
                 if ret.is_ok() && ret.unwrap() {
                     info!("reconfigure success!");
@@ -626,25 +648,191 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let (task_sender, mut task_receiver) = mpsc::unbounded_channel();
+
     let controller = Controller::new(
-        consensus_port,
-        network_port,
-        storage_port,
-        kms_port,
-        executor_port,
         block_delay_number,
         current_block_number,
         current_block_hash,
-        sys_config,
+        sys_config.clone(),
         genesis,
-        Arc::new(Notifier::new(".".to_string(), "txs".to_string())),
-        Arc::new(Notifier::new(".".to_string(), "proposals".to_string())),
-        Arc::new(Notifier::new(".".to_string(), "blocks".to_string())),
         key_id,
         node_address,
+        task_sender,
     );
 
-    controller.init(current_block_number).await;
+    controller.init(current_block_number, sys_config).await;
+
+    let controller_clone = controller.clone();
+    tokio::spawn(async move {
+        while let Some(event_task) = task_receiver.recv().await {
+            match event_task {
+                EventTask::ChainStatusRep(chain_status, origin) => {
+                    let node = chain_status.address.clone().unwrap();
+                    info!(
+                        "send chain status respond to 0x{}",
+                        hex::encode(&node.address)
+                    );
+
+                    let own_status = controller_clone.get_status().await;
+
+                    if own_status.chain_id != chain_status.chain_id
+                        || own_status.version != chain_status.version
+                    {
+                        warn!("chain id or version not identical, send not same chain");
+                        let chain_status_respond = ChainStatusRespond {
+                            respond: Some(Respond::NotSameChain(
+                                controller_clone.local_address.clone(),
+                            )),
+                        };
+
+                        controller_clone
+                            .unicast_chain_status_respond(origin, chain_status_respond)
+                            .await;
+
+                        continue;
+                    }
+
+                    if own_status.height >= chain_status.height {
+                        let own_old_compact_block = get_compact_block(chain_status.height)
+                            .await
+                            .map(|t| t.0)
+                            .expect("a specified block not get!");
+
+                        let own_old_block_hash =
+                            get_block_hash(own_old_compact_block.header.as_ref()).unwrap();
+
+                        if let Some(ext_hash) = chain_status.hash.clone() {
+                            if ext_hash.hash != own_old_block_hash {
+                                warn!("old block hash not identical, send not same chain");
+                                let chain_status_respond = ChainStatusRespond {
+                                    respond: Some(Respond::NotSameChain(
+                                        controller_clone.local_address.clone(),
+                                    )),
+                                };
+
+                                controller_clone
+                                    .unicast_chain_status_respond(origin, chain_status_respond)
+                                    .await;
+
+                                continue;
+                            }
+                        }
+                    }
+
+                    controller_clone
+                        .node_manager
+                        .set_origin(&node, origin)
+                        .await;
+
+                    match controller_clone
+                        .node_manager
+                        .set_node(&node, chain_status)
+                        .await
+                    {
+                        Ok(_) | Err(Error::EarlyStatus) => {}
+                        Err(e) => {
+                            warn!("{}", e.to_string());
+                            continue;
+                        }
+                    }
+
+                    // let chain_status_respond = ChainStatusRespond {
+                    //     respond: Some(Respond::Ok(own_status)),
+                    // };
+                    //
+                    // controller_clone
+                    //     .unicast_chain_status_respond(
+                    //         controller_clone.network_port,
+                    //         origin,
+                    //         chain_status_respond,
+                    //     )
+                    //     .await;
+                }
+                EventTask::SyncBlock => {
+                    log::debug!("receive sync block event");
+                    let (global_address, global_status) =
+                        controller_clone.get_global_status().await;
+                    let mut own_status = controller_clone.get_status().await;
+                    let mut chain = controller_clone.chain.write().await;
+                    // get chain lock means syncing
+                    controller_clone.set_sync_state(true).await;
+
+                    match chain.next_step(&global_status).await {
+                        ChainStep::SyncStep => {
+                            while let Some((addr, block)) = controller_clone
+                                .sync_manager
+                                .pop_block(own_status.height + 1)
+                                .await
+                            {
+                                chain.clear_candidate().await;
+                                match chain.process_block(block).await {
+                                    Ok((consensus_config, status)) => {
+                                        controller_clone.set_status(status.clone()).await;
+                                        reconfigure(consensus_config).await.unwrap();
+                                        own_status = status;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "sync block error: {}, node: 0x{} been misbehavior_node",
+                                            e.to_string(),
+                                            hex::encode(&addr.address)
+                                        );
+                                        let _ = controller_clone
+                                            .node_manager
+                                            .set_misbehavior_node(&addr)
+                                            .await;
+                                        if &global_address == &addr {
+                                            let (ex_addr, ex_status) =
+                                                controller_clone.node_manager.pick_node().await;
+                                            controller_clone
+                                                .update_global_status(ex_addr, ex_status)
+                                                .await;
+                                        }
+                                        if let Some(range_heights) = controller_clone
+                                            .sync_manager
+                                            .clear_node_block(&addr)
+                                            .await
+                                        {
+                                            let (global_address, global_status) =
+                                                controller_clone.get_global_status().await;
+                                            if !global_address.address.is_empty() {
+                                                let global_origin = controller_clone
+                                                    .node_manager
+                                                    .get_origin(&global_address)
+                                                    .await
+                                                    .unwrap();
+                                                for range_height in range_heights {
+                                                    if let Some(reqs) = controller_clone
+                                                        .sync_manager
+                                                        .re_sync_block_req(
+                                                            range_height,
+                                                            &global_status,
+                                                        )
+                                                    {
+                                                        for req in reqs {
+                                                            controller_clone
+                                                                .unicast_sync_block(
+                                                                    global_origin,
+                                                                    req,
+                                                                )
+                                                                .await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    controller_clone.set_sync_state(false).await;
+                }
+            }
+        }
+    });
 
     let addr_str = format!("0.0.0.0:{}", opts.grpc_port);
     let addr = addr_str.parse()?;

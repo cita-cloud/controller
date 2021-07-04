@@ -12,13 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::hash_data;
-use cita_cloud_proto::blockchain::{BlockHeader, CompactBlock, CompactBlockBody};
-use log::warn;
+use crate::util::{clean_0x, hash_data};
+use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
 use prost::Message;
 use serde_derive::Deserialize;
-use std::time::Duration;
-use tokio::time;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
@@ -31,25 +28,25 @@ impl GenesisBlock {
         toml::from_str::<GenesisBlock>(genesis_block_str)
             .expect("Error while parsing genesis_block_str")
     }
-    pub fn genesis_block(&self) -> CompactBlock {
-        let prevhash =
-            hex::decode(&self.prevhash[2..]).expect("parsing prevhash in genesis failed!");
+    pub fn genesis_block(&self) -> Block {
+        let prev_hash =
+            hex::decode(clean_0x(&self.prevhash)).expect("parsing prevhash in genesis failed!");
         let header = BlockHeader {
-            prevhash,
+            prevhash: prev_hash,
             timestamp: self.timestamp,
             height: 0,
             transactions_root: vec![0u8; 32],
             proposer: vec![0u8; 32],
         };
-        let body = CompactBlockBody { tx_hashes: vec![] };
-        CompactBlock {
+        Block {
             version: 0,
             header: Some(header),
-            body: Some(body),
+            body: Some(RawTransactions { body: Vec::new() }),
+            proof: Vec::new(),
         }
     }
 
-    pub async fn genesis_block_hash(&self, kms_port: u16) -> Vec<u8> {
+    pub fn genesis_block_hash(&self) -> Vec<u8> {
         let block = self.genesis_block();
         let header = block.header.unwrap();
 
@@ -58,19 +55,7 @@ impl GenesisBlock {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        let genesis_block_hash;
-        let mut interval = time::interval(Duration::from_secs(3));
-        loop {
-            interval.tick().await;
-            let ret = hash_data(kms_port, block_header_bytes.clone()).await;
-
-            if let Ok(block_hash) = ret {
-                genesis_block_hash = block_hash;
-                break;
-            }
-            warn!("hash block failed! Retrying");
-        }
-        genesis_block_hash
+        hash_data(&block_header_bytes)
     }
 }
 
@@ -82,7 +67,7 @@ mod tests {
     fn basic_test() {
         let toml_str = r#"
         timestamp = 123456
-        prevhash = "0x010203040506"
+        prev_hash = "0x010203040506"
         "#;
 
         let genesis = GenesisBlock::new(toml_str);

@@ -12,27 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use log::info;
-use rand::Rng;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::auth::BLOCKLIMIT;
+use cita_cloud_proto::blockchain::raw_transaction::Tx;
+use cita_cloud_proto::blockchain::RawTransaction;
+use std::collections::{BTreeMap, HashMap};
 
 pub struct Pool {
     package_limit: usize,
-    order_set: HashMap<u64, Vec<u8>>,
+    order_set: BTreeMap<u64, Vec<u8>>,
     order: u64,
-    lower_bound: u64,
-    txs: HashSet<Vec<u8>>,
+    txs: HashMap<Vec<u8>, RawTransaction>,
 }
 
 impl Pool {
     pub fn new(package_limit: usize) -> Self {
         Pool {
             package_limit,
-            order_set: HashMap::new(),
+            order_set: BTreeMap::new(),
             order: 0,
-            lower_bound: 0,
-            txs: HashSet::new(),
+            txs: HashMap::new(),
         }
     }
 
@@ -43,78 +41,93 @@ impl Pool {
         order
     }
 
-    pub fn enqueue(&mut self, tx_hash: Vec<u8>) -> bool {
-        if self.txs.contains(&tx_hash) {
+    pub fn enqueue(&mut self, tx_hash: Vec<u8>, raw_tx: RawTransaction) -> bool {
+        if self.txs.contains_key(&tx_hash) {
             false
         } else {
             let order = self.get_order();
             self.order_set.insert(order, tx_hash.clone());
-            self.txs.insert(tx_hash);
+            self.txs.insert(tx_hash, raw_tx);
             true
         }
     }
 
-    fn update_low_bound(&mut self) {
-        info!("low_bound before update: {}", self.lower_bound);
-        let old_low_bound = self.lower_bound;
-        for i in old_low_bound..self.order {
-            if self.order_set.get(&i).is_some() {
-                break;
-            }
-            self.lower_bound += 1;
-        }
-        info!("low_bound after update: {}", self.lower_bound);
+    pub fn update(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
+        self.update_txs(tx_hash_list);
+        self.update_order_set(tx_hash_list);
     }
 
-    pub fn update(&mut self, tx_hash_list: Vec<Vec<u8>>) {
-        info!(
-            "before update len of pool {}, will update {} tx",
-            self.len(),
-            tx_hash_list.len()
-        );
-
-        let mut new_order_set = HashMap::new();
-        let mut new_txs = HashSet::new();
-        for (order, hash) in self.order_set.iter() {
-            if !tx_hash_list.contains(hash) {
-                new_order_set.insert(*order, hash.to_owned());
-                new_txs.insert(hash.to_owned());
-            }
-        }
-        self.order_set = new_order_set;
-        self.txs = new_txs;
-
-        info!("after update len of pool {}", self.len());
-        self.update_low_bound()
+    fn update_order_set(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
+        self.order_set = self
+            .order_set
+            .clone()
+            .into_iter()
+            .filter(|(_, hash)| !tx_hash_list.contains(hash))
+            .collect();
     }
 
-    pub fn package(&self) -> Vec<Vec<u8>> {
-        let mut tx_hash_list = vec![];
+    fn update_txs(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
+        self.txs = self
+            .txs
+            .clone()
+            .into_iter()
+            .filter(|(hash, _)| !tx_hash_list.contains(hash))
+            .collect();
+    }
 
-        let max_begin = self.order.saturating_sub(self.package_limit as u64);
-        let begin_order = if max_begin <= self.lower_bound || self.len() < self.package_limit {
-            self.lower_bound
-        } else {
-            rand::thread_rng().gen_range(self.lower_bound..max_begin)
-        };
+    pub fn package(&mut self, height: u64) -> (Vec<Vec<u8>>, Vec<RawTransaction>) {
+        let mut invalid_tx_list = Vec::new();
+        let mut tx_list = Vec::new();
+        let mut tx_hash_list = Vec::new();
 
-        for i in begin_order..self.order {
-            if let Some(tx_hash) = self.order_set.get(&i) {
-                tx_hash_list.push(tx_hash.to_owned());
-            }
-            if tx_hash_list.len() == self.package_limit {
-                break;
+        for (_, hash) in self.order_set.iter() {
+            match self.txs.get(hash) {
+                Some(raw_tx) => {
+                    if tx_is_valid(raw_tx, height) {
+                        tx_list.push(raw_tx.clone());
+                        tx_hash_list.push(hash.clone());
+                    } else {
+                        invalid_tx_list.push(hash.clone());
+                    }
+                    if tx_hash_list.len() >= self.package_limit {
+                        break;
+                    }
+                }
+                None => invalid_tx_list.push(hash.clone()),
             }
         }
 
-        tx_hash_list
+        self.update(&invalid_tx_list);
+        (tx_hash_list, tx_list)
     }
 
     pub fn len(&self) -> usize {
         self.order_set.len()
     }
 
-    pub fn contains(&self, tx_hash: &[u8]) -> bool {
+    #[allow(dead_code)]
+    pub fn is_contain(&self, tx_hash: &[u8]) -> bool {
         self.txs.get(tx_hash).is_some()
     }
+
+    pub fn pool_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {
+        self.txs.get(tx_hash).cloned()
+    }
+}
+
+fn tx_is_valid(raw_tx: &RawTransaction, height: u64) -> bool {
+    let valid_until_block = {
+        match raw_tx.tx {
+            Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
+                Some(ref tx) => tx.valid_until_block,
+                None => return false,
+            },
+            Some(Tx::UtxoTx(_)) => {
+                return true;
+            }
+            None => return false,
+        }
+    };
+
+    height < valid_until_block && valid_until_block <= (height + BLOCKLIMIT)
 }
