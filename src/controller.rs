@@ -270,7 +270,7 @@ impl Controller {
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
         let block_number = load_data(8, hash)
             .await
-            .map_err(|_| {Error::NoBlockHeight})
+            .map_err(|_| Error::NoBlockHeight)
             .map(|v| {
                 let mut bytes: [u8; 8] = [0; 8];
                 bytes[..8].clone_from_slice(&v[..8]);

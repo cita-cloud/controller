@@ -354,14 +354,6 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     }
 }
 
-pub async fn write_tx(tx_hash: &[u8], data: &[u8]) {
-    let filename = format!("{}", hex::encode(tx_hash));
-
-    let root_path = Path::new(".");
-    let file_path = root_path.join("txs").join(filename);
-    let _ = fs::write(file_path, data).await;
-}
-
 #[allow(dead_code)]
 pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
     let filename = hex::encode(tx_hash);
@@ -415,10 +407,10 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Error
 pub fn get_block_hash(header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
     match header {
         Some(header) => {
-            let mut block_header_bytes = Vec::new();
+            let mut block_header_bytes = Vec::with_capacity(header);
             header
                 .encode(&mut block_header_bytes)
-                .expect("encode block header failed");
+                .map_err(|_| Error::EncodeError(format!("encode block header failed")));
             let block_hash = hash_data(&block_header_bytes);
             Ok(block_hash)
         }
@@ -473,39 +465,9 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Option<(u64, u64)> {
     Some((block_height, tx_index))
 }
 
-pub async fn write_block(
-    height: u64,
-    block_header_bytes: &[u8],
-    block_body_bytes: &[u8],
-    proof_bytes: &[u8],
-) {
-    let filename = format!("{}", height);
-    let root_path = Path::new(".");
-    let block_path = root_path.join("blocks").join(filename);
-
-    let header_len = block_header_bytes.len();
-    let body_len = block_body_bytes.len();
-    let proof_len = proof_bytes.len();
-
-    let mut bytes = header_len.to_be_bytes().to_vec();
-    bytes.extend_from_slice(&body_len.to_be_bytes().to_vec());
-    bytes.extend_from_slice(&proof_len.to_be_bytes().to_vec());
-    bytes.extend_from_slice(&block_header_bytes);
-    bytes.extend_from_slice(&block_body_bytes);
-    bytes.extend_from_slice(&proof_bytes);
-
-    let _ = fs::write(block_path, bytes).await;
-}
-
-pub fn check_block_exists(height: u64) -> bool {
-    let filename = format!("{}", height);
-    let root_path = Path::new(".");
-    let file_path = root_path.join("blocks").join(filename);
-
-    file_path.exists()
-}
-
 pub async fn get_compact_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
+    let compact_block_bytes = load_data(10, height.to_be_bytes().to_vec())?;
+
     let filename = format!("{}", height);
     let root_path = Path::new(".");
     let block_path = root_path.join("blocks").join(filename);

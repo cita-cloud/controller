@@ -20,9 +20,7 @@ use crate::util::*;
 use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
-use cita_cloud_proto::blockchain::{
-    Block, BlockHeader, RawTransaction, RawTransactions,
-};
+use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransaction, RawTransactions};
 use cita_cloud_proto::common::{
     proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum,
 };
@@ -311,61 +309,9 @@ impl Chain {
         }
     }
 
-    async fn finalize_block(&self, full_block: Block, block_hash: Vec<u8>) {
-        let compact_block = full_to_compact(full_block.clone());
-        let compact_block_body = compact_block.body.unwrap();
-        let tx_hash_list = compact_block_body.tx_hashes.clone();
-
-        let block_header = full_block.header.clone().unwrap();
-        let block_height = block_header.height;
-        let key = block_height.to_be_bytes().to_vec();
-
-        // region 5 : block_height - proof
-        // store_data(self.storage_port, 5, key.clone(), proof.to_owned())
-        //    .await
-        //    .expect("store proof failed");
-
-        // region 4 : block_height - block hash
-        store_data(4, key.clone(), block_hash.clone())
-            .await
-            .expect("store_data failed");
-
-        // region 8 : block hash - block_height
-        store_data(8, block_hash.clone(), key.clone())
-            .await
-            .expect("store_data failed");
-
-        if !check_block_exists(block_height) {
-            // region 3: block_height - block body
-            let mut block_body_bytes = Vec::new();
-            compact_block_body
-                .encode(&mut block_body_bytes)
-                .expect("encode block body failed");
-            // store_data(self.storage_port, 3, key.clone(), block_body_bytes)
-            //    .await
-            //    .expect("store_data failed");
-
-            // region 2: block_height - block header
-            let mut block_header_bytes = Vec::new();
-            block_header
-                .encode(&mut block_header_bytes)
-                .expect("encode block header failed");
-            // store_data(self.storage_port, 2, key.clone(), block_header_bytes)
-            //    .await
-            //    .expect("store_data failed");
-
-            // store block with proof in sync folder.
-            write_block(
-                block_height,
-                block_header_bytes.as_slice(),
-                block_body_bytes.as_slice(),
-                &full_block.proof,
-            )
-            .await;
-        }
-
+    async fn finalize_block(&self, block: Block, block_hash: Vec<u8>) {
         // region 1: tx_hash - tx
-        if let Some(raw_txs) = full_block.body.clone() {
+        if let Some(raw_txs) = block.body.clone() {
             for (tx_index, raw_tx) in raw_txs.body.into_iter().enumerate() {
                 let tx_hash = match raw_tx.tx.clone() {
                     Some(Tx::UtxoTx(utxo_tx)) => {
@@ -399,23 +345,22 @@ impl Chain {
                     Some(Tx::NormalTx(normal_tx)) => normal_tx.transaction_hash,
                     None => Vec::new(),
                 };
-                // store tx
-                if !tx_hash.is_empty() {
-                    let mut tx_bytes = Vec::new();
-                    raw_tx.encode(&mut tx_bytes).expect(
-                        format!("encode {} tx failed", hex::encode(tx_hash.clone())).as_str(),
-                    );
-                    write_tx(&tx_hash, &tx_bytes).await;
-                    store_tx_info(&tx_hash, block_height, tx_index).await;
-                }
             }
         }
+
+        let block_bytes = {
+            let mut buf = Vec::with_capacity(block.encode_len());
+            block.encode(&mut buf).expect("encode Block failed");
+            buf
+        };
+
+        store_data(10, block_hash.clone(), block_bytes).await.expect("store full block failed");
 
         // exec block
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
         // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
         // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(full_block)
+        let executed_block_hash = exec_block(block)
             .await
             .unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
