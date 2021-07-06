@@ -283,7 +283,7 @@ impl RpcService for RPCServer {
     ) -> Result<Response<SoftwareVersion>, Status> {
         debug!("get_version request: {:?}", request);
         let reply = Response::new(SoftwareVersion {
-            version: "5.0.0".to_owned(),
+            version: "6.0.0".to_owned(),
         });
         Ok(reply)
     }
