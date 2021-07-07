@@ -285,20 +285,12 @@ impl Controller {
             .map_err(|_| "load block hash failed".to_owned())
     }
 
-    pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
-        if let Some((block_number, _)) = load_tx_info(tx_hash.as_slice()).await {
-            Ok(block_number)
-        } else {
-            Err("load tx info failed".to_owned())
-        }
+    pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
+        load_tx_info(&tx_hash).map(|t| t.0).await
     }
 
-    pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, String> {
-        if let Some((_, tx_index)) = load_tx_info(tx_hash.as_slice()).await {
-            Ok(tx_index)
-        } else {
-            Err("load tx info failed".to_owned())
-        }
+    pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
+        load_tx_info(&tx_hash).map(|t| t.1).await
     }
 
     pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
@@ -309,19 +301,11 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, Error> {
-        get_compact_block(block_number)
-            .await
-            .map(|t| t.0)
-            .ok_or(Error::NoBlock(block_number))
+        get_compact_block(block_number).await.map(|t| t.0)
     }
 
-    pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, String> {
-        let ret = db_get_tx(&tx_hash).await;
-        if let Some(raw_tx) = ret {
-            Ok(raw_tx)
-        } else {
-            Err("can't get transaction".to_owned())
-        }
+    pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, Error> {
+        db_get_tx(&tx_hash).await
     }
 
     pub async fn rpc_get_system_config(&self) -> Result<SystemConfig, String> {
@@ -610,7 +594,7 @@ impl Controller {
                     let mut block_vec = Vec::new();
 
                     for h in sync_block_request.start_height..=sync_block_request.end_height {
-                        if let Some((compact_block, proof)) = get_compact_block(h).await {
+                        if let Ok((compact_block, proof)) = get_compact_block(h).await {
                             let full_block = get_full_block(compact_block, proof).await.unwrap();
                             block_vec.push(full_block);
                         } else {
@@ -714,7 +698,7 @@ impl Controller {
 
                 use crate::protocol::sync_manager::sync_tx_respond::Respond;
                 tokio::spawn(async move {
-                    if let Some(raw_tx) = {
+                    if let Ok(raw_tx) = {
                         let rd = controller_clone.chain.read().await;
                         rd.chain_get_tx(&sync_tx.tx_hash).await
                     } {
@@ -890,30 +874,15 @@ impl Controller {
     }
 
     async fn init_status(&self, height: u64, config: SystemConfig) -> Result<ChainStatus, Error> {
-        let full_block = {
-            if height == 0 {
-                let rd = self.chain.read().await;
-                full_to_compact(rd.get_genesis_block())
-            } else {
-                get_compact_block(height)
-                    .await
-                    .ok_or(Error::NoBlock(height))?
-                    .0
-            }
-        };
-        let mut header_bytes = Vec::new();
-        full_block
-            .header
-            .unwrap()
-            .encode(&mut header_bytes)
-            .map_err(|_| Error::EncodeError(format!("encode compact block error")))?;
-        let block_hash = hash_data(&header_bytes);
+        let compact_block = get_compact_block(height).await?.0;
 
         Ok(ChainStatus {
             version: config.version,
             chain_id: config.chain_id,
             height,
-            hash: Some(Hash { hash: block_hash }),
+            hash: Some(Hash {
+                hash: get_block_hash(compact_block.header.as_ref())?,
+            }),
             address: Some(self.local_address.clone()),
         })
     }

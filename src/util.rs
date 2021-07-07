@@ -135,29 +135,9 @@ pub async fn check_block(
 }
 
 pub fn verify_tx_signature(
-    // kms_port: u16,
     tx_hash: &[u8],
     signature: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    // let mut client = KmsServiceClient::connect(kms_addr).await?;
-    //
-    // let request = Request::new(RecoverSignatureRequest {
-    //     msg: tx_hash,
-    //     signature,
-    // });
-    //
-    // match client.recover_signature(request).await {
-    //     Ok(response) => Ok(response.into_inner().address),
-    //     Err(e) => {
-    //         if e.code() == Code::InvalidArgument {
-    //             Ok(vec![])
-    //         } else {
-    //             Err(Box::new(e))
-    //         }
-    //     }
-    // }
-
     if signature.len() != SM2_SIGNATURE_BYTES_LEN {
         warn!(
             "signature len is not correct, item len: {}, correct len: {}",
@@ -190,21 +170,9 @@ pub fn pk2address(pk: &[u8]) -> Vec<u8> {
 }
 
 pub fn verify_tx_hash(
-    // kms_port: u16,
     tx_hash: &[u8],
     tx_bytes: &[u8],
 ) -> Result<(), Error> {
-    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    // let mut client = KmsServiceClient::connect(kms_addr).await?;
-    //
-    // let request = Request::new(VerifyDataHashRequest {
-    //     data: tx_bytes,
-    //     hash: tx_hash,
-    // });
-    //
-    // let response = client.verify_data_hash(request).await?;
-    // Ok(response.into_inner().is_success)
-
     if tx_hash.len() != HASH_BYTES_LEN {
         warn!(
             "tx_hash len is not correct, item len: {}, correct len: {}",
@@ -229,17 +197,8 @@ pub fn verify_tx_hash(
 
 // todo wrap in library
 pub fn hash_data(
-    // kms_port: u16,
     data: &[u8],
 ) -> Vec<u8> {
-    // let kms_addr = format!("http://127.0.0.1:{}", kms_port);
-    // let mut client = KmsServiceClient::connect(kms_addr).await?;
-    //
-    // let request = Request::new(HashDataRequest { data });
-    //
-    // let response = client.hash_data(request).await?;
-    // Ok(response.into_inner().hash)
-
     libsm::sm3::hash::Sm3Hash::new(data).get_hash().to_vec()
 }
 
@@ -287,15 +246,12 @@ pub async fn load_data_maybe_empty(
 pub async fn get_full_block(
     compact_block: CompactBlock,
     proof: Vec<u8>,
-) -> Result<Block, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Block, Error> {
     let mut body = Vec::new();
     if let Some(compact_body) = compact_block.body {
         for hash in compact_body.tx_hashes {
-            if let Some(tx) = db_get_tx(&hash).await {
-                body.push(tx);
-            } else {
-                panic!("can't get tx: {}", hex::encode(hash));
-            }
+            let raw_tx = db_get_tx(&hash).await?;
+            body.push(raw_tx);
         }
     }
 
@@ -354,35 +310,19 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
     }
 }
 
-#[allow(dead_code)]
-pub fn check_tx_exists(tx_hash: &[u8]) -> bool {
-    let filename = hex::encode(tx_hash);
-    let new_filename = format!("new_{}", filename);
+pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, Error> {
+    let tx_hash_bytes = tx_hash.to_vec();
 
-    let root_path = Path::new(".");
-    let file_path = root_path.join("txs").join(filename);
-    let new_file_path = root_path.join("txs").join(new_filename);
+    let tx_bytes = load_data(1, tx_hash_bytes).await.map_err(|e| {
+        warn!("load tx(0x{} failed, error: {})", hex::encode(tx_hash), e.to_string());
+        Error::NoTransaction
+    })?;
 
-    file_path.exists() || new_file_path.exists()
-}
+    let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(
+        Error::DecodeError(format!("decode RawTransaction failed"))
+    )?;
 
-pub async fn db_get_tx(tx_hash: &[u8]) -> Option<RawTransaction> {
-    let filename = hex::encode(tx_hash);
-    let root_path = Path::new(".");
-    let tx_path = root_path.join("txs").join(filename);
-
-    let ret = fs::read(tx_path).await;
-    if ret.is_err() {
-        warn!("read tx file failed: {:?}", ret);
-        return None;
-    }
-    let content = ret.unwrap();
-    let ret = RawTransaction::decode(content.as_slice());
-    if ret.is_err() {
-        warn!("decode tx file failed: {:?}", ret);
-        return None;
-    }
-    Some(ret.unwrap())
+    Ok(raw_tx)
 }
 
 pub fn get_tx_hash(raw_tx: &RawTransaction) -> Result<Vec<u8>, Error> {
@@ -419,118 +359,47 @@ pub fn get_block_hash(header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
     }
 }
 
-#[allow(dead_code)]
-pub async fn remove_tx(filename: &str) {
-    let root_path = Path::new(".");
-    let tx_path = root_path.join("txs").join(filename);
-    let _ = fs::remove_file(tx_path).await;
-}
+pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), Error> {
+    let tx_hash_bytes = tx_hash.to_vec();
 
-pub async fn store_tx_info(tx_hash: &[u8], block_height: u64, tx_index: usize) {
-    let filename = hex::encode(tx_hash);
-    let root_path = Path::new(".");
-    let tx_info_path = root_path.join("tx_infos").join(filename);
+    let height_bytes = load_data(7, tx_hash_bytes.clone()).await.map_err(|e| {
+        warn!("load tx(0x{}) block height failed, error: {}", hex::encode(tx_hash), e.to_string());
+        Error::NoTxHeight
+    })?;
 
-    let mut data = block_height.to_be_bytes().to_vec();
-    data.extend_from_slice(&tx_index.to_be_bytes().to_vec());
-
-    let _ = fs::write(tx_info_path, data).await;
-}
-
-pub async fn load_tx_info(tx_hash: &[u8]) -> Option<(u64, u64)> {
-    let filename = hex::encode(tx_hash);
-    let root_path = Path::new(".");
-    let tx_info_path = root_path.join("tx_infos").join(filename);
-
-    let ret = fs::read(tx_info_path).await;
-    if ret.is_err() {
-        warn!("read tx info file failed: {:?}", ret);
-        return None;
-    }
-    let data = ret.unwrap();
-
-    if data.len() != 16 {
-        warn!("tx info data invalid");
-        return None;
-    }
+    let tx_index_bytes = load_data(9, tx_hash_bytes).await.map_err(|e| {
+        warn!("load tx(0x{}) index failed, error: {}", hex::encode(tx_hash), e.to_string());
+        Error::NoTxIndex
+    })?;
 
     let mut buf: [u8; 8] = [0; 8];
 
-    buf[..8].clone_from_slice(&data[..8]);
+    buf.clone_from_slice(&height_bytes[..8]);
     let block_height = u64::from_be_bytes(buf);
 
-    buf[..8].clone_from_slice(&data[8..]);
+    buf.clone_from_slice(&tx_index_bytes[..8]);
     let tx_index = u64::from_be_bytes(buf);
 
-    Some((block_height, tx_index))
+    Ok((block_height, tx_index))
 }
 
-pub async fn get_compact_block(height: u64) -> Option<(CompactBlock, Vec<u8>)> {
-    let compact_block_bytes = load_data(10, height.to_be_bytes().to_vec())?;
+pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), Error> {
+    let height_bytes = height.to_be_bytes().to_vec();
 
-    let filename = format!("{}", height);
-    let root_path = Path::new(".");
-    let block_path = root_path.join("blocks").join(filename);
+    let compact_block_bytes = load_data(10, height_bytes.clone()).await.map_err(|e| {
+        warn!("get compact_block({}) error: {}", height, e.to_string());
+        Error::NoBlock(height)
+    })?;
 
-    let ret = fs::read(block_path).await;
-    if ret.is_err() {
-        return None;
-    }
-    let bytes = ret.unwrap();
+    let compact_block = CompactBlock::decode(compact_block_bytes.as_slice())
+        .map_err(|e| Error::DecodeError(format!("decode CompactBlock failed")))?;
 
-    let bytes_len = bytes.len();
-    if bytes_len <= 24 {
-        warn!("get_compact_block {} bad bytes length", height);
-        return None;
-    }
+    let proof = load_data(5, height_bytes).await.map_err(|e| {
+        warn!("get proof({}) error: {}", height, e.to_string());
+        Error::NoProof
+    })?;
 
-    let mut len_bytes: [u8; 8] = [0; 8];
-    // parse header_len
-    len_bytes[..8].clone_from_slice(&bytes[..8]);
-    let header_len = usize::from_be_bytes(len_bytes);
-    // parse body_len
-    len_bytes[..8].clone_from_slice(&bytes[8..16]);
-    let body_len = usize::from_be_bytes(len_bytes);
-    // parse proof_len
-    len_bytes[..8].clone_from_slice(&bytes[16..24]);
-    let proof_len = usize::from_be_bytes(len_bytes);
-
-    if bytes_len != 24 + header_len + body_len + proof_len {
-        warn!("get_compact_block {} bad bytes total length", height);
-        return None;
-    }
-
-    let mut start: usize = 24;
-    let header_slice = &bytes[start..start + header_len];
-    start += header_len;
-    let body_slice = &bytes[start..start + body_len];
-    start += body_len;
-    let proof_slice = &bytes[start..start + proof_len];
-
-    let ret = BlockHeader::decode(header_slice);
-    if ret.is_err() {
-        warn!("get_compact_block {} decode BlockHeader failed", height);
-        return None;
-    }
-    let block_header = ret.unwrap();
-
-    let ret = CompactBlockBody::decode(body_slice);
-    if ret.is_err() {
-        warn!(
-            "get_compact_block {} decode CompactBlockBody failed",
-            height
-        );
-        return None;
-    }
-    let block_body = ret.unwrap();
-
-    let block = CompactBlock {
-        version: 0,
-        header: Some(block_header),
-        body: Some(block_body),
-    };
-
-    Some((block, proof_slice.to_vec()))
+    Ok((compact_block, proof))
 }
 
 #[macro_export]

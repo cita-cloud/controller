@@ -118,29 +118,22 @@ impl Chain {
         }
     }
 
-    pub async fn extract_proposal_info(&self, h: u64) -> Option<(Vec<u8>, Vec<u8>)> {
+    pub async fn extract_proposal_info(&self, h: u64) -> Result<(Vec<u8>, Vec<u8>), Error> {
         let pre_h = h - self.block_delay_number as u64 - 1;
-        let key = pre_h.to_be_bytes().to_vec();
+        let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
-        let state_root = {
-            let ret = load_data(6, key.clone()).await;
-            if ret.is_err() {
-                warn!("get_proposal get state_root failed");
-                return None;
-            }
-            ret.unwrap()
-        };
+        let state_root = load_data(6, pre_height_bytes.clone()).await.map_err(|e| {
+            warn!(
+                "get h({}) state_root failed, error: {}",
+                pre_h,
+                e.to_string()
+            );
+            Error::NoEarlyStatus
+        })?;
 
-        let proof = {
-            let ret = get_compact_block(pre_h).await;
-            if ret.is_none() {
-                warn!("get_proposal get proof failed");
-                return None;
-            }
-            ret.unwrap().1
-        };
+        let proof = get_compact_block(pre_h).await?.1;
 
-        Some((state_root, proof))
+        Ok((state_root, proof))
     }
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
@@ -291,7 +284,7 @@ impl Chain {
                     .map_err(Error::InternalError)
                     .unwrap();
 
-                let proof = get_compact_block(pre_h).await.unwrap().1;
+                let proof = get_compact_block(pre_h).await?.1;
 
                 if bft_proposal.pre_state_root == state_root && bft_proposal.pre_proof == proof {
                     Ok(true)
@@ -354,15 +347,15 @@ impl Chain {
             buf
         };
 
-        store_data(10, block_hash.clone(), block_bytes).await.expect("store full block failed");
+        store_data(10, block_hash.clone(), block_bytes)
+            .await
+            .expect("store full block failed");
 
         // exec block
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
         // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
         // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(block)
-            .await
-            .unwrap_or_else(|_| vec![0u8; 32]);
+        let executed_block_hash = exec_block(block).await.unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
         store_data(6, key.clone(), executed_block_hash)
             .await
@@ -666,12 +659,12 @@ impl Chain {
         Ok(())
     }
 
-    pub async fn chain_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {
+    pub async fn chain_get_tx(&self, tx_hash: &[u8]) -> Result<RawTransaction, Error> {
         if let Some(raw_tx) = {
             let rd = self.pool.read().await;
             rd.pool_get_tx(tx_hash)
         } {
-            return Some(raw_tx);
+            return Ok(raw_tx);
         } else {
             db_get_tx(tx_hash).await
         }

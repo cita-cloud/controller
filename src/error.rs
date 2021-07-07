@@ -34,6 +34,18 @@ pub enum Error {
     /// not get the block
     NoBlock(u64),
 
+    /// not get the proof
+    NoProof,
+
+    /// not get height of block which wrap tx
+    NoTxHeight,
+
+    /// not get tx index
+    NoTxIndex,
+
+    /// not get transaction
+    NoTransaction,
+
     /// not get the block height base on hash
     NoBlockHeight,
 
@@ -120,7 +132,11 @@ impl ::std::fmt::Display for Error {
             Error::ProvideAddressError => write!(f, "Provide address len is not 20"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
-            Error::NoBlockHeight => write!(f, "Can't get block height base on hash"),
+            Error::NoProof => write!(f, "Not get the proof"),
+            Error::NoTxHeight => write!(f, "Not get the height of block which wrap tx"),
+            Error::NoTxIndex => write!(f, "Not get tx index"),
+            Error::NoTransaction => write!(f, "Not get transaction"),
+            Error::NoBlockHeight => write!(f, "Not get block height base on hash"),
             Error::NoneProposal => write!(f, "Proposal should not be none"),
             Error::NoneBlockBody => write!(f, "BlockBody should not be none"),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be none"),

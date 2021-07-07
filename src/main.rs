@@ -218,7 +218,7 @@ impl RpcService for RPCServer {
             .rpc_get_transaction(hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |raw_tx| {
                     let reply = Response::new(raw_tx);
                     Ok(reply)
@@ -320,7 +320,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_block_number(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |block_number| {
                     let reply = Response::new(BlockNumber { block_number });
                     Ok(reply)
@@ -340,7 +340,7 @@ impl RpcService for RPCServer {
             .rpc_get_tx_index(tx_hash.hash)
             .await
             .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
+                |e| Err(Status::invalid_argument(e.to_string())),
                 |tx_index| {
                     let reply = Response::new(TransactionIndex { tx_index });
                     Ok(reply)
@@ -697,7 +697,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         let own_old_compact_block = get_compact_block(chain_status.height)
                             .await
                             .map(|t| t.0)
-                            .expect("a specified block not get!");
+                            .unwrap();
 
                         let own_old_block_hash =
                             get_block_hash(own_old_compact_block.header.as_ref()).unwrap();
