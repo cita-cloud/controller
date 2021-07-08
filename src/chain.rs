@@ -331,7 +331,7 @@ impl Chain {
         let block_height = block.header.as_ref().ok_or(Error::NoneBlockHeader)?.height;
         let block_height_bytes = block_height.to_be_bytes().to_vec();
 
-        store_data(10, block_height_bytes.clone(), block_bytes)
+        store_data(11, block_height_bytes.clone(), block_bytes)
             .await
             .map_err(|e| {
                 warn!("store Block({}) failed, error: {}", block_height, e.to_string());
