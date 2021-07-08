@@ -35,8 +35,6 @@ use cita_cloud_proto::common::{
     Address, ConsensusConfiguration, Empty, Proposal, ProposalWithProof,
 };
 use prost::Message;
-use std::path::Path;
-use tokio::fs;
 use tokio::sync::OnceCell;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
@@ -134,10 +132,7 @@ pub async fn check_block(
     Ok(response.into_inner().is_success)
 }
 
-pub fn verify_tx_signature(
-    tx_hash: &[u8],
-    signature: &[u8],
-) -> Result<Vec<u8>, Error> {
+pub fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec<u8>, Error> {
     if signature.len() != SM2_SIGNATURE_BYTES_LEN {
         warn!(
             "signature len is not correct, item len: {}, correct len: {}",
@@ -169,10 +164,7 @@ pub fn pk2address(pk: &[u8]) -> Vec<u8> {
     hash_data(pk)[HASH_BYTES_LEN - ADDR_BYTES_LEN..].to_vec()
 }
 
-pub fn verify_tx_hash(
-    tx_hash: &[u8],
-    tx_bytes: &[u8],
-) -> Result<(), Error> {
+pub fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Error> {
     if tx_hash.len() != HASH_BYTES_LEN {
         warn!(
             "tx_hash len is not correct, item len: {}, correct len: {}",
@@ -196,9 +188,7 @@ pub fn verify_tx_hash(
 }
 
 // todo wrap in library
-pub fn hash_data(
-    data: &[u8],
-) -> Vec<u8> {
+pub fn hash_data(data: &[u8]) -> Vec<u8> {
     libsm::sm3::hash::Sm3Hash::new(data).get_hash().to_vec()
 }
 
@@ -243,10 +233,7 @@ pub async fn load_data_maybe_empty(
     }
 }
 
-pub async fn get_full_block(
-    compact_block: CompactBlock,
-    proof: Vec<u8>,
-) -> Result<Block, Error> {
+pub async fn get_full_block(compact_block: CompactBlock, proof: Vec<u8>) -> Result<Block, Error> {
     let mut body = Vec::new();
     if let Some(compact_body) = compact_block.body {
         for hash in compact_body.tx_hashes {
@@ -314,13 +301,16 @@ pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, Error> {
     let tx_hash_bytes = tx_hash.to_vec();
 
     let tx_bytes = load_data(1, tx_hash_bytes).await.map_err(|e| {
-        warn!("load tx(0x{} failed, error: {})", hex::encode(tx_hash), e.to_string());
+        warn!(
+            "load tx(0x{} failed, error: {})",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
         Error::NoTransaction
     })?;
 
-    let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(
-        Error::DecodeError(format!("decode RawTransaction failed"))
-    )?;
+    let raw_tx = RawTransaction::decode(tx_bytes.as_slice())
+        .map_err(|_| Error::DecodeError(format!("decode RawTransaction failed")))?;
 
     Ok(raw_tx)
 }
@@ -347,10 +337,10 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Error
 pub fn get_block_hash(header: Option<&BlockHeader>) -> Result<Vec<u8>, Error> {
     match header {
         Some(header) => {
-            let mut block_header_bytes = Vec::with_capacity(header);
+            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
             header
                 .encode(&mut block_header_bytes)
-                .map_err(|_| Error::EncodeError(format!("encode block header failed")));
+                .map_err(|_| Error::EncodeError(format!("encode block header failed")))?;
             let block_hash = hash_data(&block_header_bytes);
             Ok(block_hash)
         }
@@ -363,12 +353,20 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), Error> {
     let tx_hash_bytes = tx_hash.to_vec();
 
     let height_bytes = load_data(7, tx_hash_bytes.clone()).await.map_err(|e| {
-        warn!("load tx(0x{}) block height failed, error: {}", hex::encode(tx_hash), e.to_string());
+        warn!(
+            "load tx(0x{}) block height failed, error: {}",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
         Error::NoTxHeight
     })?;
 
     let tx_index_bytes = load_data(9, tx_hash_bytes).await.map_err(|e| {
-        warn!("load tx(0x{}) index failed, error: {}", hex::encode(tx_hash), e.to_string());
+        warn!(
+            "load tx(0x{}) index failed, error: {}",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
         Error::NoTxIndex
     })?;
 
@@ -392,7 +390,7 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), E
     })?;
 
     let compact_block = CompactBlock::decode(compact_block_bytes.as_slice())
-        .map_err(|e| Error::DecodeError(format!("decode CompactBlock failed")))?;
+        .map_err(|_| Error::DecodeError(format!("decode CompactBlock failed")))?;
 
     let proof = load_data(5, height_bytes).await.map_err(|e| {
         warn!("get proof({}) error: {}", height, e.to_string());

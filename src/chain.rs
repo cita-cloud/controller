@@ -17,7 +17,7 @@ use crate::error::Error;
 use crate::node_manager::ChainStatus;
 use crate::pool::Pool;
 use crate::util::*;
-use crate::utxo_set::{SystemConfig, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_VALIDATORS};
+use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransaction, RawTransactions};
@@ -97,17 +97,14 @@ impl Chain {
         if init_block_number == 0 {
             info!("finalize genesis block");
             self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
-                .await;
+                .await
+                .unwrap();
         }
     }
 
     pub async fn init_auth(&self, init_block_number: u64) {
         let mut auth = self.auth.write().await;
         auth.init(init_block_number).await;
-    }
-
-    pub fn get_genesis_block(&self) -> Block {
-        self.genesis.genesis_block()
     }
 
     pub fn get_block_number(&self, is_pending: bool) -> u64 {
@@ -145,24 +142,22 @@ impl Chain {
 
     pub async fn assemble_proposal(&self, mut block: Block, height: u64) -> Result<Vec<u8>, Error> {
         block.proof = Vec::new();
-        if let Some((pre_state_root, pre_proof)) = self.extract_proposal_info(height).await {
-            let proposal = ProposalEnum {
-                proposal: Some(Proposal::BftProposal(BftProposal {
-                    proposal: Some(block),
-                    pre_state_root,
-                    pre_proof,
-                })),
-            };
+        let (pre_state_root, pre_proof) = self.extract_proposal_info(height).await?;
 
-            let mut proposal_bytes = Vec::new();
-            proposal
-                .encode(&mut proposal_bytes)
-                .map_err(|_| Error::EncodeError(format!("encode proposal error")))?;
+        let proposal = ProposalEnum {
+            proposal: Some(Proposal::BftProposal(BftProposal {
+                proposal: Some(block),
+                pre_state_root,
+                pre_proof,
+            })),
+        };
 
-            Ok(proposal_bytes)
-        } else {
-            Err(Error::NoEarlyStatus)
-        }
+        let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
+        proposal
+            .encode(&mut proposal_bytes)
+            .map_err(|_| Error::EncodeError(format!("encode proposal error")))?;
+
+        Ok(proposal_bytes)
     }
 
     pub async fn add_remote_proposal(
@@ -302,54 +297,48 @@ impl Chain {
         }
     }
 
-    async fn finalize_block(&self, block: Block, block_hash: Vec<u8>) {
+    async fn finalize_block(&self, block: Block, block_hash: Vec<u8>) -> Result<(), Error> {
         // region 1: tx_hash - tx
         if let Some(raw_txs) = block.body.clone() {
-            for (tx_index, raw_tx) in raw_txs.body.into_iter().enumerate() {
-                let tx_hash = match raw_tx.tx.clone() {
+            for raw_tx in raw_txs.body {
+                match raw_tx.tx.clone() {
                     Some(Tx::UtxoTx(utxo_tx)) => {
                         if {
                             let mut auth = self.auth.write().await;
                             auth.update_system_config(&utxo_tx)
                         } {
                             // if sys_config changed, store utxo tx hash into global region
-                            let lock_id = utxo_tx.transaction.unwrap().lock_id;
-                            let key = lock_id.to_be_bytes().to_vec();
-                            store_data(0, key, utxo_tx.transaction_hash.clone())
+                            let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
+                            store_data(0, lock_id.to_be_bytes().to_vec(), utxo_tx.transaction_hash.clone())
                                 .await
-                                .expect("store_data failed");
-
-                            if lock_id == LOCK_ID_VALIDATORS || lock_id == LOCK_ID_BLOCK_INTERVAL {
-                                let sys_config = {
-                                    let auth = self.auth.read().await;
-                                    auth.get_system_config()
-                                };
-                                reconfigure(ConsensusConfiguration {
-                                    height: block_height,
-                                    block_interval: sys_config.block_interval,
-                                    validators: sys_config.validators,
-                                })
-                                .await
-                                .expect("reconfigure failed");
-                            }
+                                .map_err(|e| {
+                                    warn!("store utxo(0x{}) failed, error: {}", hex::encode(&utxo_tx.transaction_hash), e.to_string());
+                                    Error::StoreError
+                                })?;
                         }
-                        utxo_tx.transaction_hash
                     }
-                    Some(Tx::NormalTx(normal_tx)) => normal_tx.transaction_hash,
-                    None => Vec::new(),
+                    _ => {},
                 };
             }
         }
 
         let block_bytes = {
-            let mut buf = Vec::with_capacity(block.encode_len());
-            block.encode(&mut buf).expect("encode Block failed");
+            let mut buf = Vec::with_capacity(block.encoded_len());
+            block.encode(&mut buf).map_err(|_| Error::EncodeError(format!("encode Block failed")))?;
             buf
         };
 
-        store_data(10, block_hash.clone(), block_bytes)
+        let block_height = block.header.as_ref().ok_or(Error::NoneBlockHeader)?.height;
+        let block_height_bytes = block_height.to_be_bytes().to_vec();
+
+        store_data(10, block_height_bytes.clone(), block_bytes)
             .await
-            .expect("store full block failed");
+            .map_err(|e| {
+                warn!("store Block({}) failed, error: {}", block_height, e.to_string());
+                Error::StoreError
+            })?;
+
+        let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(Error::NoneBlockBody)?)?;
 
         // exec block
         // if exec_block after consensus, we should ignore the error, because all node will have same error.
@@ -357,9 +346,12 @@ impl Chain {
         // TODO: get length of hash from kms
         let executed_block_hash = exec_block(block).await.unwrap_or_else(|_| vec![0u8; 32]);
         // region 6 : block_height - executed_block_hash
-        store_data(6, key.clone(), executed_block_hash)
+        store_data(6, block_height_bytes.clone(), executed_block_hash.clone())
             .await
-            .expect("store result failed");
+            .map_err(|e| {
+                warn!("store state_root(0x{}) failed, error: {}", hex::encode(&executed_block_hash), e.to_string());
+                Error::StoreError
+            })?;
 
         // this must be before update pool
         {
@@ -372,19 +364,27 @@ impl Chain {
             pool.update(&tx_hash_list);
         }
 
+        // region 0: 0 - current height; 1 - current hash
+        store_data(0, 0u64.to_be_bytes().to_vec(), block_height_bytes)
+            .await
+            .map_err(|e| {
+                warn!("store current height({}) failed, error: {}", block_height, e.to_string());
+                Error::StoreError
+            })?;
+        store_data(0, 1u64.to_be_bytes().to_vec(), block_hash.clone())
+            .await
+            .map_err(|e| {
+                warn!("store current block_hash(0x{}) failed, error: {}", hex::encode(&block_hash), e.to_string());
+                Error::StoreError
+            })?;
+
         info!(
             "finalize_block: {}, block_hash: 0x{}",
             block_height,
             hex::encode(&block_hash)
         );
 
-        // region 0: 0 - current height; 1 - current hash
-        store_data(0, 0u64.to_be_bytes().to_vec(), key)
-            .await
-            .expect("store_data failed");
-        store_data(0, 1u64.to_be_bytes().to_vec(), block_hash)
-            .await
-            .expect("store_data failed");
+        Ok(())
     }
 
     pub async fn commit_block(
@@ -486,7 +486,7 @@ impl Chain {
                             // let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
                             let block = full_block.clone();
                             self.finalize_block(block.clone(), block_hash.to_owned())
-                                .await;
+                                .await?;
                             let block_body = full_to_compact(block).body.unwrap();
                             finalized_tx_hash_list
                                 .extend_from_slice(block_body.tx_hashes.as_slice());
@@ -594,7 +594,7 @@ impl Chain {
             .await?;
 
         self.finalize_block(block, get_block_hash(Some(&header))?)
-            .await;
+            .await?;
 
         self.block_number = height;
         self.block_hash = block_hash;

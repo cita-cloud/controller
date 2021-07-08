@@ -268,29 +268,43 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
-        let block_number = load_data(8, hash)
+        let block_number = load_data(8, hash.clone())
             .await
-            .map_err(|_| Error::NoBlockHeight)
+            .map_err(|e| {
+                warn!(
+                    "load block(0x{})'s height failed, error: {}",
+                    hex::encode(&hash),
+                    e.to_string()
+                );
+                Error::NoBlockHeight
+            })
             .map(|v| {
                 let mut bytes: [u8; 8] = [0; 8];
-                bytes[..8].clone_from_slice(&v[..8]);
+                bytes.clone_from_slice(&v[..8]);
                 u64::from_be_bytes(bytes)
             })?;
         self.rpc_get_block_by_number(block_number).await
     }
 
-    pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, String> {
+    pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, Error> {
         load_data(4, block_number.to_be_bytes().to_vec())
             .await
-            .map_err(|_| "load block hash failed".to_owned())
+            .map_err(|e| {
+                warn!(
+                    "load block({})'s hash failed, error: {}",
+                    block_number,
+                    e.to_string()
+                );
+                Error::NoBlockHeight
+            })
     }
 
     pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
-        load_tx_info(&tx_hash).map(|t| t.0).await
+        load_tx_info(&tx_hash).await.map(|t| t.0)
     }
 
     pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
-        load_tx_info(&tx_hash).map(|t| t.1).await
+        load_tx_info(&tx_hash).await.map(|t| t.1)
     }
 
     pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
