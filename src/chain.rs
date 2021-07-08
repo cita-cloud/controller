@@ -309,22 +309,32 @@ impl Chain {
                         } {
                             // if sys_config changed, store utxo tx hash into global region
                             let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
-                            store_data(0, lock_id.to_be_bytes().to_vec(), utxo_tx.transaction_hash.clone())
-                                .await
-                                .map_err(|e| {
-                                    warn!("store utxo(0x{}) failed, error: {}", hex::encode(&utxo_tx.transaction_hash), e.to_string());
-                                    Error::StoreError
-                                })?;
+                            store_data(
+                                0,
+                                lock_id.to_be_bytes().to_vec(),
+                                utxo_tx.transaction_hash.clone(),
+                            )
+                            .await
+                            .map_err(|e| {
+                                warn!(
+                                    "store utxo(0x{}) failed, error: {}",
+                                    hex::encode(&utxo_tx.transaction_hash),
+                                    e.to_string()
+                                );
+                                Error::StoreError
+                            })?;
                         }
                     }
-                    _ => {},
+                    _ => {}
                 };
             }
         }
 
         let block_bytes = {
             let mut buf = Vec::with_capacity(block.encoded_len());
-            block.encode(&mut buf).map_err(|_| Error::EncodeError(format!("encode Block failed")))?;
+            block
+                .encode(&mut buf)
+                .map_err(|_| Error::EncodeError(format!("encode Block failed")))?;
             buf
         };
 
@@ -334,7 +344,11 @@ impl Chain {
         store_data(11, block_height_bytes.clone(), block_bytes)
             .await
             .map_err(|e| {
-                warn!("store Block({}) failed, error: {}", block_height, e.to_string());
+                warn!(
+                    "store Block({}) failed, error: {}",
+                    block_height,
+                    e.to_string()
+                );
                 Error::StoreError
             })?;
 
@@ -349,7 +363,11 @@ impl Chain {
         store_data(6, block_height_bytes.clone(), executed_block_hash.clone())
             .await
             .map_err(|e| {
-                warn!("store state_root(0x{}) failed, error: {}", hex::encode(&executed_block_hash), e.to_string());
+                warn!(
+                    "store state_root(0x{}) failed, error: {}",
+                    hex::encode(&executed_block_hash),
+                    e.to_string()
+                );
                 Error::StoreError
             })?;
 
@@ -368,13 +386,21 @@ impl Chain {
         store_data(0, 0u64.to_be_bytes().to_vec(), block_height_bytes)
             .await
             .map_err(|e| {
-                warn!("store current height({}) failed, error: {}", block_height, e.to_string());
+                warn!(
+                    "store current height({}) failed, error: {}",
+                    block_height,
+                    e.to_string()
+                );
                 Error::StoreError
             })?;
         store_data(0, 1u64.to_be_bytes().to_vec(), block_hash.clone())
             .await
             .map_err(|e| {
-                warn!("store current block_hash(0x{}) failed, error: {}", hex::encode(&block_hash), e.to_string());
+                warn!(
+                    "store current block_hash(0x{}) failed, error: {}",
+                    hex::encode(&block_hash),
+                    e.to_string()
+                );
                 Error::StoreError
             })?;
 
