@@ -15,7 +15,8 @@
 use crate::auth::BLOCKLIMIT;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::iter::FromIterator;
 
 pub struct Pool {
     package_limit: usize,
@@ -53,11 +54,12 @@ impl Pool {
     }
 
     pub fn update(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
-        self.update_txs(tx_hash_list);
-        self.update_order_set(tx_hash_list);
+        let tx_hash_list = HashSet::from_iter(tx_hash_list);
+        self.update_txs(&tx_hash_list);
+        self.update_order_set(&tx_hash_list);
     }
 
-    fn update_order_set(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
+    fn update_order_set(&mut self, tx_hash_list: &HashSet<&Vec<u8>>) {
         self.order_set = self
             .order_set
             .clone()
@@ -66,7 +68,7 @@ impl Pool {
             .collect();
     }
 
-    fn update_txs(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
+    fn update_txs(&mut self, tx_hash_list: &HashSet<&Vec<u8>>) {
         self.txs = self
             .txs
             .clone()

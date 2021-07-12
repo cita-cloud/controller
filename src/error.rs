@@ -34,8 +34,23 @@ pub enum Error {
     /// not get the block
     NoBlock(u64),
 
+    /// not get the proof
+    NoProof,
+
+    /// not get height of block which wrap tx
+    NoTxHeight,
+
+    /// not get tx index
+    NoTxIndex,
+
+    /// not get transaction
+    NoTransaction,
+
     /// not get the block height base on hash
     NoBlockHeight,
+
+    /// not get the block hash base on height
+    NoBlockHash,
 
     /// proposal is none
     NoneProposal,
@@ -51,6 +66,9 @@ pub enum Error {
 
     /// early status received
     EarlyStatus,
+
+    /// store data error
+    StoreError,
 
     /// proto struct encode error
     EncodeError(String),
@@ -120,12 +138,18 @@ impl ::std::fmt::Display for Error {
             Error::ProvideAddressError => write!(f, "Provide address len is not 20"),
             Error::NoProvideAddress => write!(f, "No correct address provide"),
             Error::NoBlock(h) => write!(f, "Not get the {}th block", h),
-            Error::NoBlockHeight => write!(f, "Can't get block height base on hash"),
+            Error::NoProof => write!(f, "Not get the proof"),
+            Error::NoTxHeight => write!(f, "Not get the height of block which wrap tx"),
+            Error::NoTxIndex => write!(f, "Not get tx index"),
+            Error::NoTransaction => write!(f, "Not get transaction"),
+            Error::NoBlockHeight => write!(f, "Not get block height base on hash"),
+            Error::NoBlockHash => write!(f, "Not get block hash base on height"),
             Error::NoneProposal => write!(f, "Proposal should not be none"),
             Error::NoneBlockBody => write!(f, "BlockBody should not be none"),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be none"),
             Error::NoneChainStatus => write!(f, "Chain status should not be none"),
             Error::EarlyStatus => write!(f, "receive early status from same node"),
+            Error::StoreError => write!(f, "store data error"),
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
             Error::DecodeError(s) => write!(f, "Proto struct decode error: {}", s),
             Error::NoCandidate => write!(f, "No candidate block"),

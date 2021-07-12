@@ -58,7 +58,8 @@ impl Authentication {
         for h in begin_block_number..(init_block_number + 1) {
             let block = get_compact_block(h).await.unwrap().0;
             let block_body = block.body.unwrap();
-            self.history_hashes.insert(h, HashSet::from_iter(block_body.tx_hashes));
+            self.history_hashes
+                .insert(h, HashSet::from_iter(block_body.tx_hashes));
         }
         self.current_block_number = init_block_number;
     }

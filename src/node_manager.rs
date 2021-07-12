@@ -57,7 +57,7 @@ impl ChainStatus {
 
     pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), Error> {
         if own_status.height >= self.height {
-            let compact_block = get_compact_block(self.height).await.map(|t| t.0).unwrap();
+            let compact_block = get_compact_block(self.height).await.map(|t| t.0)?;
             if get_block_hash(compact_block.header.as_ref())? != self.hash.clone().unwrap().hash {
                 Err(Error::HashCheckError)
             } else {
