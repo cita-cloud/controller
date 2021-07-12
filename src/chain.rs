@@ -28,9 +28,9 @@ use log::{info, warn};
 use prost::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time;
-use std::time::Duration;
 
 const FORCE_IN_SYNC: u64 = 6;
 
@@ -101,10 +101,12 @@ impl Chain {
             let mut interval = time::interval(Duration::from_secs(3));
             loop {
                 interval.tick().await;
-                if self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
+                if self
+                    .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
                     .await
-                    .is_ok() {
-                    break
+                    .is_ok()
+                {
+                    break;
                 } else {
                     warn!("executor not ready! Retrying")
                 }
