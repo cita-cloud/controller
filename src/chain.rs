@@ -29,6 +29,8 @@ use prost::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::time;
+use std::time::Duration;
 
 const FORCE_IN_SYNC: u64 = 6;
 
@@ -96,9 +98,17 @@ impl Chain {
     pub async fn init(&self, init_block_number: u64) {
         if init_block_number == 0 {
             info!("finalize genesis block");
-            self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
-                .await
-                .unwrap();
+            let mut interval = time::interval(Duration::from_secs(3));
+            loop {
+                interval.tick().await;
+                if self.finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
+                    .await
+                    .is_ok() {
+                    break
+                } else {
+                    warn!("executor not ready! Retrying")
+                }
+            }
         }
     }
 
@@ -354,11 +364,11 @@ impl Chain {
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(Error::NoneBlockBody)?)?;
 
-        // exec block
-        // if exec_block after consensus, we should ignore the error, because all node will have same error.
-        // if exec_block before consensus, we shouldn't ignore, because it means that block is invalid.
-        // TODO: get length of hash from kms
-        let executed_block_hash = exec_block(block).await.unwrap_or_else(|_| vec![0u8; 32]);
+        // exec bloc
+        let executed_block_hash = exec_block(block).await.map_err(|e| {
+            warn!("exec_block({}) error: {}", block_height, e.to_string());
+            Error::ExecuteError
+        })?;
         // region 6 : block_height - executed_block_hash
         store_data(6, block_height_bytes.clone(), executed_block_hash.clone())
             .await

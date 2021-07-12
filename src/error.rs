@@ -70,6 +70,9 @@ pub enum Error {
     /// store data error
     StoreError,
 
+    /// execute error
+    ExecuteError,
+
     /// proto struct encode error
     EncodeError(String),
 
@@ -148,8 +151,9 @@ impl ::std::fmt::Display for Error {
             Error::NoneBlockBody => write!(f, "BlockBody should not be none"),
             Error::NoneBlockHeader => write!(f, "BlockHeader should not be none"),
             Error::NoneChainStatus => write!(f, "Chain status should not be none"),
-            Error::EarlyStatus => write!(f, "receive early status from same node"),
-            Error::StoreError => write!(f, "store data error"),
+            Error::EarlyStatus => write!(f, "Receive early status from same node"),
+            Error::StoreError => write!(f, "Store data error"),
+            Error::ExecuteError => write!(f, "Execute error"),
             Error::EncodeError(s) => write!(f, "Proto struct encode error: {}", s),
             Error::DecodeError(s) => write!(f, "Proto struct decode error: {}", s),
             Error::NoCandidate => write!(f, "No candidate block"),
