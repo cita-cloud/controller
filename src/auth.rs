@@ -123,24 +123,24 @@ impl Authentication {
         Ok(())
     }
 
-    pub async fn check_raw_tx(&self, raw_tx: RawTransaction) -> Result<Vec<u8>, String> {
-        if let Some(tx) = raw_tx.tx {
+    pub fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, String> {
+        if let Some(tx) = raw_tx.tx.as_ref() {
             match tx {
                 NormalTx(normal_tx) => {
                     if normal_tx.witness.is_none() {
                         return Err("witness is none".to_owned());
                     }
 
-                    let witness = normal_tx.witness.unwrap();
-                    let signature = witness.signature;
-                    let sender = witness.sender;
+                    let witness = normal_tx.witness.as_ref().unwrap();
+                    let signature = &witness.signature;
+                    let sender = &witness.sender;
 
                     if self.sys_config.emergency_brake {
                         return Err("forbidden".to_owned());
                     }
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
-                    if let Some(tx) = normal_tx.transaction {
+                    if let Some(tx) = &normal_tx.transaction {
                         self.check_transaction(&tx)?;
                         let ret = tx.encode(&mut tx_bytes);
                         if ret.is_err() {
@@ -150,22 +150,22 @@ impl Authentication {
                         return Err("tx is none".to_owned());
                     }
 
-                    let tx_hash = normal_tx.transaction_hash;
+                    let tx_hash = &normal_tx.transaction_hash;
 
                     self.check_tx_hash(&tx_hash)?;
 
                     verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
 
-                    if verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                    if &verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
                         == sender
                     {
-                        Ok(tx_hash)
+                        Ok(tx_hash.clone())
                     } else {
                         Err("Invalid sender".to_owned())
                     }
                 }
                 UtxoTx(utxo_tx) => {
-                    let witnesses = utxo_tx.witnesses;
+                    let witnesses = &utxo_tx.witnesses;
 
                     // limit witnesses length is 1
                     if witnesses.len() != 1 {
@@ -178,7 +178,7 @@ impl Authentication {
                     }
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
-                    if let Some(tx) = utxo_tx.transaction {
+                    if let Some(tx) = utxo_tx.transaction.as_ref() {
                         self.check_utxo_transaction(&tx)?;
                         let ret = tx.encode(&mut tx_bytes);
                         if ret.is_err() {
@@ -188,20 +188,20 @@ impl Authentication {
                         return Err("utxo tx is none".to_owned());
                     }
 
-                    let tx_hash = utxo_tx.transaction_hash;
+                    let tx_hash = &utxo_tx.transaction_hash;
                     verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
 
                     for (i, w) in witnesses.into_iter().enumerate() {
-                        let signature = w.signature;
-                        let sender = w.sender;
+                        let signature = &w.signature;
+                        let sender = &w.sender;
 
-                        if verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                        if &verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
                             != sender
                         {
                             return Err(format!("Invalid sender index: {}", i));
                         }
                     }
-                    Ok(tx_hash)
+                    Ok(tx_hash.clone())
                 }
             }
         } else {

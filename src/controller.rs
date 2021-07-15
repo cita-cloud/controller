@@ -231,9 +231,7 @@ impl Controller {
 
         {
             let auth = self.auth.read().await;
-            auth.check_raw_tx(raw_tx.clone())
-                .await
-                .map_err(Error::ExpectError)?;
+            auth.check_raw_tx(&raw_tx).map_err(Error::ExpectError)?;
         };
 
         if {

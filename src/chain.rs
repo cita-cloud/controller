@@ -681,19 +681,25 @@ impl Chain {
 
     // todo use &RawTransactions
     pub async fn check_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
+        use rayon::prelude::*;
+
         let auth = self.auth.read().await;
 
-        // todo not do clone
-        for raw_tx in raw_txs.body.clone() {
-            let tx_hash = auth
-                .check_raw_tx(raw_tx)
-                .await
-                .map_err(|e| Error::ExpectError(e))?;
+        raw_txs
+            .body
+            .par_iter()
+            .map(|raw_tx| {
+                let tx_hash = auth
+                    .check_raw_tx(raw_tx)
+                    .map_err(|e| Error::ExpectError(e))?;
 
-            if self.check_dup_tx(&tx_hash.clone()) {
-                return Err(Error::DupTransaction(tx_hash));
-            }
-        }
+                if self.check_dup_tx(&tx_hash) {
+                    return Err(Error::DupTransaction(tx_hash));
+                }
+
+                Ok(())
+            })
+            .collect::<Result<(), Error>>()?;
         Ok(())
     }
 
