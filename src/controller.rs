@@ -353,7 +353,7 @@ impl Controller {
                     // todo re-enter check
                     if {
                         log::info!(
-                            "add remote proposal(0x{}) through check_proposal",
+                            "chain_check_proposal: add remote proposal(0x{})",
                             hex::encode(&block_hash)
                         );
                         let mut chain = self.chain.write().await;
@@ -365,6 +365,8 @@ impl Controller {
                         let _ = self
                             .batch_transactions(block.body.ok_or(Error::NoneBlockBody)?)
                             .await;
+
+                        log::info!("chain_check_proposal: finished");
                     }
                 }
                 None => return Err(Error::NoneProposal),

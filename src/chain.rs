@@ -211,11 +211,9 @@ impl Chain {
         {
             Ok(())
         } else {
-            info!("main_chain_tx_hash len {}", self.main_chain_tx_hash.len());
-
             let (tx_hash_list, tx_list) = {
                 let mut pool = self.pool.write().await;
-                info!("tx poll len {}", pool.len());
+                info!("add_proposal: tx poll len {}", pool.len());
                 pool.package(self.block_number + 1)
             };
 
@@ -232,9 +230,8 @@ impl Chain {
             };
             let height = self.block_number + self.main_chain.len() as u64 + 1;
 
-            info!("proposal {} prevhash 0x{}", height, hex::encode(&prevhash));
             let header = BlockHeader {
-                prevhash,
+                prevhash: prevhash.clone(),
                 timestamp: unix_now(),
                 height,
                 transactions_root,
@@ -255,14 +252,15 @@ impl Chain {
 
             let block_hash = hash_data(&block_header_bytes);
 
-            info!(
-                "proposal {} block_hash 0x{}",
-                height,
-                hex::encode(&block_hash)
-            );
-
             self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
-            self.fork_tree[self.main_chain.len()].insert(block_hash, full_block);
+            self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
+
+            info!(
+                "proposal {} block_hash 0x{} prevhash 0x{}",
+                height,
+                hex::encode(&block_hash),
+                hex::encode(&prevhash),
+            );
 
             Ok(())
         }
