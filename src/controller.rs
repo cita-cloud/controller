@@ -234,7 +234,7 @@ impl Controller {
 
         if {
             let mut pool = self.pool.write().await;
-            pool.enqueue(tx_hash.clone(), raw_tx.clone())
+            pool.enqueue(raw_tx.clone())
         } {
             if broadcast {
                 self.multicast_send_tx(raw_tx).await;
@@ -259,7 +259,7 @@ impl Controller {
         let mut pool = self.pool.write().await;
         for raw_tx in raw_txs.body {
             let hash = get_tx_hash(&raw_tx)?;
-            if pool.enqueue(hash.clone(), raw_tx) {
+            if pool.enqueue(raw_tx) {
                 hashes.push(Hash { hash })
             }
         }

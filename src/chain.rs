@@ -195,15 +195,15 @@ impl Chain {
         {
             Ok(())
         } else {
-            let (tx_hash_list, tx_list) = {
+            let tx_list = {
                 let mut pool = self.pool.write().await;
                 info!("add_proposal: tx poll len {}", pool.len());
                 pool.package(self.block_number + 1)
             };
 
             let mut data = Vec::new();
-            for hash in tx_hash_list.iter() {
-                data.extend_from_slice(hash);
+            for raw_tx in tx_list.iter() {
+                data.extend_from_slice(&get_tx_hash(raw_tx)?);
             }
             let transactions_root = hash_data(&data);
 

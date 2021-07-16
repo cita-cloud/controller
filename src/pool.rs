@@ -15,105 +15,88 @@
 use crate::auth::BLOCKLIMIT;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::iter::FromIterator;
+use std::borrow::Borrow;
+use std::cmp::{Eq, PartialEq};
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+
+// wrapper type for Hash
+#[derive(Clone)]
+struct Txn(RawTransaction);
+
+impl Borrow<[u8]> for Txn {
+    fn borrow(&self) -> &[u8] {
+        get_raw_tx_hash(&self.0)
+    }
+}
+
+impl PartialEq for Txn {
+    fn eq(&self, other: &Self) -> bool {
+        get_raw_tx_hash(&self.0) == get_raw_tx_hash(&other.0)
+    }
+}
+
+impl Eq for Txn {}
+
+impl Hash for Txn {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Hash::hash(get_raw_tx_hash(&self.0), state);
+    }
+}
+
+fn get_raw_tx_hash(raw_tx: &RawTransaction) -> &[u8] {
+    match raw_tx.tx.as_ref() {
+        Some(Tx::NormalTx(tx)) => &tx.transaction_hash,
+        Some(Tx::UtxoTx(utxo)) => &utxo.transaction_hash,
+        None => &[],
+    }
+}
 
 pub struct Pool {
     package_limit: usize,
-    order_set: BTreeMap<u64, Vec<u8>>,
-    order: u64,
-    txs: HashMap<Vec<u8>, RawTransaction>,
+    txns: HashSet<Txn>,
 }
 
 impl Pool {
     pub fn new(package_limit: usize) -> Self {
         Pool {
             package_limit,
-            order_set: BTreeMap::new(),
-            order: 0,
-            txs: HashMap::new(),
+            txns: HashSet::new(),
         }
     }
 
-    fn get_order(&mut self) -> u64 {
-        let order = self.order;
-        let (new_order, _) = order.overflowing_add(1);
-        self.order = new_order;
-        order
-    }
-
-    pub fn enqueue(&mut self, tx_hash: Vec<u8>, raw_tx: RawTransaction) -> bool {
-        if self.txs.contains_key(&tx_hash) {
+    pub fn enqueue(&mut self, raw_tx: RawTransaction) -> bool {
+        let hash = get_raw_tx_hash(&raw_tx);
+        if self.txns.contains(hash) {
             false
         } else {
-            let order = self.get_order();
-            self.order_set.insert(order, tx_hash.clone());
-            self.txs.insert(tx_hash, raw_tx);
+            self.txns.insert(Txn(raw_tx));
             true
         }
     }
 
-    pub fn update(&mut self, tx_hash_list: &Vec<Vec<u8>>) {
-        let tx_hash_list = HashSet::from_iter(tx_hash_list);
-        self.update_txs(&tx_hash_list);
-        self.update_order_set(&tx_hash_list);
-    }
-
-    fn update_order_set(&mut self, tx_hash_list: &HashSet<&Vec<u8>>) {
-        self.order_set = self
-            .order_set
-            .clone()
-            .into_iter()
-            .filter(|(_, hash)| !tx_hash_list.contains(hash))
-            .collect();
-    }
-
-    fn update_txs(&mut self, tx_hash_list: &HashSet<&Vec<u8>>) {
-        self.txs = self
-            .txs
-            .clone()
-            .into_iter()
-            .filter(|(hash, _)| !tx_hash_list.contains(hash))
-            .collect();
-    }
-
-    pub fn package(&mut self, height: u64) -> (Vec<Vec<u8>>, Vec<RawTransaction>) {
-        let mut invalid_tx_list = Vec::new();
-        let mut tx_list = Vec::new();
-        let mut tx_hash_list = Vec::new();
-
-        for (_, hash) in self.order_set.iter() {
-            match self.txs.get(hash) {
-                Some(raw_tx) => {
-                    if tx_is_valid(raw_tx, height) {
-                        tx_list.push(raw_tx.clone());
-                        tx_hash_list.push(hash.clone());
-                    } else {
-                        invalid_tx_list.push(hash.clone());
-                    }
-                    if tx_hash_list.len() >= self.package_limit {
-                        break;
-                    }
-                }
-                None => invalid_tx_list.push(hash.clone()),
-            }
+    pub fn update(&mut self, tx_hash_list: &[Vec<u8>]) {
+        for tx_hash in tx_hash_list {
+            self.txns.remove(tx_hash.as_slice());
         }
+    }
 
-        self.update(&invalid_tx_list);
-        (tx_hash_list, tx_list)
+    pub fn package(&mut self, height: u64) -> Vec<RawTransaction> {
+        self.txns.retain(|txn| tx_is_valid(&txn.0, height));
+        self.txns
+            .iter()
+            .take(self.package_limit)
+            .cloned()
+            .map(|txn| txn.0)
+            .collect()
     }
 
     pub fn len(&self) -> usize {
-        self.order_set.len()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_contain(&self, tx_hash: &[u8]) -> bool {
-        self.txs.get(tx_hash).is_some()
+        self.txns.len()
     }
 
     pub fn pool_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {
-        self.txs.get(tx_hash).cloned()
+        self.txns.get(tx_hash).cloned().map(|txn| txn.0)
     }
 }
 
