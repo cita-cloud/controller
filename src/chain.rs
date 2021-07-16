@@ -626,7 +626,7 @@ impl Chain {
                 },
             )?;
 
-        self.check_transactions(block.body.clone().ok_or(Error::NoneBlockBody)?)
+        self.check_transactions(block.body.as_ref().ok_or(Error::NoneBlockBody)?)
             .await?;
 
         self.finalize_block(block, get_block_hash(Some(&header))?)
@@ -677,8 +677,7 @@ impl Chain {
         self.main_chain_tx_hash.contains(tx_hash)
     }
 
-    // todo use &RawTransactions
-    pub async fn check_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
+    pub async fn check_transactions(&self, raw_txs: &RawTransactions) -> Result<(), Error> {
         use rayon::prelude::*;
 
         let auth = self.auth.read().await;

@@ -38,7 +38,7 @@ const GIT_VERSION: &str = git_version!(
 );
 const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
-const DEFAULT_PACKAGE_LIMIT: usize = 6000;
+const DEFAULT_PACKAGE_LIMIT: usize = 30000;
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -107,9 +107,9 @@ async fn register_network_msg_handler(
     Ok(response.into_inner().is_success)
 }
 
-use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction};
+use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction, RawTransactions};
 use cita_cloud_proto::common::{
-    ConsensusConfiguration, Empty, Hash, Proposal, ProposalWithProof, SimpleResponse,
+    ConsensusConfiguration, Empty, Hash, Hashes, Proposal, ProposalWithProof, SimpleResponse,
 };
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
@@ -149,6 +149,7 @@ impl RpcService for RPCServer {
                 },
             )
     }
+
     async fn send_raw_transaction(
         &self,
         request: Request<RawTransaction>,
@@ -168,6 +169,28 @@ impl RpcService for RPCServer {
                 },
             )
     }
+
+    async fn send_raw_transactions(
+        &self,
+        request: Request<RawTransactions>,
+    ) -> Result<Response<Hashes>, Status> {
+        debug!("send_raw_transactions request: {:?}", request);
+
+        let raw_txs = request.into_inner();
+
+        // todo broadcast send_txs
+        self.controller
+            .batch_transactions(raw_txs)
+            .await
+            .map_or_else(
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |hashes| {
+                    let reply = Response::new(hashes);
+                    Ok(reply)
+                },
+            )
+    }
+
     async fn get_block_by_hash(
         &self,
         request: Request<Hash>,
@@ -187,6 +210,7 @@ impl RpcService for RPCServer {
                 },
             )
     }
+
     async fn get_block_by_number(
         &self,
         request: Request<BlockNumber>,
@@ -206,6 +230,7 @@ impl RpcService for RPCServer {
                 },
             )
     }
+
     async fn get_transaction(
         &self,
         request: Request<Hash>,
@@ -225,6 +250,7 @@ impl RpcService for RPCServer {
                 },
             )
     }
+
     async fn get_system_config(
         &self,
         request: Request<Empty>,

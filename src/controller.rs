@@ -27,8 +27,9 @@ use crate::util::*;
 use crate::utxo_set::SystemConfig;
 use crate::{impl_broadcast, impl_multicast, impl_unicast};
 use crate::{GenesisBlock, DEFAULT_PACKAGE_LIMIT};
+use cita_cloud_proto::common::Hashes;
 use cita_cloud_proto::{
-    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
+    blockchain::{CompactBlock, RawTransaction, RawTransactions},
     common::{
         proposal_enum::Proposal, Address, ConsensusConfiguration, Hash, ProposalEnum,
         SimpleResponse,
@@ -51,7 +52,6 @@ pub enum ControllerMsgType {
     SyncTxType,
     SyncTxRespondType,
     SendTxType,
-    SendProposalType,
     Noop,
 }
 
@@ -67,7 +67,6 @@ impl From<&str> for ControllerMsgType {
             "sync_tx" => Self::SyncTxType,
             "sync_tx_respond" => Self::SyncTxRespondType,
             "send_tx" => Self::SendTxType,
-            "send_proposal" => Self::SendProposalType,
             _ => Self::Noop,
         }
     }
@@ -91,7 +90,6 @@ impl From<ControllerMsgType> for &str {
             ControllerMsgType::SyncTxType => "sync_tx",
             ControllerMsgType::SyncTxRespondType => "sync_tx_respond",
             ControllerMsgType::SendTxType => "send_tx",
-            ControllerMsgType::SendProposalType => "send_proposal",
             ControllerMsgType::Noop => "noop",
         }
     }
@@ -251,18 +249,21 @@ impl Controller {
         }
     }
 
-    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<(), Error> {
+    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<Hashes, Error> {
         {
             let rd = self.chain.read().await;
-            // todo not clone
-            rd.check_transactions(raw_txs.clone()).await?;
+            rd.check_transactions(&raw_txs).await?;
         }
 
+        let mut hashes = Vec::new();
         let mut pool = self.pool.write().await;
         for raw_tx in raw_txs.body {
-            pool.enqueue(get_tx_hash(&raw_tx)?, raw_tx);
+            let hash = get_tx_hash(&raw_tx)?;
+            if pool.enqueue(hash.clone(), raw_tx) {
+                hashes.push(Hash { hash })
+            }
         }
-        Ok(())
+        Ok(Hashes { hashes })
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
@@ -763,34 +764,6 @@ impl Controller {
                 .await?;
             }
 
-            ControllerMsgType::SendProposalType => {
-                let full_block = Block::decode(msg.msg.as_slice()).map_err(|_| {
-                    Error::DecodeError(format!(
-                        "decode {} msg failed",
-                        ControllerMsgType::SendProposalType
-                    ))
-                })?;
-
-                let controller_clone = self.clone();
-                tokio::spawn(async move {
-                    let block_hash = get_block_hash(full_block.header.as_ref()).unwrap();
-
-                    if let Some(body) = full_block.body.clone() {
-                        let _ = controller_clone.batch_transactions(body).await;
-                    }
-                    {
-                        let mut wr = controller_clone.chain.write().await;
-                        if !wr
-                            .add_remote_proposal(&block_hash, full_block)
-                            .await
-                            .unwrap()
-                        {
-                            warn!("add remote proposal: 0x{} failed", hex::encode(&block_hash))
-                        }
-                    }
-                });
-            }
-
             ControllerMsgType::Noop => match self.node_manager.get_address(msg.origin).await {
                 Some(address) => {
                     self.delete_global_status(&address).await;
@@ -809,7 +782,6 @@ impl Controller {
         "chain_status_init"
     );
 
-    // impl_multicast!(multicast_send_proposal, Block, "send_proposal");
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
     // impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");

@@ -16,7 +16,7 @@ tonic = "0.5"
 prost = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = "0.1.7"
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "v6.1.0" }
+cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "bath_send_txs_dev" }
 futures = "0.3.15"
 futures-util = "0.3.15"
 rand = "0.8"
