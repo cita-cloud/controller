@@ -377,7 +377,7 @@ impl Controller {
                 self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
-                    wr.clear_candidate().await;
+                    wr.clear_candidate();
                 }
                 self.try_sync_block().await;
                 self.task_sender.send(EventTask::SyncBlock).unwrap();
@@ -431,7 +431,7 @@ impl Controller {
                 self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
-                    wr.clear_candidate().await;
+                    wr.clear_candidate();
                 }
                 self.try_sync_block().await;
                 self.task_sender.send(EventTask::SyncBlock).unwrap();

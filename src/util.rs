@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::blockchain::{
-    Block, BlockHeader, CompactBlock, CompactBlockBody, RawTransactions,
-};
+use cita_cloud_proto::blockchain::{Block, BlockHeader, CompactBlock, RawTransactions};
 use cita_cloud_proto::consensus::consensus_service_client::ConsensusServiceClient;
 use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
 // use cita_cloud_proto::kms::{
@@ -248,28 +246,6 @@ pub async fn get_full_block(compact_block: CompactBlock, proof: Vec<u8>) -> Resu
         body: Some(RawTransactions { body }),
         proof,
     })
-}
-
-pub fn full_to_compact(block: Block) -> CompactBlock {
-    let mut compact_body = CompactBlockBody { tx_hashes: vec![] };
-
-    if let Some(body) = block.body {
-        for raw_tx in body.body {
-            match raw_tx.tx {
-                Some(Tx::NormalTx(normal_tx)) => {
-                    compact_body.tx_hashes.push(normal_tx.transaction_hash)
-                }
-                Some(Tx::UtxoTx(utxo_tx)) => compact_body.tx_hashes.push(utxo_tx.transaction_hash),
-                None => {}
-            }
-        }
-    }
-
-    CompactBlock {
-        version: block.version,
-        header: block.header,
-        body: Some(compact_body),
-    }
 }
 
 pub async fn exec_block(block: Block) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {

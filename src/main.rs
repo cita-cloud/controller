@@ -777,7 +777,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 .pop_block(own_status.height + 1)
                                 .await
                             {
-                                chain.clear_candidate().await;
+                                chain.clear_candidate();
                                 match chain.process_block(block).await {
                                     Ok((consensus_config, status)) => {
                                         controller_clone.set_status(status.clone()).await;

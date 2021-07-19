@@ -266,10 +266,6 @@ impl Chain {
         }
     }
 
-    pub fn clear_proposal(&mut self) {
-        self.candidate_block = None;
-    }
-
     pub async fn check_proposal(&self, h: u64, proposal: ProposalEnum) -> Result<bool, Error> {
         if h <= self.block_number {
             return Err(Error::ProposalTooLow(h, self.block_number));
@@ -442,146 +438,55 @@ impl Chain {
             .proposal
         {
             Some(Proposal::BftProposal(bft_proposal)) => Ok(bft_proposal),
-            None => Err(Error::ExpectError(format!("no proposal found"))),
+            None => {
+                warn!("commit_block: proposal({}) is none", height);
+                Err(Error::NoneProposal)
+            }
         }?;
 
-        for (index, _map) in self.fork_tree.iter_mut().enumerate() {
-            // make sure the block in fork_tree
-            if let Some(mut full_block) = bft_proposal.proposal {
-                // store proof
-                full_block.proof = proof.to_vec();
-                let compact_block = full_to_compact(full_block.clone());
+        if let Some(mut full_block) = bft_proposal.proposal {
+            full_block.proof = proof.to_vec();
 
-                // try to backwards found a candidate_chain
-                let mut candidate_chain = Vec::new();
-                let mut candidate_chain_tx_hash = Vec::new();
+            let block_hash = get_block_hash(full_block.header.as_ref())?;
 
-                candidate_chain.push(get_block_hash(full_block.header.as_ref())?);
-                candidate_chain_tx_hash.extend_from_slice(&compact_block.body.unwrap().tx_hashes);
+            let prev_hash = full_block.header.clone().unwrap().prevhash;
 
-                let mut prev_hash = full_block.header.clone().unwrap().prevhash;
-                for i in 0..index {
-                    let map = self.fork_tree.get(index - i - 1).unwrap();
-                    if let Some(prev_full_block) = map.get(&prev_hash) {
-                        if prev_full_block.proof.is_empty() {
-                            warn!("candidate_chain has no proof");
-                            return Err(Error::ExpectError(
-                                "candidate_chain has no proof".to_string(),
-                            ));
-                        }
-                        let prev_compact_block = full_to_compact(prev_full_block.to_owned());
-                        candidate_chain.push(prev_hash.clone());
-                        for hash in prev_compact_block.to_owned().body.unwrap().tx_hashes {
-                            if candidate_chain_tx_hash.contains(&hash) {
-                                // candidate_chain has dup tx, so failed
-                                warn!("candidate_chain has dup tx");
-                                return Err(Error::ExpectError(
-                                    "candidate_chain has dup tx".to_string(),
-                                ));
-                            }
-                        }
-                        candidate_chain_tx_hash.extend_from_slice(
-                            &prev_compact_block.to_owned().body.unwrap().tx_hashes,
-                        );
-                        prev_hash = prev_full_block.to_owned().header.unwrap().prevhash;
-                    } else {
-                        // candidate_chain interrupted, so failed
-                        warn!("candidate_chain interrupted");
-                        return Err(Error::ExpectError(
-                            "candidate_chain interrupted".to_string(),
-                        ));
-                    }
-                }
-
-                if prev_hash != self.block_hash {
-                    warn!("candidate_chain can't fit finalized block");
-                    // break this invalid chain
-                    let blk_hash = candidate_chain.last().unwrap();
-                    self.fork_tree.get_mut(0).unwrap().remove(blk_hash);
-                    return Err(Error::ExpectError(
-                        "candidate_chain can't fit finalized block".to_string(),
-                    ));
-                }
-
-                // if candidate_chain longer than original main_chain
-                if candidate_chain.len() > self.main_chain.len() {
-                    // replace the main_chain
-                    candidate_chain.reverse();
-                    self.main_chain = candidate_chain;
-                    self.main_chain_tx_hash = candidate_chain_tx_hash;
-                    print_main_chain(&self.main_chain, self.block_number);
-                    // check if any block has been finalized
-                    if self.main_chain.len() > self.block_delay_number as usize {
-                        let finalized_blocks_number =
-                            self.main_chain.len() - self.block_delay_number as usize;
-                        let new_main_chain = self.main_chain.split_off(finalized_blocks_number);
-                        let mut finalized_tx_hash_list = Vec::new();
-                        // save finalized blocks / txs / current height / current hash
-                        for (_index, block_hash) in self.main_chain.iter().enumerate() {
-                            // get block
-                            // let block = self.fork_tree[index].get(block_hash).unwrap().to_owned();
-                            let block = full_block.clone();
-                            self.finalize_block(block.clone(), block_hash.to_owned())
-                                .await?;
-                            let block_body = full_to_compact(block).body.unwrap();
-                            finalized_tx_hash_list
-                                .extend_from_slice(block_body.tx_hashes.as_slice());
-                        }
-                        self.block_number += finalized_blocks_number as u64;
-                        self.block_hash = self.main_chain[finalized_blocks_number - 1].to_owned();
-
-                        // let sys_config = self.get_system_config().await;
-                        // let csf = ChainStatusWithFlag {
-                        //     status: ChainStatus {
-                        //         version: sys_config.version,
-                        //         chain_id: sys_config.chain_id,
-                        //         height: self.block_number,
-                        //         hash: Some(Hash {
-                        //             hash: self.block_hash.clone(),
-                        //         }),
-                        //         address: None,
-                        //     },
-                        //     broadcast_or_not: true,
-                        // };
-                        // self.task_sender.send(EventTask::UpdateStatus(csf)).unwrap();
-
-                        self.main_chain = new_main_chain;
-                        // update main_chain_tx_hash
-                        self.main_chain_tx_hash = self
-                            .main_chain_tx_hash
-                            .iter()
-                            .cloned()
-                            .filter(|hash| !finalized_tx_hash_list.contains(hash))
-                            .collect();
-                        let new_fork_tree = self.fork_tree.split_off(finalized_blocks_number);
-                        self.fork_tree = new_fork_tree;
-                        self.fork_tree
-                            .resize(self.block_delay_number as usize * 2 + 2, HashMap::new());
-                    }
-                    // candidate_block need update
-                    self.clear_proposal();
-
-                    let config = self.get_system_config().await;
-
-                    return Ok((
-                        ConsensusConfiguration {
-                            height,
-                            block_interval: config.block_interval,
-                            validators: config.validators,
-                        },
-                        ChainStatus {
-                            version: config.version,
-                            chain_id: config.chain_id,
-                            height,
-                            hash: Some(Hash {
-                                hash: self.block_hash.clone(),
-                            }),
-                            address: None,
-                        },
-                    ));
-                }
-                break;
+            if prev_hash != self.block_hash {
+                warn!(
+                    "commit_block: proposal(0x{})'s prev-hash is not equal with chain's block_hash",
+                    hex::encode(&block_hash)
+                );
+                return Err(Error::ProposalCheckError);
             }
+
+            print_main_chain(&[block_hash.clone(); 1], self.block_number);
+
+            self.finalize_block(full_block, block_hash.clone()).await?;
+
+            self.block_number += 1;
+            self.block_hash = block_hash;
+
+            // candidate_block need update
+            self.clear_candidate();
+
+            let config = self.get_system_config().await;
+
+            return Ok((
+                ConsensusConfiguration {
+                    height,
+                    block_interval: config.block_interval,
+                    validators: config.validators,
+                },
+                ChainStatus {
+                    version: config.version,
+                    chain_id: config.chain_id,
+                    height,
+                    hash: Some(Hash {
+                        hash: self.block_hash.clone(),
+                    }),
+                    address: None,
+                },
+            ));
         }
 
         Err(Error::NoForkTree)
@@ -711,7 +616,7 @@ impl Chain {
         }
     }
 
-    pub async fn clear_candidate(&mut self) {
+    pub fn clear_candidate(&mut self) {
         self.fork_tree[0].clear();
         self.candidate_block = None;
     }
