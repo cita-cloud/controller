@@ -361,7 +361,7 @@ impl Controller {
                         chain
                             .add_remote_proposal(&block_hash, block.clone())
                             .await?
-                            && !chain.is_candidate(&block_hash)
+                            && !chain.is_own(&block_hash)
                     } {
                         let _ = self
                             .batch_transactions(block.body.ok_or(Error::NoneBlockBody)?)

@@ -45,14 +45,11 @@ pub struct Chain {
     block_number: u64,
     block_hash: Vec<u8>,
     block_delay_number: u32,
-    // hashmap for each index
     // key of hashmap is block_hash
-    // value of hashmap is (block, proof)
-    #[allow(clippy::type_complexity)]
-    fork_tree: Vec<HashMap<Vec<u8>, Block>>,
+    candidates: HashMap<Vec<u8>, Block>,
     main_chain: Vec<Vec<u8>>,
     main_chain_tx_hash: Vec<Vec<u8>>,
-    candidate_block: Option<(u64, Vec<u8>, Block)>,
+    own_proposal: Option<(u64, Vec<u8>, Block)>,
     pool: Arc<RwLock<Pool>>,
     // todo auth set in controller not chain
     auth: Arc<RwLock<Authentication>>,
@@ -73,20 +70,14 @@ impl Chain {
         key_id: u64,
         node_address: Vec<u8>,
     ) -> Self {
-        let fork_tree_size = (block_delay_number * 2 + 2) as usize;
-        let mut fork_tree = Vec::with_capacity(fork_tree_size);
-        for _ in 0..=fork_tree_size {
-            fork_tree.push(HashMap::new());
-        }
-
         Chain {
             block_number: current_block_number,
             block_hash: current_block_hash,
             block_delay_number,
-            fork_tree,
+            candidates: HashMap::new(),
             main_chain: Vec::new(),
             main_chain_tx_hash: Vec::new(),
-            candidate_block: None,
+            own_proposal: None,
             pool,
             auth,
             genesis,
@@ -119,12 +110,8 @@ impl Chain {
         auth.init(init_block_number).await;
     }
 
-    pub fn get_block_number(&self, is_pending: bool) -> u64 {
-        if is_pending {
-            self.block_number + self.main_chain.len() as u64
-        } else {
-            self.block_number
-        }
+    pub fn get_block_number(&self, _is_pending: bool) -> u64 {
+        self.block_number
     }
 
     pub async fn extract_proposal_info(&self, h: u64) -> Result<(Vec<u8>, Vec<u8>), Error> {
@@ -146,7 +133,7 @@ impl Chain {
     }
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
-        if let Some((h, _, block)) = self.candidate_block.clone() {
+        if let Some((h, _, block)) = self.own_proposal.clone() {
             return Ok((h, self.assemble_proposal(block, h).await?));
         }
         Err(Error::NoCandidate)
@@ -183,22 +170,20 @@ impl Chain {
             return Err(Error::ProposalTooLow(block_height, self.block_number));
         }
 
-        if block_height - self.block_number > (self.block_delay_number * 2 + 2) as u64 {
+        if block_height > self.block_number + self.block_delay_number as u64 + 1 {
             return Err(Error::ProposalTooHigh(block_height, self.block_number));
         }
 
-        if !self.fork_tree[(block_height - self.block_number - 1) as usize].contains_key(block_hash)
-        {
-            self.fork_tree[(block_height - self.block_number - 1) as usize]
-                .insert(block_hash.to_vec(), block);
+        if !self.candidates.contains_key(block_hash) {
+            self.candidates.insert(block_hash.to_vec(), block);
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    pub fn is_candidate(&self, block_hash: &[u8]) -> bool {
-        if let Some((_, hash, _)) = &self.candidate_block {
+    pub fn is_own(&self, block_hash: &[u8]) -> bool {
+        if let Some((_, hash, _)) = &self.own_proposal {
             hash == block_hash
         } else {
             false
@@ -206,8 +191,7 @@ impl Chain {
     }
 
     pub async fn add_proposal(&mut self, global_status: &ChainStatus) -> Result<(), Error> {
-        if self.candidate_block.is_some()
-            || self.next_step(global_status).await == ChainStep::SyncStep
+        if self.own_proposal.is_some() || self.next_step(global_status).await == ChainStep::SyncStep
         {
             Ok(())
         } else {
@@ -223,12 +207,8 @@ impl Chain {
             }
             let transactions_root = hash_data(&data);
 
-            let prevhash = if self.main_chain.is_empty() {
-                self.block_hash.clone()
-            } else {
-                self.main_chain.last().unwrap().to_owned()
-            };
-            let height = self.block_number + self.main_chain.len() as u64 + 1;
+            let prevhash = self.block_hash.clone();
+            let height = self.block_number + 1;
 
             let header = BlockHeader {
                 prevhash: prevhash.clone(),
@@ -252,8 +232,8 @@ impl Chain {
 
             let block_hash = hash_data(&block_header_bytes);
 
-            self.candidate_block = Some((height, block_hash.clone(), full_block.clone()));
-            self.fork_tree[self.main_chain.len()].insert(block_hash.clone(), full_block);
+            self.own_proposal = Some((height, block_hash.clone(), full_block.clone()));
+            self.candidates.insert(block_hash.clone(), full_block);
 
             info!(
                 "proposal {} block_hash 0x{} prevhash 0x{}",
@@ -567,7 +547,7 @@ impl Chain {
 
     pub async fn next_step(&self, global_status: &ChainStatus) -> ChainStep {
         if global_status.height > self.block_number
-            && (self.fork_tree[0].is_empty()
+            && (self.candidates.is_empty()
                 || global_status.height >= self.block_number + FORCE_IN_SYNC)
         {
             log::debug!("in sync mod");
@@ -617,7 +597,7 @@ impl Chain {
     }
 
     pub fn clear_candidate(&mut self) {
-        self.fork_tree[0].clear();
-        self.candidate_block = None;
+        self.candidates.clear();
+        self.own_proposal = None;
     }
 }
