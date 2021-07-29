@@ -66,13 +66,7 @@ impl Pool {
     }
 
     pub fn enqueue(&mut self, raw_tx: RawTransaction) -> bool {
-        let hash = get_raw_tx_hash(&raw_tx);
-        if self.txns.contains(hash) {
-            false
-        } else {
-            self.txns.insert(Txn(raw_tx));
-            true
-        }
+        self.txns.insert(Txn(raw_tx))
     }
 
     pub fn update(&mut self, tx_hash_list: &[Vec<u8>]) {
