@@ -567,21 +567,23 @@ impl Chain {
 
         let auth = self.auth.read().await;
 
-        raw_txs
-            .body
-            .par_iter()
-            .map(|raw_tx| {
-                let tx_hash = auth
-                    .check_raw_tx(raw_tx)
-                    .map_err(|e| Error::ExpectError(e))?;
+        tokio::task::block_in_place(|| {
+            raw_txs
+                .body
+                .par_iter()
+                .map(|raw_tx| {
+                    let tx_hash = auth
+                        .check_raw_tx(raw_tx)
+                        .map_err(|e| Error::ExpectError(e))?;
 
-                if self.check_dup_tx(&tx_hash) {
-                    return Err(Error::DupTransaction(tx_hash));
-                }
+                    if self.check_dup_tx(&tx_hash) {
+                        return Err(Error::DupTransaction(tx_hash));
+                    }
 
-                Ok(())
-            })
-            .collect::<Result<(), Error>>()?;
+                    Ok(())
+                })
+                .collect::<Result<(), Error>>()
+        })?;
         Ok(())
     }
 
