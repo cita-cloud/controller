@@ -512,7 +512,7 @@ use crate::controller::Controller;
 use crate::error::Error;
 use crate::event::EventTask;
 use crate::node_manager::chain_status_respond::Respond;
-use crate::node_manager::ChainStatusRespond;
+use crate::node_manager::{ChainStatusInit, ChainStatusRespond};
 use crate::util::{
     clean_0x, get_block_hash, get_compact_block, init_grpc_client, load_data,
     load_data_maybe_empty, reconfigure,
@@ -675,7 +675,27 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
 
     controller.init(current_block_number, sys_config).await;
 
-    let controller_clone = controller.clone();
+    let controller_for_ping = controller.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(600));
+        loop {
+            interval.tick().await;
+            {
+                let status = controller_for_ping.get_status().await;
+                controller_for_ping
+                    .broadcast_chain_status_init(ChainStatusInit {
+                        chain_status: Some(status),
+                        signature: vec![],
+                        public_key: vec![],
+                    })
+                    .await
+                    .await
+                    .unwrap();
+            }
+        }
+    });
+
+    let controller_for_task = controller.clone();
     tokio::spawn(async move {
         while let Some(event_task) = task_receiver.recv().await {
             match event_task {
@@ -686,7 +706,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         hex::encode(&node.address)
                     );
 
-                    let own_status = controller_clone.get_status().await;
+                    let own_status = controller_for_task.get_status().await;
 
                     if own_status.chain_id != chain_status.chain_id
                         || own_status.version != chain_status.version
@@ -694,11 +714,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         warn!("chain id or version not identical, send not same chain");
                         let chain_status_respond = ChainStatusRespond {
                             respond: Some(Respond::NotSameChain(
-                                controller_clone.local_address.clone(),
+                                controller_for_task.local_address.clone(),
                             )),
                         };
 
-                        controller_clone
+                        controller_for_task
                             .unicast_chain_status_respond(origin, chain_status_respond)
                             .await;
 
@@ -719,11 +739,11 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 warn!("old block hash not identical, send not same chain");
                                 let chain_status_respond = ChainStatusRespond {
                                     respond: Some(Respond::NotSameChain(
-                                        controller_clone.local_address.clone(),
+                                        controller_for_task.local_address.clone(),
                                     )),
                                 };
 
-                                controller_clone
+                                controller_for_task
                                     .unicast_chain_status_respond(origin, chain_status_respond)
                                     .await;
 
@@ -732,12 +752,12 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         }
                     }
 
-                    controller_clone
+                    controller_for_task
                         .node_manager
                         .set_origin(&node, origin)
                         .await;
 
-                    match controller_clone
+                    match controller_for_task
                         .node_manager
                         .set_node(&node, chain_status)
                         .await
@@ -764,15 +784,15 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                 EventTask::SyncBlock => {
                     log::debug!("receive sync block event");
                     let (global_address, global_status) =
-                        controller_clone.get_global_status().await;
-                    let mut own_status = controller_clone.get_status().await;
-                    let mut chain = controller_clone.chain.write().await;
+                        controller_for_task.get_global_status().await;
+                    let mut own_status = controller_for_task.get_status().await;
+                    let mut chain = controller_for_task.chain.write().await;
                     // get chain lock means syncing
-                    controller_clone.set_sync_state(true).await;
+                    controller_for_task.set_sync_state(true).await;
 
                     match chain.next_step(&global_status).await {
                         ChainStep::SyncStep => {
-                            while let Some((addr, block)) = controller_clone
+                            while let Some((addr, block)) = controller_for_task
                                 .sync_manager
                                 .pop_block(own_status.height + 1)
                                 .await
@@ -780,7 +800,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                 chain.clear_candidate();
                                 match chain.process_block(block).await {
                                     Ok((consensus_config, status)) => {
-                                        controller_clone.set_status(status.clone()).await;
+                                        controller_for_task.set_status(status.clone()).await;
                                         reconfigure(consensus_config).await.unwrap();
                                         own_status = status;
                                     }
@@ -790,32 +810,32 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                             e.to_string(),
                                             hex::encode(&addr.address)
                                         );
-                                        let _ = controller_clone
+                                        let _ = controller_for_task
                                             .node_manager
                                             .set_misbehavior_node(&addr)
                                             .await;
                                         if &global_address == &addr {
                                             let (ex_addr, ex_status) =
-                                                controller_clone.node_manager.pick_node().await;
-                                            controller_clone
+                                                controller_for_task.node_manager.pick_node().await;
+                                            controller_for_task
                                                 .update_global_status(ex_addr, ex_status)
                                                 .await;
                                         }
-                                        if let Some(range_heights) = controller_clone
+                                        if let Some(range_heights) = controller_for_task
                                             .sync_manager
                                             .clear_node_block(&addr)
                                             .await
                                         {
                                             let (global_address, global_status) =
-                                                controller_clone.get_global_status().await;
+                                                controller_for_task.get_global_status().await;
                                             if !global_address.address.is_empty() {
-                                                let global_origin = controller_clone
+                                                let global_origin = controller_for_task
                                                     .node_manager
                                                     .get_origin(&global_address)
                                                     .await
                                                     .unwrap();
                                                 for range_height in range_heights {
-                                                    if let Some(reqs) = controller_clone
+                                                    if let Some(reqs) = controller_for_task
                                                         .sync_manager
                                                         .re_sync_block_req(
                                                             range_height,
@@ -823,7 +843,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                                                         )
                                                     {
                                                         for req in reqs {
-                                                            controller_clone
+                                                            controller_for_task
                                                                 .unicast_sync_block(
                                                                     global_origin,
                                                                     req,
@@ -840,7 +860,7 @@ async fn run(opts: RunOpts) -> Result<(), Box<dyn std::error::Error + Send + Syn
                         }
                         _ => {}
                     }
-                    controller_clone.set_sync_state(false).await;
+                    controller_for_task.set_sync_state(false).await;
                 }
             }
         }

@@ -192,15 +192,6 @@ impl Controller {
             .await
             .unwrap();
         self.set_status(status.clone()).await;
-        // todo
-        self.broadcast_chain_status_init(ChainStatusInit {
-            chain_status: Some(status),
-            signature: vec![],
-            public_key: vec![],
-        })
-        .await
-        .await
-        .unwrap();
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
