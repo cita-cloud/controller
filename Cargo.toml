@@ -11,12 +11,12 @@ edition = "2018"
 log = "0.4"
 log4rs = { version = "1.0", features = ["gzip"] }
 clap = "3.0.0-beta.2"
-git-version = "*"
+git-version = "0.3.5"
 tonic = "0.5"
 prost = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = "0.1.7"
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "dev-v6.2.0" }
+cita_cloud_proto = "=6.2.0"
 futures = "0.3.15"
 futures-util = "0.3.15"
 rand = "0.8"
