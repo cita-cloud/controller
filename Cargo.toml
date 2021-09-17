@@ -30,9 +30,9 @@ libsm = "0.4"
 efficient-sm2 = "0.1"
 rayon = "1.5"
 
-cloud-util = { path = "../../cloud-util" }
+cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "wip-7.0.0-dev" }
-status_code = { path = "../../status_code" }
+status_code = { git = "https://github.com/cita-cloud/status_code" }
 
 [build-dependencies]
 tonic-build = "0.5"
