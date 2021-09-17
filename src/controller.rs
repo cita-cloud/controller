@@ -14,7 +14,7 @@
 
 use crate::auth::Authentication;
 use crate::chain::{Chain, ChainStep};
-use crate::error::Error;
+use status_code::StatusCode;
 use crate::event::EventTask;
 use crate::node_manager::{
     chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
@@ -27,12 +27,11 @@ use crate::util::*;
 use crate::utxo_set::SystemConfig;
 use crate::{impl_broadcast, impl_multicast, impl_unicast};
 use crate::{GenesisBlock, DEFAULT_PACKAGE_LIMIT};
-use cita_cloud_proto::common::Hashes;
+use cita_cloud_proto::common::{Hashes, NodeNetInfo, Empty, TotalNodeNetInfo, TotalNodeInfo, NodeInfo};
 use cita_cloud_proto::{
     blockchain::{CompactBlock, RawTransaction, RawTransactions},
     common::{
         proposal_enum::Proposal, Address, ConsensusConfiguration, Hash, ProposalEnum,
-        SimpleResponse,
     },
     network::NetworkMsg,
 };
@@ -40,6 +39,11 @@ use log::warn;
 use prost::Message;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
+use cloud_util::common::{get_tx_hash, h160_address_check};
+use crate::config::ControllerConfig;
+use cloud_util::crypto::{sign_message, get_block_hash};
+use tonic::{Request, Response};
+use cloud_util::storage::load_data;
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
@@ -97,7 +101,9 @@ impl From<ControllerMsgType> for &str {
 
 #[derive(Clone)]
 pub struct Controller {
-    auth: Arc<RwLock<Authentication>>,
+    pub(crate) config: ControllerConfig,
+
+    pub(crate) auth: Arc<RwLock<Authentication>>,
 
     pool: Arc<RwLock<Pool>>,
 
@@ -119,9 +125,8 @@ pub struct Controller {
 }
 
 impl Controller {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_delay_number: u32,
+        config: ControllerConfig,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
@@ -150,17 +155,16 @@ impl Controller {
         let auth = Arc::new(RwLock::new(Authentication::new(sys_config)));
         let pool = Arc::new(RwLock::new(Pool::new(DEFAULT_PACKAGE_LIMIT)));
         let chain = Arc::new(RwLock::new(Chain::new(
-            block_delay_number,
             current_block_number,
             current_block_hash,
             pool.clone(),
             auth.clone(),
             genesis,
             key_id,
-            node_address.clone(),
         )));
 
         Controller {
+            config,
             auth,
             pool,
             chain,
@@ -204,23 +208,12 @@ impl Controller {
         &self,
         raw_tx: RawTransaction,
         broadcast: bool,
-    ) -> Result<Vec<u8>, Error> {
-        let tx_hash = get_tx_hash(&raw_tx)?;
-
-        {
-            let chain = self.chain.read().await;
-            if chain.check_dup_tx(&tx_hash) {
-                warn!(
-                    "rpc_send_raw_transaction: found dup tx(0x{}) in main_chain_tx_hash",
-                    hex::encode(&tx_hash)
-                );
-                return Err(Error::DupTransaction(tx_hash.to_vec()));
-            }
-        }
+    ) -> Result<Vec<u8>, StatusCode> {
+        let tx_hash = get_tx_hash(&raw_tx)?.to_vec();
 
         {
             let auth = self.auth.read().await;
-            auth.check_raw_tx(&raw_tx).map_err(Error::ExpectError)?;
+            auth.check_raw_tx(&raw_tx).await?;
         };
 
         if {
@@ -236,20 +229,24 @@ impl Controller {
                 "rpc_send_raw_transaction: found dup tx(0x{}) in pool",
                 hex::encode(&tx_hash)
             );
-            Err(Error::DupTransaction(tx_hash.to_vec()))
+            Err(StatusCode::DupTransaction)
         }
     }
 
-    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<Hashes, Error> {
-        {
-            let rd = self.chain.read().await;
-            rd.check_transactions(&raw_txs).await?;
+    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<Hashes, StatusCode> {
+
+        match kms_client().check_transactions(raw_txs.clone()).await {
+            Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
+            Err(e) => {
+                warn!("batch_transactions: check_transactions failed: {}", e.to_string());
+                return Err(StatusCode::KmsServerNotReady);
+            }
         }
 
         let mut hashes = Vec::new();
         let mut pool = self.pool.write().await;
         for raw_tx in raw_txs.body {
-            let hash = get_tx_hash(&raw_tx)?;
+            let hash = get_tx_hash(&raw_tx)?.to_vec();
             if pool.enqueue(raw_tx) {
                 hashes.push(Hash { hash })
             }
@@ -257,8 +254,8 @@ impl Controller {
         Ok(Hashes { hashes })
     }
 
-    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, Error> {
-        let block_number = load_data(8, hash.clone())
+    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, StatusCode> {
+        let block_number = load_data(storage_client(), 8, hash.clone())
             .await
             .map_err(|e| {
                 warn!(
@@ -266,7 +263,7 @@ impl Controller {
                     hex::encode(&hash),
                     e.to_string()
                 );
-                Error::NoBlockHeight
+                StatusCode::NoBlockHeight
             })
             .map(|v| {
                 let mut bytes: [u8; 8] = [0; 8];
@@ -276,8 +273,8 @@ impl Controller {
         self.rpc_get_block_by_number(block_number).await
     }
 
-    pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, Error> {
-        load_data(4, block_number.to_be_bytes().to_vec())
+    pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, StatusCode> {
+        load_data(storage_client(), 4, block_number.to_be_bytes().to_vec())
             .await
             .map_err(|e| {
                 warn!(
@@ -285,30 +282,29 @@ impl Controller {
                     block_number,
                     e.to_string()
                 );
-                Error::NoBlockHeight
+                StatusCode::NoBlockHeight
             })
     }
 
-    pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
+    pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, StatusCode> {
         load_tx_info(&tx_hash).await.map(|t| t.0)
     }
 
-    pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, Error> {
+    pub async fn rpc_get_tx_index(&self, tx_hash: Vec<u8>) -> Result<u64, StatusCode> {
         load_tx_info(&tx_hash).await.map(|t| t.1)
     }
 
-    pub async fn rpc_get_peer_count(&self) -> Result<u64, String> {
+    pub async fn rpc_get_peer_count(&self) -> Result<u64, StatusCode> {
         get_network_status()
             .await
-            .map_err(|_| "get network status failed".to_owned())
             .map(|status| status.peer_count)
     }
 
-    pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, Error> {
+    pub async fn rpc_get_block_by_number(&self, block_number: u64) -> Result<CompactBlock, StatusCode> {
         get_compact_block(block_number).await.map(|t| t.0)
     }
 
-    pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, Error> {
+    pub async fn rpc_get_transaction(&self, tx_hash: Vec<u8>) -> Result<RawTransaction, StatusCode> {
         db_get_tx(&tx_hash).await
     }
 
@@ -318,17 +314,54 @@ impl Controller {
         Ok(sys_config)
     }
 
-    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), Error> {
+    pub async fn rpc_add_node(&self, request: Request<NodeNetInfo>) -> Response<cita_cloud_proto::common::StatusCode> {
+        network_client().add_node(request).await.map_or_else(
+            |_| Response::new(StatusCode::NetworkServerNotReady.into()),
+            |res| {
+                res
+            }
+        )
+    }
+
+    pub async fn rpc_get_peers_info(&self, request: Request<Empty>) -> Result<TotalNodeInfo, StatusCode> {
+        let mut tnis = Vec::new();
+        let tnni = network_client().get_peers_net_info(request).await.map_err(|e| {
+            {
+                warn!("rpc_get_peers_info failed: {}", e.to_string());
+                StatusCode::NetworkServerNotReady
+            }
+        })?.into_inner();
+
+        for record_node in self.node_manager.node_origin.read().await.iter() {
+            for node_info in tnni.nodes.iter() {
+                if *record_node.1 == node_info.origin {
+                    tnis.push(NodeInfo{
+                        address: record_node.0.to_vec(),
+                        net_info: Some(node_info.clone())
+                    })
+                }
+            }
+        }
+
+        Ok(TotalNodeInfo{
+            nodes: tnis,
+        })
+    }
+
+    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCode> {
         let mut chain = self.chain.write().await;
         chain
-            .add_proposal(&self.get_global_status().await.1)
+            .add_proposal(&self.get_global_status().await.1, self.local_address.address.clone())
             .await?;
         chain.get_proposal().await
     }
 
-    pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<bool, Error> {
+    pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<(), StatusCode> {
         let proposal_enum = ProposalEnum::decode(data)
-            .map_err(|_| Error::DecodeError(format!("decode ProposalEnum failed")))?;
+            .map_err(|_| {
+                warn!("chain_check_proposal: decode ProposalEnum failed");
+                StatusCode::DecodeError
+            })?;
 
         let ret = {
             let chain = self.chain.read().await;
@@ -336,11 +369,11 @@ impl Controller {
         };
 
         match ret {
-            Ok(true) => match proposal_enum.proposal {
+            Ok(_) => match proposal_enum.proposal {
                 Some(Proposal::BftProposal(bft_proposal)) => {
-                    let block = bft_proposal.proposal.ok_or(Error::NoneProposal)?;
+                    let block = bft_proposal.proposal.ok_or(StatusCode::NoneProposal)?;
 
-                    let block_hash = get_block_hash(block.header.as_ref())?;
+                    let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
 
                     // todo re-enter check
                     if {
@@ -355,16 +388,15 @@ impl Controller {
                             && !chain.is_own(&block_hash)
                     } {
                         let _ = self
-                            .batch_transactions(block.body.ok_or(Error::NoneBlockBody)?)
+                            .batch_transactions(block.body.ok_or(StatusCode::NoneBlockBody)?)
                             .await;
 
                         log::info!("chain_check_proposal: finished");
                     }
                 }
-                None => return Err(Error::NoneProposal),
+                None => return Err(StatusCode::NoneProposal),
             },
-            Err(Error::ProposalTooHigh(p, c)) => {
-                warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
+            Err(StatusCode::ProposalTooHigh) => {
                 self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
@@ -384,7 +416,7 @@ impl Controller {
         height: u64,
         proposal: &[u8],
         proof: &[u8],
-    ) -> Result<ConsensusConfiguration, Error> {
+    ) -> Result<ConsensusConfiguration, StatusCode> {
         let status = self.get_status().await;
 
         if status.height >= height {
@@ -417,8 +449,7 @@ impl Controller {
                 }
                 Ok(config)
             }
-            Err(Error::ProposalTooHigh(p, c)) => {
-                warn!("Proposal(h: {}) is higher than current(h: {})", p, c);
+            Err(StatusCode::ProposalTooHigh) => {
                 self.multicast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
@@ -426,22 +457,22 @@ impl Controller {
                 }
                 self.try_sync_block().await;
                 self.task_sender.send(EventTask::SyncBlock).unwrap();
-                return Err(Error::ProposalTooHigh(p, c));
+                return Err(StatusCode::ProposalTooHigh);
             }
             Err(e) => Err(e),
         }
     }
 
-    pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<SimpleResponse, Error> {
+    pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<(), StatusCode> {
         log::debug!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
             ControllerMsgType::ChainStatusInitType => {
                 let chain_status_init =
                     ChainStatusInit::decode(msg.msg.as_slice()).map_err(|_| {
-                        Error::DecodeError(format!(
-                            "decode {} msg failed",
-                            ControllerMsgType::ChainStatusInitType
-                        ))
+                        warn!("process_network_msg: decode {} msg failed",
+                              ControllerMsgType::ChainStatusInitType
+                        );
+                        StatusCode::DecodeError
                     })?;
 
                 let own_status = self.get_status().await;
@@ -449,7 +480,7 @@ impl Controller {
                     Ok(()) => {}
                     Err(e) => {
                         match e {
-                            Error::VersionOrIdCheckError | Error::HashCheckError => {
+                            StatusCode::VersionOrIdCheckError | StatusCode::HashCheckError => {
                                 self.unicast_chain_status_respond(
                                     msg.origin,
                                     ChainStatusRespond {
@@ -483,13 +514,20 @@ impl Controller {
                     .await?
                     .is_none()
                 {
-                    // todo sig
+                    let mut chain_status_bytes = Vec::new();
+                    own_status
+                        .encode(&mut chain_status_bytes)
+                        .map_err(|_| {
+                            log::warn!("process_network_msg: encode ChainStatus failed");
+                            StatusCode::EncodeError
+                        })?;
+                    let signature = sign_message(kms_client(), self.config.key_id, &chain_status_bytes).await?;
+
                     self.unicast_chain_status_init(
                         msg.origin,
                         ChainStatusInit {
                             chain_status: Some(own_status),
-                            signature: vec![],
-                            public_key: vec![],
+                            signature,
                         },
                     )
                     .await;
@@ -499,22 +537,30 @@ impl Controller {
                 self.try_update_global_status(&node, status).await?;
             }
             ControllerMsgType::ChainStatusInitRequestType => {
+                let own_status = self.get_status().await;
+                let mut chain_status_bytes = Vec::new();
+                own_status
+                    .encode(&mut chain_status_bytes)
+                    .map_err(|_| {
+                        log::warn!("process_network_msg: encode ChainStatus failed");
+                        StatusCode::EncodeError
+                    })?;
+                let signature = sign_message(kms_client(), self.config.key_id, &chain_status_bytes).await?;
+
                 self.unicast_chain_status_init(
                     msg.origin,
                     ChainStatusInit {
-                        chain_status: Some(self.get_status().await),
-                        signature: vec![],
-                        public_key: vec![],
+                        chain_status: Some(own_status),
+                        signature,
                     },
                 )
                 .await;
             }
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
-                    Error::DecodeError(format!(
-                        "decode {} msg failed",
-                        ControllerMsgType::ChainStatusType
-                    ))
+                    warn!("decode {} msg failed",
+                          ControllerMsgType::ChainStatusType);
+                    StatusCode::DecodeError
                 })?;
 
                 let own_status = self.get_status().await;
@@ -522,7 +568,7 @@ impl Controller {
                     Ok(()) => {}
                     Err(e) => {
                         match e {
-                            Error::VersionOrIdCheckError | Error::HashCheckError => {
+                            StatusCode::VersionOrIdCheckError | StatusCode::HashCheckError => {
                                 self.unicast_chain_status_respond(
                                     msg.origin,
                                     ChainStatusRespond {
@@ -555,7 +601,7 @@ impl Controller {
                         self.try_update_global_status(&node, chain_status).await?;
                     }
                     // give Ok or Err for process_network_msg is same
-                    Err(Error::AddressOriginCheckError) | Ok(false) => {
+                    Err(StatusCode::AddressOriginCheckError) | Ok(false) => {
                         self.unicast_chain_status_init_req(msg.origin, own_status)
                             .await;
                     }
@@ -566,10 +612,9 @@ impl Controller {
             ControllerMsgType::ChainStatusRespondType => {
                 let chain_status_respond =
                     ChainStatusRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        Error::DecodeError(format!(
-                            "decode {} msg failed",
-                            ControllerMsgType::ChainStatusRespondType
-                        ))
+                        warn!("decode {} msg failed",
+                              ControllerMsgType::ChainStatusRespondType);
+                        StatusCode::DecodeError
                     })?;
 
                 match chain_status_respond.respond {
@@ -587,10 +632,9 @@ impl Controller {
             ControllerMsgType::SyncBlockType => {
                 let sync_block_request =
                     SyncBlockRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                        Error::DecodeError(format!(
-                            "decode {} msg failed",
-                            ControllerMsgType::SyncBlockType
-                        ))
+                        warn!("decode {} msg failed",
+                              ControllerMsgType::SyncBlockType);
+                        StatusCode::DecodeError
                     })?;
 
                 let controller = self.clone();
@@ -629,10 +673,9 @@ impl Controller {
             ControllerMsgType::SyncBlockRespondType => {
                 let sync_block_respond =
                     SyncBlockRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        Error::DecodeError(format!(
-                            "decode {} msg failed",
-                            ControllerMsgType::SyncBlockRespondType
-                        ))
+                        warn!("decode {} msg failed",
+                              ControllerMsgType::SyncBlockRespondType);
+                        StatusCode::DecodeError
                     })?;
 
                 let controller_clone = self.clone();
@@ -655,13 +698,15 @@ impl Controller {
                                 .handle_sync_blocks(sync_blocks.clone())
                                 .await
                             {
-                                Ok(_) => {
-                                    controller_clone
-                                        .task_sender
-                                        .send(EventTask::SyncBlock)
-                                        .unwrap();
+                                Ok(n) => {
+                                    if n != 0 {
+                                        controller_clone
+                                            .task_sender
+                                            .send(EventTask::SyncBlock)
+                                            .unwrap();
+                                    }
                                 }
-                                Err(Error::ProvideAddressError) | Err(Error::NoProvideAddress) => {
+                                Err(StatusCode::ProvideAddressError) | Err(StatusCode::NoProvideAddress) => {
                                     warn!(
                                         "sync_block_respond error, origin: {}, message: given address error",
                                         msg.origin,
@@ -694,10 +739,9 @@ impl Controller {
 
             ControllerMsgType::SyncTxType => {
                 let sync_tx = SyncTxRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                    Error::DecodeError(format!(
-                        "decode {} msg failed",
-                        ControllerMsgType::SyncTxType
-                    ))
+                    warn!("decode {} msg failed",
+                          ControllerMsgType::SyncTxType);
+                    StatusCode::DecodeError
                 })?;
 
                 let controller_clone = self.clone();
@@ -722,10 +766,9 @@ impl Controller {
 
             ControllerMsgType::SyncTxRespondType => {
                 let sync_tx_respond = SyncTxRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                    Error::DecodeError(format!(
-                        "decode {} msg failed",
-                        ControllerMsgType::SyncTxRespondType
-                    ))
+                    warn!("decode {} msg failed",
+                          ControllerMsgType::SyncTxRespondType);
+                    StatusCode::DecodeError
                 })?;
 
                 use crate::protocol::sync_manager::sync_tx_respond::Respond;
@@ -743,10 +786,9 @@ impl Controller {
 
             ControllerMsgType::SendTxType => {
                 let send_tx = RawTransaction::decode(msg.msg.as_slice()).map_err(|_| {
-                    Error::DecodeError(format!(
-                        "decode {} msg failed",
-                        ControllerMsgType::SendTxType
-                    ))
+                    warn!("decode {} msg failed",
+                          ControllerMsgType::SendTxType);
+                    StatusCode::DecodeError
                 })?;
 
                 self.batch_transactions(RawTransactions {
@@ -764,7 +806,7 @@ impl Controller {
             },
         }
 
-        Ok(SimpleResponse { is_success: true })
+        Ok(())
     }
 
     impl_broadcast!(
@@ -830,7 +872,7 @@ impl Controller {
         &self,
         node: &Address,
         status: ChainStatus,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, StatusCode> {
         let old_status = self.get_global_status().await;
         let own_status = self.get_status().await;
         if status.height > old_status.1.height && status.height >= own_status.height {
@@ -850,7 +892,7 @@ impl Controller {
         Ok(false)
     }
 
-    async fn init_status(&self, height: u64, config: SystemConfig) -> Result<ChainStatus, Error> {
+    async fn init_status(&self, height: u64, config: SystemConfig) -> Result<ChainStatus, StatusCode> {
         let compact_block = get_compact_block(height).await?.0;
 
         Ok(ChainStatus {
@@ -858,7 +900,7 @@ impl Controller {
             chain_id: config.chain_id,
             height,
             hash: Some(Hash {
-                hash: get_block_hash(compact_block.header.as_ref())?,
+                hash: get_block_hash(kms_client(), compact_block.header.as_ref()).await?,
             }),
             address: Some(self.local_address.clone()),
         })
@@ -874,12 +916,13 @@ impl Controller {
         *wr = status;
     }
 
-    async fn handle_sync_blocks(&self, sync_blocks: SyncBlocks) -> Result<usize, Error> {
+    async fn handle_sync_blocks(&self, sync_blocks: SyncBlocks) -> Result<usize, StatusCode> {
         h160_address_check(sync_blocks.address.as_ref())?;
 
+        let own_height = self.get_status().await.height;
         Ok(self
             .sync_manager
-            .insert_blocks(sync_blocks.address.unwrap(), sync_blocks.sync_blocks)
+            .insert_blocks(sync_blocks.address.ok_or(StatusCode::NoProvideAddress)?, sync_blocks.sync_blocks, own_height)
             .await)
     }
 
@@ -887,8 +930,6 @@ impl Controller {
         if self.get_sync_state().await {
             return;
         }
-
-        let mut current_height = self.get_status().await.height;
 
         let controller_clone = self.clone();
         tokio::spawn(async move {
@@ -910,6 +951,8 @@ impl Controller {
                     chain.next_step(&global_status).await
                 } {
                     ChainStep::SyncStep => {
+                        let mut current_height = controller_clone.get_status().await.height;
+
                         if let Some(sync_req) = controller_clone
                             .sync_manager
                             .get_sync_block_req(current_height, &global_status)
@@ -923,7 +966,10 @@ impl Controller {
                                 .unwrap();
                         }
                     }
-                    ChainStep::OnlineStep => return,
+                    ChainStep::OnlineStep => {
+                        controller_clone.sync_manager.clear().await;
+                        return
+                    },
                 }
             }
         });

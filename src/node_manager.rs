@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::error::Error;
-use crate::error::Error::BannedNode;
-use crate::util::{check_sig, get_block_hash, get_compact_block, h160_address_check};
+use status_code::StatusCode;
+use crate::util::{check_sig, get_compact_block, kms_client};
 use cita_cloud_proto::common::{Address, Hash};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -22,6 +21,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+use cloud_util::common::h160_address_check;
+use cloud_util::crypto::get_block_hash;
+use prost::Message;
 
 #[derive(Debug)]
 pub struct ChainStatusWithFlag {
@@ -44,22 +46,22 @@ pub struct ChainStatus {
 }
 
 impl ChainStatus {
-    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), Error> {
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
         h160_address_check(self.address.as_ref())?;
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
-            Err(Error::VersionOrIdCheckError)
+            Err(StatusCode::VersionOrIdCheckError)
         } else {
             self.check_hash(own_status).await?;
             Ok(())
         }
     }
 
-    pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), Error> {
+    pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await.map(|t| t.0)?;
-            if get_block_hash(compact_block.header.as_ref())? != self.hash.clone().unwrap().hash {
-                Err(Error::HashCheckError)
+            if get_block_hash(kms_client(), compact_block.header.as_ref()).await? != self.hash.clone().unwrap().hash {
+                Err(StatusCode::HashCheckError)
             } else {
                 Ok(())
             }
@@ -75,17 +77,25 @@ pub struct ChainStatusInit {
     pub chain_status: ::core::option::Option<ChainStatus>,
     #[prost(bytes = "vec", tag = "2")]
     pub signature: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "3")]
-    pub public_key: ::prost::alloc::vec::Vec<u8>,
 }
 
 impl ChainStatusInit {
-    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), Error> {
-        check_sig(&self.signature, &self.public_key)?;
-
-        self.chain_status
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
+        let chain_status = self.chain_status
             .clone()
-            .ok_or(Error::NoneChainStatus)?
+            .ok_or(StatusCode::NoneChainStatus)?;
+
+        let mut chain_status_bytes = Vec::new();
+        chain_status
+            .encode(&mut chain_status_bytes)
+            .map_err(|_| {
+                log::warn!("ChainStatusInit: check: encode ChainStatus failed");
+                StatusCode::EncodeError
+            })?;
+
+        check_sig(&self.signature, &chain_status_bytes, &self.chain_status.as_ref().ok_or(StatusCode::NoneChainStatus)?.address.as_ref().ok_or(StatusCode::ProvideAddressError)?.address).await?;
+
+        chain_status
             .check(own_status)
             .await?;
 
@@ -165,8 +175,12 @@ impl From<&Address> for NodeAddress {
 impl NodeAddress {
     fn to_addr(&self) -> Address {
         Address {
-            address: self.0.to_vec(),
+            address: self.to_vec(),
         }
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
     }
 }
 
@@ -240,14 +254,14 @@ impl NodeManager {
         &self,
         node: &Address,
         chain_status: ChainStatus,
-    ) -> Result<Option<ChainStatus>, Error> {
+    ) -> Result<Option<ChainStatus>, StatusCode> {
         if self.in_ban_node(node).await {
-            return Err(Error::BannedNode);
+            return Err(StatusCode::BannedNode);
         }
 
         if self.in_misbehavior_node(node).await {
             if !self.try_delete_misbehavior_node(&node).await {
-                return Err(Error::MisbehaveNode);
+                return Err(StatusCode::MisbehaveNode);
             }
         }
         let na: NodeAddress = node.into();
@@ -262,7 +276,7 @@ impl NodeManager {
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(na, chain_status))
         } else {
-            Err(Error::EarlyStatus)
+            Err(StatusCode::EarlyStatus)
         }
     }
 
@@ -336,7 +350,7 @@ impl NodeManager {
     pub async fn set_misbehavior_node(
         &self,
         node: &Address,
-    ) -> Result<Option<MisbehaviorStatus>, Error> {
+    ) -> Result<Option<MisbehaviorStatus>, StatusCode> {
         self.delete_origin(node).await;
 
         if self.in_node(node).await {
@@ -344,7 +358,7 @@ impl NodeManager {
         }
 
         if self.in_ban_node(node).await {
-            return Err(BannedNode);
+            return Err(StatusCode::BannedNode);
         }
 
         let na: NodeAddress = node.into();
@@ -379,7 +393,7 @@ impl NodeManager {
         }
     }
 
-    pub async fn set_ban_node(&self, node: &Address) -> Result<bool, Error> {
+    pub async fn set_ban_node(&self, node: &Address) -> Result<bool, StatusCode> {
         self.delete_origin(node).await;
 
         if self.in_node(node).await {
@@ -398,7 +412,7 @@ impl NodeManager {
         }
     }
 
-    pub async fn check_address_origin(&self, node: &Address, origin: u64) -> Result<bool, Error> {
+    pub async fn check_address_origin(&self, node: &Address, origin: u64) -> Result<bool, StatusCode> {
         let record_origin = {
             let na = node.into();
             self.node_origin.read().await.get(&na).cloned()
@@ -407,7 +421,7 @@ impl NodeManager {
         if record_origin.is_none() {
             return Ok(false);
         } else if record_origin != Some(origin) {
-            let e = Error::AddressOriginCheckError;
+            let e = StatusCode::AddressOriginCheckError;
             log::warn!(
                 "check_address_origin: node(0x{}) {} ",
                 hex::encode(&node.address),

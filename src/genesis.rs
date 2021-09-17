@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{clean_0x, hash_data};
+use crate::util::kms_client;
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
 use prost::Message;
 use serde_derive::Deserialize;
+use cloud_util::crypto::hash_data;
+use status_code::StatusCode;
+use cloud_util::clean_0x;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
@@ -46,7 +49,7 @@ impl GenesisBlock {
         }
     }
 
-    pub fn genesis_block_hash(&self) -> Vec<u8> {
+    pub async fn genesis_block_hash(&self) -> Vec<u8> {
         let block = self.genesis_block();
         let header = block.header.unwrap();
 
@@ -55,7 +58,7 @@ impl GenesisBlock {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        hash_data(&block_header_bytes)
+        hash_data(kms_client(), &block_header_bytes).await.unwrap()
     }
 }
 

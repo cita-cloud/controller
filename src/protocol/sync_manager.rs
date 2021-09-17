@@ -103,13 +103,13 @@ impl Default for SyncConfig {
 }
 
 impl SyncManager {
-    pub async fn insert_blocks(&self, remote_address: Address, blocks: Vec<Block>) -> usize {
+    pub async fn insert_blocks(&self, remote_address: Address, blocks: Vec<Block>, own_height: u64) -> usize {
         let mut heights = vec![];
         {
             let mut wr = self.syncing_block_list.write().await;
             for block in blocks {
                 let height = block.header.clone().unwrap().height;
-                if wr.get(&height).is_some() {
+                if own_height >= height || wr.get(&height).is_some() {
                     continue;
                 }
 
@@ -144,7 +144,7 @@ impl SyncManager {
         }
     }
 
-    pub async fn clear_node_block(&self, node: &Address) -> Option<Vec<(u64, u64)>> {
+    pub async fn clear_node_block(&self, node: &Address, own_status: &ChainStatus) -> Option<Vec<(u64, u64)>> {
         let mut range_vec = Vec::new();
         let mut start = u64::MAX;
         let mut end = u64::MAX;
@@ -155,7 +155,7 @@ impl SyncManager {
             for (&height, (addr, _)) in rd.iter() {
                 if node == addr {
                     remove_heights.push(height);
-                    if start == u64::MAX {
+                    if start == u64::MAX && height > own_status.height {
                         start = height;
                         end = height;
                     } else {
@@ -174,7 +174,6 @@ impl SyncManager {
         Some(range_vec)
     }
 
-    #[allow(dead_code)]
     pub async fn clear(&self) {
         let mut wr = self.syncing_block_list.write().await;
         wr.clear();

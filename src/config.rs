@@ -14,14 +14,85 @@
 
 use serde_derive::Deserialize;
 
+// todo
 #[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct ControllerConfig {
+    pub controller_port: u16,
+
     pub network_port: u16,
+
     pub consensus_port: u16,
+
     pub storage_port: u16,
+
     pub kms_port: u16,
+
     pub executor_port: u16,
-    pub block_delay_number: u32,
+
+    pub node_address: String,
+
+    pub block_limit: u64,
+
+    pub package_limit: u64,
+
+    pub address_len: u64,
+
+    pub hash_len: u64,
+
+    pub signature_len: u64,
+
+    pub git_homepage: String,
+
+    pub key_id: u64,
+
+    pub lock_id_version: u64,
+
+    pub lock_id_chain_id: u64,
+
+    pub lock_id_admin: u64,
+
+    pub lock_id_block_interval: u64,
+
+    pub lock_id_validators: u64,
+
+    pub lock_id_emergency_brake: u64,
+
+    pub lock_id_button: u64,
+
+    pub server_retry_interval: u64,
+
+    pub origin_node_reconnect_interval: u64,
+}
+
+impl Default for ControllerConfig {
+    fn default() -> Self {
+        Self {
+            controller_port: 50004,
+            network_port: 50000,
+            consensus_port: 50001,
+            storage_port: 50003,
+            kms_port: 50005,
+            executor_port: 50002,
+            node_address: "".to_string(),
+            block_limit: 0,
+            package_limit: 30000,
+            address_len: 20,
+            hash_len: 32,
+            signature_len: 128,
+            git_homepage: "https://github.com/cita-cloud/controller".to_string(),
+            key_id: 0,
+            lock_id_version: 1_000,
+            lock_id_chain_id: 1_001,
+            lock_id_admin: 1_002,
+            lock_id_block_interval: 1_003,
+            lock_id_validators: 1_004,
+            lock_id_emergency_brake: 1_005,
+            lock_id_button: 1_006,
+            server_retry_interval: 3,
+            origin_node_reconnect_interval: 3600,
+        }
+    }
 }
 
 impl ControllerConfig {
@@ -42,7 +113,7 @@ mod tests {
         storage_port = 50003
         kms_port = 50005
         executor_port = 50002
-        block_delay_number = 6
+        node_address = '37d1c7449bfe76fe9c445e626da06265e9377601'
         "#;
 
         let config = ControllerConfig::new(toml_str);
@@ -52,6 +123,7 @@ mod tests {
         assert_eq!(config.storage_port, 50003);
         assert_eq!(config.kms_port, 50005);
         assert_eq!(config.executor_port, 50002);
-        assert_eq!(config.block_delay_number, 6);
+        assert_eq!(config.controller_port, 50004);
+        assert_eq!(config.node_address, "37d1c7449bfe76fe9c445e626da06265e9377601".to_string());
     }
 }

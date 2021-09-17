@@ -15,12 +15,14 @@
 use crate::util::{get_compact_block, verify_tx_hash, verify_tx_signature};
 use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
 use cita_cloud_proto::blockchain::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_cloud_proto::blockchain::RawTransaction;
+use cita_cloud_proto::blockchain::{RawTransaction, RawTransactions};
 use cita_cloud_proto::blockchain::{Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use prost::Message;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::FromIterator;
+use status_code::StatusCode;
+use cloud_util::common::get_tx_hash;
 
 pub const BLOCKLIMIT: u64 = 100;
 
@@ -74,61 +76,86 @@ impl Authentication {
         }
     }
 
-    #[allow(clippy::ptr_arg)]
-    fn check_tx_hash(&self, tx_hash: &Vec<u8>) -> Result<(), String> {
+    fn check_tx_hash(&self, tx_hash: &Vec<u8>) -> Result<(), StatusCode> {
         for (_h, hash_list) in self.history_hashes.iter() {
             if hash_list.contains(tx_hash) {
-                return Err("dup".to_owned());
+                return Err(StatusCode::HistoryDupTx);
             }
         }
         Ok(())
     }
 
-    fn check_transaction(&self, tx: &Transaction) -> Result<(), String> {
+    fn check_transaction(&self, tx: &Transaction) -> Result<(), StatusCode> {
         if tx.version != self.sys_config.version {
-            return Err("Invalid version".to_owned());
+            return Err(StatusCode::InvalidVersion);
         }
         if tx.to.len() != 20 && !tx.to.is_empty() {
-            return Err("Invalid to".to_owned());
+            return Err(StatusCode::InvalidTo);
         }
         if tx.nonce.len() > 128 {
-            return Err("Invalid nonce".to_owned());
+            return Err(StatusCode::InvalidNonce);
         }
         if tx.valid_until_block <= self.current_block_number
             || tx.valid_until_block > (self.current_block_number + BLOCKLIMIT)
         {
-            return Err("Invalid valid_until_block".to_owned());
+            return Err(StatusCode::InvalidValidUntilBlock);
         }
         if tx.value.len() != 32 {
-            return Err("Invalid value".to_owned());
+            return Err(StatusCode::InvalidValue);
         }
         if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
-            return Err("Invalid chain_id".to_owned());
+            return Err(StatusCode::InvalidChainId);
         }
         Ok(())
     }
 
-    fn check_utxo_transaction(&self, utxo_tx: &UtxoTransaction) -> Result<(), String> {
+    fn check_utxo_transaction(&self, utxo_tx: &UtxoTransaction) -> Result<(), StatusCode> {
         if utxo_tx.version != self.sys_config.version {
-            return Err("Invalid version".to_owned());
+            return Err(StatusCode::InvalidVersion);
         }
         let lock_id = utxo_tx.lock_id;
         if !(LOCK_ID_VERSION..LOCK_ID_BUTTON).contains(&lock_id) {
-            return Err("Invalid lock_id".to_owned());
+            return Err(StatusCode::InvalidLockId);
         }
         let hash = self.sys_config.utxo_tx_hashes.get(&lock_id).unwrap();
         if hash != &utxo_tx.pre_tx_hash {
-            return Err("Invalid pre_tx_hash".to_owned());
+            return Err(StatusCode::InvalidPreHash);
         }
         Ok(())
     }
 
-    pub fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, String> {
+    // pub async fn check_transactions(&self, raw_txs: &RawTransactions) -> Result<(), StatusCode> {
+    //     use rayon::prelude::*;
+    //
+    //     tokio::task::block_in_place(|| {
+    //         raw_txs
+    //             .body
+    //             .par_iter()
+    //             .map(|raw_tx| {
+    //                 let tx_hash = self
+    //                     .check_raw_tx(raw_tx).await.map_err(|status| {
+    //                     log::warn!("check_raw_tx tx(0x{:?}) failed: {}", get_tx_hash(&raw_tx), status);
+    //                     status
+    //                 })?;
+    //
+    //                 if self.check_dup_tx(&tx_hash) {
+    //                     log::warn!("check_transactions: found dup tx({})", hex::encode(&tx_hash));
+    //                     return Err(StatusCode::DupTransaction);
+    //                 }
+    //
+    //                 Ok(())
+    //             })
+    //             .collect::<Result<(), StatusCode>>()
+    //     })?;
+    //     Ok(())
+    // }
+
+    pub async fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, StatusCode> {
         if let Some(tx) = raw_tx.tx.as_ref() {
             match tx {
                 NormalTx(normal_tx) => {
                     if normal_tx.witness.is_none() {
-                        return Err("witness is none".to_owned());
+                        return Err(StatusCode::NoneWitness);
                     }
 
                     let witness = normal_tx.witness.as_ref().unwrap();
@@ -136,32 +163,32 @@ impl Authentication {
                     let sender = &witness.sender;
 
                     if self.sys_config.emergency_brake {
-                        return Err("forbidden".to_owned());
+                        return Err(StatusCode::EmergencyBrake);
                     }
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = &normal_tx.transaction {
                         self.check_transaction(&tx)?;
-                        let ret = tx.encode(&mut tx_bytes);
-                        if ret.is_err() {
-                            return Err("encode tx failed".to_owned());
-                        }
+                        tx.encode(&mut tx_bytes).map_err(|_| {
+                            log::warn!("check_raw_tx: encode transaction failed");
+                            StatusCode::EncodeError
+                        })?;
                     } else {
-                        return Err("tx is none".to_owned());
+                        return Err(StatusCode::NoneTransaction);
                     }
 
                     let tx_hash = &normal_tx.transaction_hash;
 
-                    self.check_tx_hash(&tx_hash)?;
+                    self.check_tx_hash(tx_hash)?;
 
-                    verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
+                    verify_tx_hash(&tx_hash, &tx_bytes).await?;
 
-                    if &verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                    if &verify_tx_signature(&tx_hash, &signature).await?
                         == sender
                     {
                         Ok(tx_hash.clone())
                     } else {
-                        Err("Invalid sender".to_owned())
+                        Err(StatusCode::SigCheckError)
                     }
                 }
                 UtxoTx(utxo_tx) => {
@@ -169,43 +196,43 @@ impl Authentication {
 
                     // limit witnesses length is 1
                     if witnesses.len() != 1 {
-                        return Err("invalid witnesses".to_owned());
+                        return Err(StatusCode::InvalidWitness);
                     }
 
                     // only admin can send utxo tx
                     if witnesses[0].sender != self.sys_config.admin {
-                        return Err("forbidden".to_owned());
+                        return Err(StatusCode::AdminCheckError);
                     }
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = utxo_tx.transaction.as_ref() {
                         self.check_utxo_transaction(&tx)?;
-                        let ret = tx.encode(&mut tx_bytes);
-                        if ret.is_err() {
-                            return Err("encode utxo tx failed".to_owned());
-                        }
+                        tx.encode(&mut tx_bytes).map_err(|_| {
+                            log::warn!("check_raw_tx: encode utxo failed");
+                            StatusCode::EncodeError
+                        })?;
                     } else {
-                        return Err("utxo tx is none".to_owned());
+                        return Err(StatusCode::NoneUtxo);
                     }
 
                     let tx_hash = &utxo_tx.transaction_hash;
-                    verify_tx_hash(&tx_hash, &tx_bytes).map_err(|e| e.to_string())?;
+                    verify_tx_hash(&tx_hash, &tx_bytes).await?;
 
                     for (i, w) in witnesses.into_iter().enumerate() {
                         let signature = &w.signature;
                         let sender = &w.sender;
 
-                        if &verify_tx_signature(&tx_hash, &signature).map_err(|e| e.to_string())?
+                        if &verify_tx_signature(&tx_hash, &signature).await?
                             != sender
                         {
-                            return Err(format!("Invalid sender index: {}", i));
+                            return Err(StatusCode::SigCheckError)
                         }
                     }
                     Ok(tx_hash.clone())
                 }
             }
         } else {
-            Err("Invalid raw tx".to_owned())
+            Err(StatusCode::NoneRawTx)
         }
     }
 }

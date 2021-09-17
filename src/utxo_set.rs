@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::clean_0x;
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use log::warn;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
+use cloud_util::clean_0x;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemConfigFile {
