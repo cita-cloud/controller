@@ -12,9 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use cloud_util::common::read_toml;
 use serde_derive::Deserialize;
+use tokio::sync::OnceCell;
 
-// todo
+pub static CONFIG: OnceCell<ControllerConfig> = OnceCell::const_new();
+
+pub fn controller_config() -> &'static ControllerConfig {
+    CONFIG.get().unwrap()
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ControllerConfig {
@@ -36,29 +43,13 @@ pub struct ControllerConfig {
 
     pub package_limit: u64,
 
-    pub address_len: u64,
+    pub address_len: u32,
 
-    pub hash_len: u64,
+    pub hash_len: u32,
 
-    pub signature_len: u64,
-
-    pub git_homepage: String,
+    pub signature_len: u32,
 
     pub key_id: u64,
-
-    pub lock_id_version: u64,
-
-    pub lock_id_chain_id: u64,
-
-    pub lock_id_admin: u64,
-
-    pub lock_id_block_interval: u64,
-
-    pub lock_id_validators: u64,
-
-    pub lock_id_emergency_brake: u64,
-
-    pub lock_id_button: u64,
 
     pub server_retry_interval: u64,
 
@@ -80,15 +71,7 @@ impl Default for ControllerConfig {
             address_len: 20,
             hash_len: 32,
             signature_len: 128,
-            git_homepage: "https://github.com/cita-cloud/controller".to_string(),
             key_id: 0,
-            lock_id_version: 1_000,
-            lock_id_chain_id: 1_001,
-            lock_id_admin: 1_002,
-            lock_id_block_interval: 1_003,
-            lock_id_validators: 1_004,
-            lock_id_emergency_brake: 1_005,
-            lock_id_button: 1_006,
             server_retry_interval: 3,
             origin_node_reconnect_interval: 3600,
         }
@@ -97,7 +80,11 @@ impl Default for ControllerConfig {
 
 impl ControllerConfig {
     pub fn new(config_str: &str) -> Self {
-        toml::from_str::<ControllerConfig>(config_str).expect("Error while parsing config")
+        read_toml(config_str, "controller")
+    }
+
+    pub fn set_global(self) {
+        CONFIG.set(self).unwrap();
     }
 }
 
@@ -107,16 +94,7 @@ mod tests {
 
     #[test]
     fn basic_test() {
-        let toml_str = r#"
-        network_port = 50000
-        consensus_port = 50001
-        storage_port = 50003
-        kms_port = 50005
-        executor_port = 50002
-        node_address = '37d1c7449bfe76fe9c445e626da06265e9377601'
-        "#;
-
-        let config = ControllerConfig::new(toml_str);
+        let config = ControllerConfig::new("example/config.toml");
 
         assert_eq!(config.network_port, 50000);
         assert_eq!(config.consensus_port, 50001);
@@ -124,6 +102,9 @@ mod tests {
         assert_eq!(config.kms_port, 50005);
         assert_eq!(config.executor_port, 50002);
         assert_eq!(config.controller_port, 50004);
-        assert_eq!(config.node_address, "37d1c7449bfe76fe9c445e626da06265e9377601".to_string());
+        assert_eq!(
+            config.node_address,
+            "0x37d1c7449bfe76fe9c445e626da06265e9377601".to_string()
+        );
     }
 }

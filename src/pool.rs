@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::BLOCKLIMIT;
 use cita_cloud_proto::blockchain::raw_transaction::Tx;
 use cita_cloud_proto::blockchain::RawTransaction;
 use std::borrow::Borrow;
@@ -55,13 +54,15 @@ fn get_raw_tx_hash(raw_tx: &RawTransaction) -> &[u8] {
 pub struct Pool {
     package_limit: usize,
     txns: HashSet<Txn>,
+    block_limit: u64,
 }
 
 impl Pool {
-    pub fn new(package_limit: usize) -> Self {
+    pub fn new(package_limit: usize, block_limit: u64) -> Self {
         Pool {
             package_limit,
             txns: HashSet::new(),
+            block_limit,
         }
     }
 
@@ -76,7 +77,9 @@ impl Pool {
     }
 
     pub fn package(&mut self, height: u64) -> Vec<RawTransaction> {
-        self.txns.retain(|txn| tx_is_valid(&txn.0, height));
+        let block_limit = self.block_limit;
+        self.txns
+            .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
         self.txns
             .iter()
             .take(self.package_limit)
@@ -94,7 +97,7 @@ impl Pool {
     }
 }
 
-fn tx_is_valid(raw_tx: &RawTransaction, height: u64) -> bool {
+fn tx_is_valid(raw_tx: &RawTransaction, height: u64, block_limit: u64) -> bool {
     let valid_until_block = {
         match raw_tx.tx {
             Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
@@ -108,5 +111,5 @@ fn tx_is_valid(raw_tx: &RawTransaction, height: u64) -> bool {
         }
     };
 
-    height < valid_until_block && valid_until_block <= (height + BLOCKLIMIT)
+    height < valid_until_block && valid_until_block <= (height + block_limit)
 }

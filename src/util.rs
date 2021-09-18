@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::blockchain::{Block, BlockHeader, CompactBlock, RawTransactions};
+use cita_cloud_proto::blockchain::{Block, CompactBlock, RawTransactions};
 use cita_cloud_proto::consensus::consensus_service_client::ConsensusServiceClient;
 use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
 // use cita_cloud_proto::kms::{
@@ -22,30 +22,23 @@ use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
 use cita_cloud_proto::network::{
     network_service_client::NetworkServiceClient, NetworkStatusResponse,
 };
-use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, Content, ExtKey};
+use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, ExtKey};
 use log::{info, warn};
 use tonic::Request;
 
-use status_code::StatusCode;
-use cita_cloud_proto::blockchain::raw_transaction::Tx;
+use crate::config::{controller_config, ControllerConfig};
 use cita_cloud_proto::blockchain::RawTransaction;
-use cita_cloud_proto::common::{
-    Address, ConsensusConfiguration, Empty, Proposal, ProposalWithProof,
-};
+use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof};
+use cita_cloud_proto::kms::kms_service_client::KmsServiceClient;
+use cloud_util::common::get_tx_hash;
+use cloud_util::crypto::{hash_data, pk2address, recover_signature};
+use cloud_util::storage::load_data;
 use prost::Message;
+use status_code::StatusCode;
 use tokio::sync::OnceCell;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 use tonic::Code;
-use cloud_util::crypto::{pk2address, recover_signature, hash_data};
-use cita_cloud_proto::kms::kms_service_client::KmsServiceClient;
-use cloud_util::common::get_tx_hash;
-use crate::config::ControllerConfig;
-use cloud_util::storage::load_data;
-
-pub const ADDR_BYTES_LEN: usize = 20;
-pub const HASH_BYTES_LEN: usize = 32;
-pub const SM2_SIGNATURE_BYTES_LEN: usize = 128;
 
 pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCell::const_new();
 pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();
@@ -54,9 +47,7 @@ pub static NETWORK_CLIENT: OnceCell<NetworkServiceClient<Channel>> = OnceCell::c
 pub static KMS_CLIENT: OnceCell<KmsServiceClient<Channel>> = OnceCell::const_new();
 
 // This must be called before access to clients.
-pub fn init_grpc_client(
-    config: ControllerConfig,
-) {
+pub fn init_grpc_client(config: &ControllerConfig) {
     CONSENSUS_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.consensus_port);
@@ -114,9 +105,7 @@ pub fn kms_client() -> KmsServiceClient<Channel> {
     KMS_CLIENT.get().cloned().unwrap()
 }
 
-pub async fn reconfigure(
-    consensus_config: ConsensusConfiguration,
-) -> StatusCode {
+pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCode {
     let request = Request::new(consensus_config);
 
     match consensus_client().reconfigure(request).await {
@@ -128,11 +117,7 @@ pub async fn reconfigure(
     }
 }
 
-pub async fn check_block(
-    height: u64,
-    data: Vec<u8>,
-    proof: Vec<u8>,
-) -> StatusCode {
+pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCode {
     let mut client = consensus_client();
 
     let proposal = Some(Proposal { height, data });
@@ -148,24 +133,30 @@ pub async fn check_block(
 }
 
 pub async fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec<u8>, StatusCode> {
-    if signature.len() != SM2_SIGNATURE_BYTES_LEN {
+    let config = controller_config();
+    if signature.len() != config.signature_len as usize {
         warn!(
             "signature len is not correct, item len: {}, correct len: {}",
             signature.len(),
-            SM2_SIGNATURE_BYTES_LEN
+            config.signature_len
         );
         Err(StatusCode::SigLenError)
     } else {
-        pk2address(kms_client(), &recover_signature(kms_client(), signature, tx_hash).await?).await
+        pk2address(
+            kms_client(),
+            &recover_signature(kms_client(), signature, tx_hash).await?,
+        )
+        .await
     }
 }
 
 pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), StatusCode> {
-    if tx_hash.len() != HASH_BYTES_LEN {
+    let config = controller_config();
+    if tx_hash.len() != config.hash_len as usize {
         warn!(
             "tx_hash len is not correct, item len: {}, correct len: {}",
             tx_hash.len(),
-            HASH_BYTES_LEN
+            config.hash_len
         );
         Err(StatusCode::HashLenError)
     } else {
@@ -203,7 +194,10 @@ pub async fn load_data_maybe_empty(
     }
 }
 
-pub async fn get_full_block(compact_block: CompactBlock, proof: Vec<u8>) -> Result<Block, StatusCode> {
+pub async fn get_full_block(
+    compact_block: CompactBlock,
+    proof: Vec<u8>,
+) -> Result<Block, StatusCode> {
     let mut body = Vec::new();
     if let Some(compact_body) = compact_block.body {
         for hash in compact_body.tx_hashes {
@@ -227,11 +221,14 @@ pub async fn exec_block(block: Block) -> Result<Vec<u8>, StatusCode> {
         warn!("exec_block failed: {}", e.to_string());
         StatusCode::ExecuteServerNotReady
     })?;
-    Ok(response.into_inner().hash.ok_or(StatusCode::NoneHashResult)?.hash)
+    Ok(response
+        .into_inner()
+        .hash
+        .ok_or(StatusCode::NoneHashResult)?
+        .hash)
 }
 
-pub async fn get_network_status(
-) -> Result<NetworkStatusResponse, StatusCode> {
+pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
     let mut client = network_client();
     let request = Request::new(Empty {});
     let response = client.get_network_status(request).await.map_err(|e| {
@@ -254,20 +251,21 @@ pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
     let tx_hash_bytes = tx_hash.to_vec();
 
-    let tx_bytes = load_data(storage_client(), 1, tx_hash_bytes).await.map_err(|e| {
-        warn!(
-            "load tx(0x{} failed, error: {})",
-            hex::encode(tx_hash),
-            e.to_string()
-        );
-        StatusCode::NoTransaction
-    })?;
-
-    let raw_tx = RawTransaction::decode(tx_bytes.as_slice())
-        .map_err(|_| {
-            warn!("db_get_tx: decode RawTransaction failed");
-            StatusCode::DecodeError
+    let tx_bytes = load_data(storage_client(), 1, tx_hash_bytes)
+        .await
+        .map_err(|e| {
+            warn!(
+                "load tx(0x{} failed, error: {})",
+                hex::encode(tx_hash),
+                e.to_string()
+            );
+            StatusCode::NoTransaction
         })?;
+
+    let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(|_| {
+        warn!("db_get_tx: decode RawTransaction failed");
+        StatusCode::DecodeError
+    })?;
 
     Ok(raw_tx)
 }
@@ -283,23 +281,27 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Statu
 pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
     let tx_hash_bytes = tx_hash.to_vec();
 
-    let height_bytes = load_data(storage_client(), 7, tx_hash_bytes.clone()).await.map_err(|e| {
-        warn!(
-            "load tx(0x{}) block height failed, error: {}",
-            hex::encode(tx_hash),
-            e.to_string()
-        );
-        StatusCode::NoTxHeight
-    })?;
+    let height_bytes = load_data(storage_client(), 7, tx_hash_bytes.clone())
+        .await
+        .map_err(|e| {
+            warn!(
+                "load tx(0x{}) block height failed, error: {}",
+                hex::encode(tx_hash),
+                e.to_string()
+            );
+            StatusCode::NoTxHeight
+        })?;
 
-    let tx_index_bytes = load_data(storage_client(), 9, tx_hash_bytes).await.map_err(|e| {
-        warn!(
-            "load tx(0x{}) index failed, error: {}",
-            hex::encode(tx_hash),
-            e.to_string()
-        );
-        StatusCode::NoTxIndex
-    })?;
+    let tx_index_bytes = load_data(storage_client(), 9, tx_hash_bytes)
+        .await
+        .map_err(|e| {
+            warn!(
+                "load tx(0x{}) index failed, error: {}",
+                hex::encode(tx_hash),
+                e.to_string()
+            );
+            StatusCode::NoTxIndex
+        })?;
 
     let mut buf: [u8; 8] = [0; 8];
 
@@ -315,21 +317,24 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
 pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
-    let compact_block_bytes = load_data(storage_client(), 10, height_bytes.clone()).await.map_err(|e| {
-        warn!("get compact_block({}) error: {}", height, e.to_string());
-        StatusCode::NoBlock
-    })?;
-
-    let compact_block = CompactBlock::decode(compact_block_bytes.as_slice())
-        .map_err(|_| {
-            warn!("get_compact_block: decode CompactBlock failed");
-            StatusCode::DecodeError
+    let compact_block_bytes = load_data(storage_client(), 10, height_bytes.clone())
+        .await
+        .map_err(|e| {
+            warn!("get compact_block({}) error: {}", height, e.to_string());
+            StatusCode::NoBlock
         })?;
 
-    let proof = load_data(storage_client(), 5, height_bytes).await.map_err(|e| {
-        warn!("get proof({}) error: {}", height, e.to_string());
-        StatusCode::NoProof
+    let compact_block = CompactBlock::decode(compact_block_bytes.as_slice()).map_err(|_| {
+        warn!("get_compact_block: decode CompactBlock failed");
+        StatusCode::DecodeError
     })?;
+
+    let proof = load_data(storage_client(), 5, height_bytes)
+        .await
+        .map_err(|e| {
+            warn!("get proof({}) error: {}", height, e.to_string());
+            StatusCode::NoProof
+        })?;
 
     Ok((compact_block, proof))
 }
@@ -468,7 +473,9 @@ macro_rules! impl_broadcast {
 }
 
 pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), StatusCode> {
-    if &recover_signature(kms_client(), sig, msg).await? != address {
+    if recover_signature(kms_client(), sig, msg).await? != address {
         Err(StatusCode::SigCheckError)
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }

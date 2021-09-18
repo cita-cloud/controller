@@ -103,7 +103,12 @@ impl Default for SyncConfig {
 }
 
 impl SyncManager {
-    pub async fn insert_blocks(&self, remote_address: Address, blocks: Vec<Block>, own_height: u64) -> usize {
+    pub async fn insert_blocks(
+        &self,
+        remote_address: Address,
+        blocks: Vec<Block>,
+        own_height: u64,
+    ) -> usize {
         let mut heights = vec![];
         {
             let mut wr = self.syncing_block_list.write().await;
@@ -144,27 +149,30 @@ impl SyncManager {
         }
     }
 
-    pub async fn clear_node_block(&self, node: &Address, own_status: &ChainStatus) -> Option<Vec<(u64, u64)>> {
+    pub async fn clear_node_block(
+        &self,
+        node: &Address,
+        own_status: &ChainStatus,
+    ) -> Option<Vec<(u64, u64)>> {
         let mut range_vec = Vec::new();
         let mut start = u64::MAX;
         let mut end = u64::MAX;
         let mut remove_heights = Vec::new();
+        let mut eazy = false;
 
         {
             let rd = self.syncing_block_list.read().await;
             for (&height, (addr, _)) in rd.iter() {
                 if node == addr {
                     remove_heights.push(height);
-                    if start == u64::MAX && height > own_status.height {
+                    if start == u64::MAX && height > own_status.height && !eazy {
+                        eazy = true;
                         start = height;
-                        end = height;
-                    } else {
-                        end = height;
                     }
-                } else {
-                    if start != u64::MAX {
-                        range_vec.push((start, end));
-                    }
+                    end = height;
+                } else if start != u64::MAX && eazy {
+                    eazy = false;
+                    range_vec.push((start, end));
                 }
             }
         }

@@ -37,12 +37,10 @@ const GIT_VERSION: &str = git_version!(
 );
 const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
-const DEFAULT_PACKAGE_LIMIT: usize = 30000;
-
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
 #[derive(Clap)]
-#[clap(version = "0.1.0", author = "Rivtower Technologies.")]
+#[clap(version = "6.3.0", author = "Rivtower Technologies.")]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
@@ -64,6 +62,9 @@ struct RunOpts {
     /// Sets grpc port of this service.
     #[clap(short = 'p', long = "port", default_value = "50004")]
     grpc_port: String,
+    /// Chain config path
+    #[clap(short = 'c', long = "config", default_value = "config.toml")]
+    config_path: String,
 }
 
 fn main() {
@@ -91,7 +92,10 @@ fn main() {
 use cita_cloud_proto::network::RegisterInfo;
 
 use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction, RawTransactions};
-use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Hash, Hashes, Proposal, ProposalWithProof, ProposalRespond, ConsensusConfigurationRespond, NodeNetInfo, TotalNodeInfo, TotalNodeNetInfo};
+use cita_cloud_proto::common::{
+    ConsensusConfiguration, ConsensusConfigurationRespond, Empty, Hash, Hashes, NodeNetInfo,
+    Proposal, ProposalRespond, ProposalWithProof, TotalNodeInfo,
+};
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
     rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
@@ -367,18 +371,27 @@ impl RpcService for RPCServer {
         )
     }
 
-    async fn add_node(&self, request: Request<NodeNetInfo>) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
+    async fn add_node(
+        &self,
+        request: Request<NodeNetInfo>,
+    ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
         debug!("add_node request: {:?}", request);
 
         Ok(self.controller.rpc_add_node(request).await)
     }
 
-    async fn get_peers_info(&self, request: Request<Empty>) -> Result<Response<TotalNodeInfo>, Status> {
+    async fn get_peers_info(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<TotalNodeInfo>, Status> {
         debug!("get_peers_info request: {:?}", request);
 
-        Ok(Response::new(self.controller.rpc_get_peers_info(request).await.map_err(
-            |e| Status::invalid_argument(e.to_string())
-        )?))
+        Ok(Response::new(
+            self.controller
+                .rpc_get_peers_info(request)
+                .await
+                .map_err(|e| Status::invalid_argument(e.to_string()))?,
+        ))
     }
 }
 
@@ -400,7 +413,10 @@ impl Consensus2ControllerServer {
 
 #[tonic::async_trait]
 impl Consensus2ControllerService for Consensus2ControllerServer {
-    async fn get_proposal(&self, request: Request<Empty>) -> Result<Response<ProposalRespond>, Status> {
+    async fn get_proposal(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<ProposalRespond>, Status> {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
@@ -410,9 +426,9 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             },
             |(height, data)| {
                 let proposal = Proposal { height, data };
-                Ok(Response::new(ProposalRespond{
+                Ok(Response::new(ProposalRespond {
                     status: Some(StatusCode::Success.into()),
-                    proposal: Some(proposal)
+                    proposal: Some(proposal),
                 }))
             },
         )
@@ -433,9 +449,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 warn!("rpc: check_proposal failed: {:?}", e.to_string());
                 Ok(Response::new(e.into()))
             }
-            Ok(_) => {
-                Ok(Response::new(StatusCode::Success.into()))
-            }
+            Ok(_) => Ok(Response::new(StatusCode::Success.into())),
         }
     }
     async fn commit_block(
@@ -465,15 +479,17 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                         block_interval: config.block_interval,
                         validators: config.validators,
                     };
-                    Ok(Response::new(ConsensusConfigurationRespond{
+                    Ok(Response::new(ConsensusConfigurationRespond {
                         status: Some(e.into()),
-                        config: Some(con_cfg)
+                        config: Some(con_cfg),
                     }))
                 },
-                |r| Ok(Response::new(ConsensusConfigurationRespond{
-                    status: Some(StatusCode::Success.into()),
-                    config: Some(r)
-                }))
+                |r| {
+                    Ok(Response::new(ConsensusConfigurationRespond {
+                        status: Some(StatusCode::Success.into()),
+                        config: Some(r),
+                    }))
+                },
             )
     }
 }
@@ -512,7 +528,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
                     warn!("rpc: process_network_msg failed: {}", status);
                     Ok(Response::new(status.into()))
                 },
-                |r| Ok(Response::new(StatusCode::Success.into())),
+                |_| Ok(Response::new(StatusCode::Success.into())),
             )
         }
     }
@@ -521,40 +537,46 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
-use status_code::StatusCode;
 use crate::event::EventTask;
 use crate::node_manager::chain_status_respond::Respond;
 use crate::node_manager::{ChainStatusInit, ChainStatusRespond};
-use crate::util::{get_compact_block, init_grpc_client, load_data_maybe_empty, reconfigure, kms_client, storage_client};
+use crate::util::{
+    get_compact_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
+    storage_client,
+};
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
 use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
+use cloud_util::crypto::{get_block_hash, sign_message};
+use cloud_util::network::register_network_msg_handler;
+use cloud_util::storage::load_data;
 use genesis::GenesisBlock;
 use prost::Message;
+use status_code::StatusCode;
 use std::fs;
+use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
-use cloud_util::network::register_network_msg_handler;
-use cloud_util::clean_0x;
-use cloud_util::crypto::{sign_message, get_block_hash};
-use cloud_util::storage::load_data;
-use std::net::AddrParseError;
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     // read consensus-config.toml
-    let buffer = fs::read_to_string("controller-config.toml")
-        .unwrap_or_else(|err| panic!("Error while loading config: [{}]", err));
-    let config = ControllerConfig::new(&buffer);
+    let mut config = ControllerConfig::new(&opts.config_path);
 
-    init_grpc_client(
-        config.clone()
-    );
+    init_grpc_client(&config);
 
-    let grpc_port_clone = opts.grpc_port.clone();
+    let grpc_port = {
+        if "50004" != opts.grpc_port {
+            opts.grpc_port.clone()
+        } else if config.controller_port != 50004 {
+            config.controller_port.to_string()
+        } else {
+            "50004".to_string()
+        }
+    };
     let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
         interval.tick().await;
@@ -563,10 +585,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             let request = RegisterInfo {
                 module_name: "controller".to_owned(),
                 hostname: "127.0.0.1".to_owned(),
-                port: grpc_port_clone.clone(),
+                port: grpc_port.clone(),
             };
 
-            if register_network_msg_handler(network_client(), request).await != StatusCode::Success {
+            if register_network_msg_handler(network_client(), request).await != StatusCode::Success
+            {
                 info!("register network msg handler success!");
                 break;
             }
@@ -574,26 +597,29 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         warn!("register network msg handler failed! Retrying");
     }
 
-    // load key_id
-    let buffer = fs::read_to_string("key_id")
-        .unwrap_or_else(|err| panic!("Error while loading key_id: [{}]", err));
-    let key_id = buffer
-        .parse::<u64>()
-        .unwrap_or_else(|err| panic!("Error while parsing key_id: [{}]", err));
-    info!("key_id: {}", key_id);
-
-    // load node_address
-    let buffer = fs::read_to_string("node_address")
-        .unwrap_or_else(|err| panic!("Error while loading node_address: [{}]", err));
-    // skip 0x prefix
-    let node_address = hex::decode(clean_0x(&buffer))
-        .unwrap_or_else(|err| panic!("Error while parsing node_address: [{}]", err));
-    info!("node_address: {:?}", buffer);
+    let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
+    loop {
+        interval.tick().await;
+        // register endpoint
+        {
+            if let Ok(crypto_info) = kms_client().get_crypto_info(Request::new(Empty {})).await {
+                let inner = crypto_info.into_inner();
+                if inner.status.is_some()
+                    && StatusCode::from(inner.status.unwrap()).is_success().is_ok()
+                {
+                    config.hash_len = inner.hash_len;
+                    config.signature_len = inner.signature_len;
+                    config.address_len = inner.address_len;
+                    info!("kms({}) is ready!", &inner.name);
+                    break;
+                }
+            }
+        }
+        warn!("kms not ready! Retrying");
+    }
 
     // load genesis.toml
-    let buffer = fs::read_to_string("genesis.toml")
-        .unwrap_or_else(|err| panic!("Error while loading genesis.toml: [{}]", err));
-    let genesis = GenesisBlock::new(&buffer);
+    let genesis = GenesisBlock::new(&opts.config_path);
     let current_block_number;
     let current_block_hash;
     let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
@@ -613,7 +639,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
                         current_block_number = u64::from_be_bytes(bytes);
                         current_block_hash =
-                            load_data(storage_client(), 0, 1u64.to_be_bytes().to_vec()).await.unwrap();
+                            load_data(storage_client(), 0, 1u64.to_be_bytes().to_vec())
+                                .await
+                                .unwrap();
                     }
                     break;
                 }
@@ -622,8 +650,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
         warn!("get current block number failed! Retrying");
     }
-    info!("current block number: {}", current_block_number);
-    info!("current block hash: 0x{}", hex::encode(&current_block_hash));
+    info!(
+        "current block number: {}, current block hash: 0x{}",
+        current_block_number,
+        hex::encode(&current_block_hash)
+    );
 
     // load initial sys_config
     let buffer = fs::read_to_string("init_sys_config.toml")
@@ -665,7 +696,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     block_interval: sys_config_clone.clone().block_interval,
                     validators: sys_config_clone.clone().validators,
                 })
-                .await.is_success().is_ok() {
+                .await
+                .is_success()
+                .is_ok()
+                {
                     break;
                 } else {
                     warn!("reconfigure failed! Retrying")
@@ -677,21 +711,24 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let (task_sender, mut task_receiver) = mpsc::unbounded_channel();
 
     let controller = Controller::new(
-        config,
+        config.clone(),
         current_block_number,
         current_block_hash,
         sys_config.clone(),
         genesis,
-        key_id,
-        node_address,
         task_sender,
     );
 
+    config.set_global();
     controller.init(current_block_number, sys_config).await;
 
     let controller_for_reconnect = controller.clone();
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(controller_for_reconnect.config.origin_node_reconnect_interval));
+        let mut interval = time::interval(Duration::from_secs(
+            controller_for_reconnect
+                .config
+                .origin_node_reconnect_interval,
+        ));
         loop {
             interval.tick().await;
             {
@@ -703,8 +740,15 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     .map_err(|_| {
                         log::warn!("process_network_msg: encode ChainStatus failed");
                         StatusCode::EncodeError
-                    }).unwrap();
-                let signature = sign_message(kms_client(), controller_for_reconnect.config.key_id, &chain_status_bytes).await.unwrap();
+                    })
+                    .unwrap();
+                let signature = sign_message(
+                    kms_client(),
+                    controller_for_reconnect.config.key_id,
+                    &chain_status_bytes,
+                )
+                .await
+                .unwrap();
 
                 controller_for_reconnect
                     .broadcast_chain_status_init(ChainStatusInit {
@@ -755,7 +799,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             .unwrap();
 
                         let own_old_block_hash =
-                            get_block_hash(kms_client(), own_old_compact_block.header.as_ref()).await.unwrap();
+                            get_block_hash(kms_client(), own_old_compact_block.header.as_ref())
+                                .await
+                                .unwrap();
 
                         if let Some(ext_hash) = chain_status.hash.clone() {
                             if ext_hash.hash != own_old_block_hash {
@@ -838,7 +884,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                             .node_manager
                                             .set_misbehavior_node(&addr)
                                             .await;
-                                        if &global_address == &addr {
+                                        if global_address == addr {
                                             let (ex_addr, ex_status) =
                                                 controller_for_task.node_manager.pick_node().await;
                                             controller_for_task
@@ -882,7 +928,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                 }
                             }
                         }
-                        ChainStep::OnlineStep => controller_for_task.sync_manager.clear().await
+                        ChainStep::OnlineStep => controller_for_task.sync_manager.clear().await,
                     }
                     controller_for_task.set_sync_state(false).await;
                 }
@@ -890,7 +936,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     });
 
-    let addr_str = format!("0.0.0.0:{}", opts.grpc_port);
+    let addr_str = format!("0.0.0.0:{}", grpc_port);
     let addr = addr_str.parse().map_err(|e: AddrParseError| {
         warn!("grpc listen addr parse failed: {} ", e.to_string());
         StatusCode::FatalError
@@ -906,10 +952,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             ControllerNetworkMsgHandlerServer::new(controller),
         ))
         .serve(addr)
-        .await.map_err(|e| {
-        warn!("start controller grpc server failed: {} ", e.to_string());
-        StatusCode::FatalError
-    })?;
+        .await
+        .map_err(|e| {
+            warn!("start controller grpc server failed: {} ", e.to_string());
+            StatusCode::FatalError
+        })?;
 
     Ok(())
 }

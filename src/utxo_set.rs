@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
+use cloud_util::clean_0x;
+use cloud_util::common::read_toml;
 use log::warn;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
-use cloud_util::clean_0x;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemConfigFile {
@@ -26,12 +27,12 @@ pub struct SystemConfigFile {
     pub admin: String,
     pub block_interval: u32,
     pub validators: Vec<String>,
+    pub block_limit: u64,
 }
 
 impl SystemConfigFile {
-    pub fn new(init_sys_config_str: &str) -> Self {
-        toml::from_str::<SystemConfigFile>(init_sys_config_str)
-            .expect("Error while parsing init_sys_config_str")
+    pub fn new(config_path: &str) -> Self {
+        read_toml(config_path, "system_config")
     }
 
     pub fn to_system_config(&self) -> SystemConfig {
@@ -40,16 +41,10 @@ impl SystemConfigFile {
         let mut validators = Vec::new();
         for validator_str in self.validators.iter() {
             let validator =
-                hex::decode(clean_0x(&validator_str)).expect("parsing validator failed!");
+                hex::decode(clean_0x(validator_str)).expect("parsing validator failed!");
             validators.push(validator)
         }
-        SystemConfig::new(
-            self.version,
-            chain_id,
-            admin,
-            self.block_interval,
-            validators,
-        )
+        SystemConfig::new(self.clone(), chain_id, admin, validators)
     }
 }
 
@@ -66,6 +61,7 @@ pub struct SystemConfig {
     pub validators: Vec<Vec<u8>>,
     pub emergency_brake: bool,
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
+    pub block_limit: u64,
 }
 
 pub const LOCK_ID_VERSION: u64 = 1_000;
@@ -78,10 +74,9 @@ pub const LOCK_ID_BUTTON: u64 = 1_006;
 
 impl SystemConfig {
     pub fn new(
-        version: u32,
+        sf: SystemConfigFile,
         chain_id: Vec<u8>,
         admin: Vec<u8>,
-        block_interval: u32,
         validators: Vec<Vec<u8>>,
     ) -> Self {
         let mut map = HashMap::new();
@@ -90,13 +85,14 @@ impl SystemConfig {
         }
 
         SystemConfig {
-            version,
+            version: sf.version,
             chain_id,
             admin,
-            block_interval,
+            block_interval: sf.block_interval,
             validators,
             emergency_brake: false,
             utxo_tx_hashes: map,
+            block_limit: sf.block_limit,
         }
     }
 
@@ -187,24 +183,17 @@ mod tests {
 
     #[test]
     fn basic_test() {
-        let toml_str = r#"
-        version = 0
-        chain_id = "0x010203040506"
-        admin = "0x060504030201"
-        block_interval = 6
-        validators = ["0x01010101", "0x02020202"]
-        "#;
-
-        let config = SystemConfigFile::new(toml_str);
+        let config = SystemConfigFile::new("example/config.toml");
         let sys_config = config.to_system_config();
 
         assert_eq!(sys_config.version, 0);
         assert_eq!(sys_config.chain_id, vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(sys_config.admin, vec![6, 5, 4, 3, 2, 1]);
-        assert_eq!(sys_config.block_interval, 6);
+        assert_eq!(sys_config.block_interval, 3);
         assert_eq!(
             sys_config.validators,
             vec![vec![1, 1, 1, 1], vec![2, 2, 2, 2]]
         );
+        assert_eq!(sys_config.block_limit, 100);
     }
 }

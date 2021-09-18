@@ -1,0 +1,19 @@
+[controller]
+network_port = 50000
+consensus_port = 50001
+storage_port = 50003
+kms_port = 50005
+executor_port = 50002
+node_address = '0x37d1c7449bfe76fe9c445e626da06265e9377601'
+
+[genesis_block]
+timestamp = 123456
+prevhash = "0x010203040506"
+
+[system_config]
+version = 0
+chain_id = "0x010203040506"
+admin = "0x060504030201"
+block_interval = 3
+validators = ["0x01010101", "0x02020202"]
+block_limit = 100

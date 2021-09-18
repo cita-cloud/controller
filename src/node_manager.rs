@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use status_code::StatusCode;
 use crate::util::{check_sig, get_compact_block, kms_client};
 use cita_cloud_proto::common::{Address, Hash};
+use cloud_util::common::h160_address_check;
+use cloud_util::crypto::get_block_hash;
+use prost::Message;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use status_code::StatusCode;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use cloud_util::common::h160_address_check;
-use cloud_util::crypto::get_block_hash;
-use prost::Message;
 
 #[derive(Debug)]
 pub struct ChainStatusWithFlag {
@@ -60,7 +60,9 @@ impl ChainStatus {
     pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await.map(|t| t.0)?;
-            if get_block_hash(kms_client(), compact_block.header.as_ref()).await? != self.hash.clone().unwrap().hash {
+            if get_block_hash(kms_client(), compact_block.header.as_ref()).await?
+                != self.hash.clone().unwrap().hash
+            {
                 Err(StatusCode::HashCheckError)
             } else {
                 Ok(())
@@ -81,23 +83,32 @@ pub struct ChainStatusInit {
 
 impl ChainStatusInit {
     pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
-        let chain_status = self.chain_status
+        let chain_status = self
+            .chain_status
             .clone()
             .ok_or(StatusCode::NoneChainStatus)?;
 
         let mut chain_status_bytes = Vec::new();
-        chain_status
-            .encode(&mut chain_status_bytes)
-            .map_err(|_| {
-                log::warn!("ChainStatusInit: check: encode ChainStatus failed");
-                StatusCode::EncodeError
-            })?;
+        chain_status.encode(&mut chain_status_bytes).map_err(|_| {
+            log::warn!("ChainStatusInit: check: encode ChainStatus failed");
+            StatusCode::EncodeError
+        })?;
 
-        check_sig(&self.signature, &chain_status_bytes, &self.chain_status.as_ref().ok_or(StatusCode::NoneChainStatus)?.address.as_ref().ok_or(StatusCode::ProvideAddressError)?.address).await?;
+        check_sig(
+            &self.signature,
+            &chain_status_bytes,
+            &self
+                .chain_status
+                .as_ref()
+                .ok_or(StatusCode::NoneChainStatus)?
+                .address
+                .as_ref()
+                .ok_or(StatusCode::ProvideAddressError)?
+                .address,
+        )
+        .await?;
 
-        chain_status
-            .check(own_status)
-            .await?;
+        chain_status.check(own_status).await?;
 
         Ok(())
     }
@@ -173,13 +184,13 @@ impl From<&Address> for NodeAddress {
 }
 
 impl NodeAddress {
-    fn to_addr(&self) -> Address {
+    fn to_addr(self) -> Address {
         Address {
             address: self.to_vec(),
         }
     }
 
-    pub fn to_vec(&self) -> Vec<u8> {
+    pub fn to_vec(self) -> Vec<u8> {
         self.0.to_vec()
     }
 }
@@ -259,10 +270,8 @@ impl NodeManager {
             return Err(StatusCode::BannedNode);
         }
 
-        if self.in_misbehavior_node(node).await {
-            if !self.try_delete_misbehavior_node(&node).await {
-                return Err(StatusCode::MisbehaveNode);
-            }
+        if self.in_misbehavior_node(node).await && !self.try_delete_misbehavior_node(node).await {
+            return Err(StatusCode::MisbehaveNode);
         }
         let na: NodeAddress = node.into();
 
@@ -324,10 +333,11 @@ impl NodeManager {
 
     pub async fn try_delete_misbehavior_node(&self, misbehavior_node: &Address) -> bool {
         let na: NodeAddress = misbehavior_node.into();
-        if {
+        let res = {
             let rd = self.misbehavior_nodes.read().await;
             rd.get(&na).unwrap().free()
-        } {
+        };
+        if res {
             self.delete_misbehavior_node(misbehavior_node).await;
             true
         } else {
@@ -412,14 +422,18 @@ impl NodeManager {
         }
     }
 
-    pub async fn check_address_origin(&self, node: &Address, origin: u64) -> Result<bool, StatusCode> {
+    pub async fn check_address_origin(
+        &self,
+        node: &Address,
+        origin: u64,
+    ) -> Result<bool, StatusCode> {
         let record_origin = {
             let na = node.into();
             self.node_origin.read().await.get(&na).cloned()
         };
 
         if record_origin.is_none() {
-            return Ok(false);
+            Ok(false)
         } else if record_origin != Some(origin) {
             let e = StatusCode::AddressOriginCheckError;
             log::warn!(

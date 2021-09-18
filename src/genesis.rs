@@ -14,11 +14,11 @@
 
 use crate::util::kms_client;
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
+use cloud_util::clean_0x;
+use cloud_util::common::read_toml;
+use cloud_util::crypto::hash_data;
 use prost::Message;
 use serde_derive::Deserialize;
-use cloud_util::crypto::hash_data;
-use status_code::StatusCode;
-use cloud_util::clean_0x;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
@@ -27,10 +27,10 @@ pub struct GenesisBlock {
 }
 
 impl GenesisBlock {
-    pub fn new(genesis_block_str: &str) -> Self {
-        toml::from_str::<GenesisBlock>(genesis_block_str)
-            .expect("Error while parsing genesis_block_str")
+    pub fn new(config_path: &str) -> Self {
+        read_toml(config_path, "genesis_block")
     }
+
     pub fn genesis_block(&self) -> Block {
         let prev_hash =
             hex::decode(clean_0x(&self.prevhash)).expect("parsing prevhash in genesis failed!");
@@ -68,12 +68,7 @@ mod tests {
 
     #[test]
     fn basic_test() {
-        let toml_str = r#"
-        timestamp = 123456
-        prev_hash = "0x010203040506"
-        "#;
-
-        let genesis = GenesisBlock::new(toml_str);
+        let genesis = GenesisBlock::new("example/config.toml");
         let block = genesis.genesis_block();
         let header = block.header.unwrap();
         assert_eq!(header.timestamp, 123_456);

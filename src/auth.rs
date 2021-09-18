@@ -15,16 +15,13 @@
 use crate::util::{get_compact_block, verify_tx_hash, verify_tx_signature};
 use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
 use cita_cloud_proto::blockchain::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_cloud_proto::blockchain::{RawTransaction, RawTransactions};
+use cita_cloud_proto::blockchain::RawTransaction;
 use cita_cloud_proto::blockchain::{Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
 use prost::Message;
+use status_code::StatusCode;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::FromIterator;
-use status_code::StatusCode;
-use cloud_util::common::get_tx_hash;
-
-pub const BLOCKLIMIT: u64 = 100;
 
 #[derive(Clone)]
 pub struct Authentication {
@@ -51,8 +48,8 @@ impl Authentication {
     }
 
     pub async fn init(&mut self, init_block_number: u64) {
-        let begin_block_number = if init_block_number >= BLOCKLIMIT {
-            init_block_number - BLOCKLIMIT + 1
+        let begin_block_number = if init_block_number >= self.sys_config.block_limit {
+            init_block_number - self.sys_config.block_limit + 1
         } else {
             1u64
         };
@@ -68,15 +65,16 @@ impl Authentication {
 
     pub fn insert_tx_hash(&mut self, h: u64, hash_list: Vec<Vec<u8>>) {
         self.history_hashes.insert(h, HashSet::from_iter(hash_list));
-        if h >= BLOCKLIMIT {
-            self.history_hashes.remove(&(h - BLOCKLIMIT));
+        if h >= self.sys_config.block_limit {
+            self.history_hashes
+                .remove(&(h - self.sys_config.block_limit));
         }
         if h > self.current_block_number {
             self.current_block_number = h;
         }
     }
 
-    fn check_tx_hash(&self, tx_hash: &Vec<u8>) -> Result<(), StatusCode> {
+    fn check_tx_hash(&self, tx_hash: &[u8]) -> Result<(), StatusCode> {
         for (_h, hash_list) in self.history_hashes.iter() {
             if hash_list.contains(tx_hash) {
                 return Err(StatusCode::HistoryDupTx);
@@ -96,7 +94,7 @@ impl Authentication {
             return Err(StatusCode::InvalidNonce);
         }
         if tx.valid_until_block <= self.current_block_number
-            || tx.valid_until_block > (self.current_block_number + BLOCKLIMIT)
+            || tx.valid_until_block > (self.current_block_number + self.sys_config.block_limit)
         {
             return Err(StatusCode::InvalidValidUntilBlock);
         }
@@ -168,7 +166,7 @@ impl Authentication {
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = &normal_tx.transaction {
-                        self.check_transaction(&tx)?;
+                        self.check_transaction(tx)?;
                         tx.encode(&mut tx_bytes).map_err(|_| {
                             log::warn!("check_raw_tx: encode transaction failed");
                             StatusCode::EncodeError
@@ -181,11 +179,9 @@ impl Authentication {
 
                     self.check_tx_hash(tx_hash)?;
 
-                    verify_tx_hash(&tx_hash, &tx_bytes).await?;
+                    verify_tx_hash(tx_hash, &tx_bytes).await?;
 
-                    if &verify_tx_signature(&tx_hash, &signature).await?
-                        == sender
-                    {
+                    if &verify_tx_signature(tx_hash, signature).await? == sender {
                         Ok(tx_hash.clone())
                     } else {
                         Err(StatusCode::SigCheckError)
@@ -206,7 +202,7 @@ impl Authentication {
 
                     let mut tx_bytes: Vec<u8> = Vec::new();
                     if let Some(tx) = utxo_tx.transaction.as_ref() {
-                        self.check_utxo_transaction(&tx)?;
+                        self.check_utxo_transaction(tx)?;
                         tx.encode(&mut tx_bytes).map_err(|_| {
                             log::warn!("check_raw_tx: encode utxo failed");
                             StatusCode::EncodeError
@@ -216,16 +212,14 @@ impl Authentication {
                     }
 
                     let tx_hash = &utxo_tx.transaction_hash;
-                    verify_tx_hash(&tx_hash, &tx_bytes).await?;
+                    verify_tx_hash(tx_hash, &tx_bytes).await?;
 
-                    for (i, w) in witnesses.into_iter().enumerate() {
+                    for (_i, w) in witnesses.iter().enumerate() {
                         let signature = &w.signature;
                         let sender = &w.sender;
 
-                        if &verify_tx_signature(&tx_hash, &signature).await?
-                            != sender
-                        {
-                            return Err(StatusCode::SigCheckError)
+                        if &verify_tx_signature(tx_hash, signature).await? != sender {
+                            return Err(StatusCode::SigCheckError);
                         }
                     }
                     Ok(tx_hash.clone())
