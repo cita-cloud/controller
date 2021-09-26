@@ -516,6 +516,11 @@ impl Chain {
             return Err(status);
         }
 
+        {
+            let auth = self.auth.read().await;
+            auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?
+        }
+
         match kms_client()
             .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
             .await

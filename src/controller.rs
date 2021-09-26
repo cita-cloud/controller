@@ -237,6 +237,11 @@ impl Controller {
     }
 
     pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<Hashes, StatusCode> {
+        {
+            let auth = self.auth.read().await;
+            auth.check_transactions(&raw_txs)?;
+        }
+
         match kms_client().check_transactions(raw_txs.clone()).await {
             Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
             Err(e) => {

@@ -15,8 +15,9 @@
 use crate::util::{get_compact_block, verify_tx_hash, verify_tx_signature};
 use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
 use cita_cloud_proto::blockchain::raw_transaction::Tx::{NormalTx, UtxoTx};
-use cita_cloud_proto::blockchain::RawTransaction;
-use cita_cloud_proto::blockchain::{Transaction, UnverifiedUtxoTransaction, UtxoTransaction};
+use cita_cloud_proto::blockchain::{
+    RawTransaction, RawTransactions, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
+};
 use prost::Message;
 use status_code::StatusCode;
 use std::collections::HashMap;
@@ -122,72 +123,26 @@ impl Authentication {
         Ok(())
     }
 
-    // pub async fn check_transactions(&self, raw_txs: &RawTransactions) -> Result<(), StatusCode> {
-    //     use rayon::prelude::*;
-    //
-    //     tokio::task::block_in_place(|| {
-    //         raw_txs
-    //             .body
-    //             .par_iter()
-    //             .map(|raw_tx| {
-    //                 let tx_hash = self
-    //                     .check_raw_tx(raw_tx).await.map_err(|status| {
-    //                     log::warn!("check_raw_tx tx(0x{:?}) failed: {}", get_tx_hash(&raw_tx), status);
-    //                     status
-    //                 })?;
-    //
-    //                 if self.check_dup_tx(&tx_hash) {
-    //                     log::warn!("check_transactions: found dup tx({})", hex::encode(&tx_hash));
-    //                     return Err(StatusCode::DupTransaction);
-    //                 }
-    //
-    //                 Ok(())
-    //             })
-    //             .collect::<Result<(), StatusCode>>()
-    //     })?;
-    //     Ok(())
-    // }
-
-    pub async fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, StatusCode> {
-        if let Some(tx) = raw_tx.tx.as_ref() {
-            match tx {
-                NormalTx(normal_tx) => {
-                    if normal_tx.witness.is_none() {
-                        return Err(StatusCode::NoneWitness);
-                    }
-
-                    let witness = normal_tx.witness.as_ref().unwrap();
-                    let signature = &witness.signature;
-                    let sender = &witness.sender;
-
+    pub fn check_transactions(&self, raw_txs: &RawTransactions) -> Result<(), StatusCode> {
+        for raw_tx in raw_txs.body.as_slice() {
+            match raw_tx.tx.as_ref() {
+                Some(NormalTx(normal_tx)) => {
                     if self.sys_config.emergency_brake {
                         return Err(StatusCode::EmergencyBrake);
                     }
 
-                    let mut tx_bytes: Vec<u8> = Vec::new();
-                    if let Some(tx) = &normal_tx.transaction {
-                        self.check_transaction(tx)?;
-                        tx.encode(&mut tx_bytes).map_err(|_| {
-                            log::warn!("check_raw_tx: encode transaction failed");
-                            StatusCode::EncodeError
-                        })?;
-                    } else {
-                        return Err(StatusCode::NoneTransaction);
-                    }
+                    self.check_transaction(
+                        normal_tx
+                            .transaction
+                            .as_ref()
+                            .ok_or(StatusCode::NoneTransaction)?,
+                    )?;
 
                     let tx_hash = &normal_tx.transaction_hash;
 
                     self.check_tx_hash(tx_hash)?;
-
-                    verify_tx_hash(tx_hash, &tx_bytes).await?;
-
-                    if &verify_tx_signature(tx_hash, signature).await? == sender {
-                        Ok(tx_hash.clone())
-                    } else {
-                        Err(StatusCode::SigCheckError)
-                    }
                 }
-                UtxoTx(utxo_tx) => {
+                Some(UtxoTx(utxo_tx)) => {
                     let witnesses = &utxo_tx.witnesses;
 
                     // limit witnesses length is 1
@@ -200,33 +155,92 @@ impl Authentication {
                         return Err(StatusCode::AdminCheckError);
                     }
 
-                    let mut tx_bytes: Vec<u8> = Vec::new();
-                    if let Some(tx) = utxo_tx.transaction.as_ref() {
-                        self.check_utxo_transaction(tx)?;
-                        tx.encode(&mut tx_bytes).map_err(|_| {
-                            log::warn!("check_raw_tx: encode utxo failed");
-                            StatusCode::EncodeError
-                        })?;
-                    } else {
-                        return Err(StatusCode::NoneUtxo);
-                    }
+                    self.check_utxo_transaction(
+                        utxo_tx.transaction.as_ref().ok_or(StatusCode::NoneUtxo)?,
+                    )?;
+                }
+                None => return Err(StatusCode::NoneRawTx),
+            }
+        }
+        Ok(())
+    }
 
-                    let tx_hash = &utxo_tx.transaction_hash;
-                    verify_tx_hash(tx_hash, &tx_bytes).await?;
+    pub async fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, StatusCode> {
+        match raw_tx.tx.as_ref() {
+            Some(NormalTx(normal_tx)) => {
+                if normal_tx.witness.is_none() {
+                    return Err(StatusCode::NoneWitness);
+                }
 
-                    for (_i, w) in witnesses.iter().enumerate() {
-                        let signature = &w.signature;
-                        let sender = &w.sender;
+                let witness = normal_tx.witness.as_ref().unwrap();
+                let signature = &witness.signature;
+                let sender = &witness.sender;
 
-                        if &verify_tx_signature(tx_hash, signature).await? != sender {
-                            return Err(StatusCode::SigCheckError);
-                        }
-                    }
+                if self.sys_config.emergency_brake {
+                    return Err(StatusCode::EmergencyBrake);
+                }
+
+                let mut tx_bytes: Vec<u8> = Vec::new();
+                if let Some(tx) = &normal_tx.transaction {
+                    self.check_transaction(tx)?;
+                    tx.encode(&mut tx_bytes).map_err(|_| {
+                        log::warn!("check_raw_tx: encode transaction failed");
+                        StatusCode::EncodeError
+                    })?;
+                } else {
+                    return Err(StatusCode::NoneTransaction);
+                }
+
+                let tx_hash = &normal_tx.transaction_hash;
+
+                self.check_tx_hash(tx_hash)?;
+
+                verify_tx_hash(tx_hash, &tx_bytes).await?;
+
+                if &verify_tx_signature(tx_hash, signature).await? == sender {
                     Ok(tx_hash.clone())
+                } else {
+                    Err(StatusCode::SigCheckError)
                 }
             }
-        } else {
-            Err(StatusCode::NoneRawTx)
+            Some(UtxoTx(utxo_tx)) => {
+                let witnesses = &utxo_tx.witnesses;
+
+                // limit witnesses length is 1
+                if witnesses.len() != 1 {
+                    return Err(StatusCode::InvalidWitness);
+                }
+
+                // only admin can send utxo tx
+                if witnesses[0].sender != self.sys_config.admin {
+                    return Err(StatusCode::AdminCheckError);
+                }
+
+                let mut tx_bytes: Vec<u8> = Vec::new();
+                if let Some(tx) = utxo_tx.transaction.as_ref() {
+                    self.check_utxo_transaction(tx)?;
+                    tx.encode(&mut tx_bytes).map_err(|_| {
+                        log::warn!("check_raw_tx: encode utxo failed");
+                        StatusCode::EncodeError
+                    })?;
+                } else {
+                    return Err(StatusCode::NoneUtxo);
+                }
+
+                let tx_hash = &utxo_tx.transaction_hash;
+                verify_tx_hash(tx_hash, &tx_bytes).await?;
+
+                for (_i, w) in witnesses.iter().enumerate() {
+                    let signature = &w.signature;
+                    let sender = &w.sender;
+
+                    if &verify_tx_signature(tx_hash, signature).await? != sender {
+                        return Err(StatusCode::SigCheckError);
+                    }
+                }
+                Ok(tx_hash.clone())
+            }
+            None => Err(StatusCode::NoneRawTx),
         }
     }
 }
