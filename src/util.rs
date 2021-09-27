@@ -185,8 +185,11 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
         },
         |response| {
             let value = response.into_inner();
-            StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?).is_success()?;
-            Ok(value.value)
+            match StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?) {
+                StatusCode::Success => Ok(value.value),
+                StatusCode::NotFound => Ok(vec![]),
+                statue => Err(statue)
+            }
         },
     )
 }

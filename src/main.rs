@@ -81,7 +81,8 @@ fn main() {
             println!("homepage: {}", GIT_HOMEPAGE);
         }
         SubCommand::Run(opts) => {
-            let _ = run(opts);
+            let fin = run(opts);
+            warn!("Should not reach here {:?}", fin);
         }
     }
 }
