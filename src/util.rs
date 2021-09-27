@@ -38,7 +38,6 @@ use status_code::StatusCode;
 use tokio::sync::OnceCell;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
-use tonic::Code;
 
 pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCell::const_new();
 pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();
@@ -174,24 +173,22 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
     }
 }
 
-pub async fn load_data_maybe_empty(
-    region: u32,
-    key: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>, StatusCode> {
     let mut client = storage_client();
 
     let request = Request::new(ExtKey { region, key });
 
-    match client.load(request).await {
-        Ok(response) => Ok(response.into_inner().value),
-        Err(e) => {
-            if e.code() == Code::NotFound {
-                Ok(vec![])
-            } else {
-                Err(Box::new(e))
-            }
-        }
-    }
+    client.load(request).await.map_or_else(
+        |e| {
+            warn!("load_data_maybe_empty failed: {:?}", e);
+            Err(StatusCode::StorageServerNotReady)
+        },
+        |response| {
+            let value = response.into_inner();
+            StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?).is_success()?;
+            Ok(value.value)
+        },
+    )
 }
 
 pub async fn get_full_block(
