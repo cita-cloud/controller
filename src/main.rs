@@ -81,9 +81,6 @@ fn main() {
             println!("homepage: {}", GIT_HOMEPAGE);
         }
         SubCommand::Run(opts) => {
-            // init log4rs
-            log4rs::init_file("controller-log4rs.yaml", Default::default()).unwrap();
-            info!("grpc port of this service: {}", opts.grpc_port);
             let _ = run(opts);
         }
     }
@@ -566,6 +563,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     // read consensus-config.toml
     let mut config = ControllerConfig::new(&opts.config_path);
 
+    // init log4rs
+    log4rs::init_file(&config.log_file, Default::default()).unwrap();
+
     init_grpc_client(&config);
 
     let grpc_port = {
@@ -577,6 +577,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             "50004".to_string()
         }
     };
+    info!("grpc port of this service: {}", grpc_port);
+
     let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
         interval.tick().await;
