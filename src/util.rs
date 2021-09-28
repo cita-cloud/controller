@@ -188,7 +188,7 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
             match StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?) {
                 StatusCode::Success => Ok(value.value),
                 StatusCode::NotFound => Ok(vec![]),
-                statue => Err(statue)
+                statue => Err(statue),
             }
         },
     )
@@ -221,11 +221,11 @@ pub async fn exec_block(block: Block) -> Result<Vec<u8>, StatusCode> {
         warn!("exec_block failed: {}", e.to_string());
         StatusCode::ExecuteServerNotReady
     })?;
-    Ok(response
-        .into_inner()
-        .hash
-        .ok_or(StatusCode::NoneHashResult)?
-        .hash)
+
+    let hash_respond = response.into_inner();
+
+    StatusCode::from(hash_respond.status.ok_or(StatusCode::NoneStatusCode)?).is_success()?;
+    Ok(hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash)
 }
 
 pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
