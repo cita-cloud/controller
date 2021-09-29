@@ -366,7 +366,7 @@ impl Controller {
         Ok(TotalNodeInfo { nodes: tnis })
     }
 
-    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCode> {
+    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
         let mut chain = self.chain.write().await;
         chain
             .add_proposal(

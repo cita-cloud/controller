@@ -422,10 +422,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 warn!("rpc: get_proposal failed: {:?}", e);
                 Err(Status::invalid_argument(e.to_string()))
             },
-            |(height, data)| {
+            |(height, data, status)| {
                 let proposal = Proposal { height, data };
                 Ok(Response::new(ProposalRespond {
-                    status: Some(StatusCode::Success.into()),
+                    status: Some(status.into()),
                     proposal: Some(proposal),
                 }))
             },

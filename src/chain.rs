@@ -118,9 +118,15 @@ impl Chain {
         Ok((state_root, proof))
     }
 
-    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCode> {
+    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
         if let Some((h, _, block)) = self.own_proposal.clone() {
-            return Ok((h, self.assemble_proposal(block, h).await?));
+            let status = {if block.body.ok_or(StatusCode::NoneBlockBody)?.body.len() == 0{
+                StatusCode::NoTransaction
+            } else {
+                StatusCode::Success
+            }};
+
+            return Ok((h, self.assemble_proposal(block, h).await?, status));
         }
         Err(StatusCode::NoCandidate)
     }
