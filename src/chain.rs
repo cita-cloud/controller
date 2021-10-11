@@ -85,14 +85,11 @@ impl Chain {
             let mut interval = time::interval(Duration::from_secs(3));
             loop {
                 interval.tick().await;
-                if self
+                match self
                     .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
-                    .await
-                    .is_ok()
-                {
-                    break;
-                } else {
-                    warn!("executor not ready! Retrying")
+                    .await {
+                    Ok(()) | Err(StatusCode::ReenterBlock) => break,
+                    _ => warn!("executor not ready! Retrying")
                 }
             }
         }
@@ -120,11 +117,13 @@ impl Chain {
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
         if let Some((h, _, block)) = self.own_proposal.clone() {
-            let status = {if block.body.ok_or(StatusCode::NoneBlockBody)?.body.len() == 0{
-                StatusCode::NoTransaction
-            } else {
-                StatusCode::Success
-            }};
+            let status = {
+                if block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?.body.len() == 0 {
+                    StatusCode::NoTransaction
+                } else {
+                    StatusCode::Success
+                }
+            };
 
             return Ok((h, self.assemble_proposal(block, h).await?, status));
         }
@@ -346,10 +345,10 @@ impl Chain {
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
 
-        // exec bloc
+        // exec block
         let executed_block_hash = exec_block(block).await.map_err(|e| {
             warn!("exec_block({}) error: {}", block_height, e.to_string());
-            StatusCode::ExecuteError
+            e
         })?;
         // region 6 : block_height - executed_block_hash
         store_data(

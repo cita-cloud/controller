@@ -91,8 +91,8 @@ use cita_cloud_proto::network::RegisterInfo;
 
 use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction, RawTransactions};
 use cita_cloud_proto::common::{
-    ConsensusConfiguration, ConsensusConfigurationRespond, Empty, Hash, Hashes, NodeNetInfo,
-    Proposal, ProposalRespond, ProposalWithProof, TotalNodeInfo,
+    ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
+    Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
 };
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::controller::{
@@ -414,7 +414,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn get_proposal(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<ProposalRespond>, Status> {
+    ) -> Result<Response<ProposalResponse>, Status> {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
@@ -424,7 +424,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             },
             |(height, data, status)| {
                 let proposal = Proposal { height, data };
-                Ok(Response::new(ProposalRespond {
+                Ok(Response::new(ProposalResponse {
                     status: Some(status.into()),
                     proposal: Some(proposal),
                 }))
@@ -453,7 +453,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
-    ) -> Result<Response<ConsensusConfigurationRespond>, Status> {
+    ) -> Result<Response<ConsensusConfigurationResponse>, Status> {
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
@@ -477,13 +477,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                         block_interval: config.block_interval,
                         validators: config.validators,
                     };
-                    Ok(Response::new(ConsensusConfigurationRespond {
+                    Ok(Response::new(ConsensusConfigurationResponse {
                         status: Some(e.into()),
                         config: Some(con_cfg),
                     }))
                 },
                 |r| {
-                    Ok(Response::new(ConsensusConfigurationRespond {
+                    Ok(Response::new(ConsensusConfigurationResponse {
                         status: Some(StatusCode::Success.into()),
                         config: Some(r),
                     }))
@@ -553,7 +553,6 @@ use cloud_util::storage::load_data;
 use genesis::GenesisBlock;
 use prost::Message;
 use status_code::StatusCode;
-use std::fs;
 use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -659,11 +658,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         hex::encode(&current_block_hash)
     );
 
-    // load initial sys_config
-    let buffer = fs::read_to_string("init_sys_config.toml")
-        .unwrap_or_else(|err| panic!("Error while loading init_sys_config.toml: [{}]", err));
-
-    let mut sys_config = SystemConfigFile::new(&buffer).to_system_config();
+    let mut sys_config = SystemConfigFile::new(&opts.config_path).to_system_config();
     if current_block_number != 0 {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();

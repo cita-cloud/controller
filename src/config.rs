@@ -73,7 +73,7 @@ impl Default for ControllerConfig {
             address_len: 20,
             hash_len: 32,
             signature_len: 128,
-            key_id: 0,
+            key_id: 1,
             server_retry_interval: 3,
             origin_node_reconnect_interval: 3600,
             log_file: "controller-log4rs.yaml".to_string(),
