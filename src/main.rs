@@ -418,9 +418,12 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
-            |e| {
-                warn!("rpc: get_proposal failed: {:?}", e);
-                Err(Status::invalid_argument(e.to_string()))
+            |status| {
+                warn!("rpc: get_proposal failed: {:?}", status);
+                Ok(Response::new(ProposalResponse {
+                    status: Some(status.into()),
+                    proposal: None,
+                }))
             },
             |(height, data, status)| {
                 let proposal = Proposal { height, data };
@@ -462,8 +465,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         let data = proposal.data;
         let proof = proposal_with_proof.proof;
 
-        let rd = self.controller.auth.read().await;
-        let config = rd.get_system_config();
+        let config = {
+            let rd = self.controller.auth.read().await;
+            rd.get_system_config()
+        };
 
         self.controller
             .chain_commit_block(height, &data, &proof)
@@ -547,7 +552,7 @@ use crate::utxo_set::{
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
 use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
-use cloud_util::crypto::{get_block_hash, sign_message};
+use cloud_util::crypto::{get_block_hash, hash_data, sign_message};
 use cloud_util::network::register_network_msg_handler;
 use cloud_util::storage::load_data;
 use genesis::GenesisBlock;
@@ -582,21 +587,24 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
         interval.tick().await;
-        // register endpoint
-        {
-            let request = RegisterInfo {
-                module_name: "controller".to_owned(),
-                hostname: "127.0.0.1".to_owned(),
-                port: grpc_port.clone(),
-            };
 
-            if register_network_msg_handler(network_client(), request).await != StatusCode::Success
-            {
+        // register endpoint
+        let request = RegisterInfo {
+            module_name: "controller".to_owned(),
+            hostname: "127.0.0.1".to_owned(),
+            port: grpc_port.clone(),
+        };
+
+        match register_network_msg_handler(network_client(), request).await {
+            StatusCode::Success => {
                 info!("register network msg handler success!");
                 break;
             }
+            status => warn!(
+                "register network msg handler failed({:?})! Retrying",
+                status
+            ),
         }
-        warn!("register network msg handler failed! Retrying");
     }
 
     let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
@@ -606,14 +614,17 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         {
             if let Ok(crypto_info) = kms_client().get_crypto_info(Request::new(Empty {})).await {
                 let inner = crypto_info.into_inner();
-                if inner.status.is_some()
-                    && StatusCode::from(inner.status.unwrap()).is_success().is_ok()
-                {
-                    config.hash_len = inner.hash_len;
-                    config.signature_len = inner.signature_len;
-                    config.address_len = inner.address_len;
-                    info!("kms({}) is ready!", &inner.name);
-                    break;
+                if inner.status.is_some() {
+                    match StatusCode::from(inner.status.unwrap()) {
+                        StatusCode::Success => {
+                            config.hash_len = inner.hash_len;
+                            config.signature_len = inner.signature_len;
+                            config.address_len = inner.address_len;
+                            info!("kms({}) is ready!", &inner.name);
+                            break;
+                        }
+                        status => warn!("get get_crypto_info failed: {:?}", status),
+                    }
                 }
             }
         }
@@ -740,10 +751,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         StatusCode::EncodeError
                     })
                     .unwrap();
+                let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
                 let signature = sign_message(
                     kms_client(),
                     controller_for_reconnect.config.key_id,
-                    &chain_status_bytes,
+                    &msg_hash,
                 )
                 .await
                 .unwrap();

@@ -35,7 +35,7 @@ use cita_cloud_proto::{
 };
 use cloud_util::clean_0x;
 use cloud_util::common::{get_tx_hash, h160_address_check};
-use cloud_util::crypto::{get_block_hash, sign_message};
+use cloud_util::crypto::{get_block_hash, hash_data, sign_message};
 use cloud_util::storage::load_data;
 use log::warn;
 use prost::Message;
@@ -541,8 +541,9 @@ impl Controller {
                         log::warn!("process_network_msg: encode ChainStatus failed");
                         StatusCode::EncodeError
                     })?;
+                    let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
                     let signature =
-                        sign_message(kms_client(), self.config.key_id, &chain_status_bytes).await?;
+                        sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
 
                     self.unicast_chain_status_init(
                         msg.origin,
@@ -564,8 +565,8 @@ impl Controller {
                     log::warn!("process_network_msg: encode ChainStatus failed");
                     StatusCode::EncodeError
                 })?;
-                let signature =
-                    sign_message(kms_client(), self.config.key_id, &chain_status_bytes).await?;
+                let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
+                let signature = sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
 
                 self.unicast_chain_status_init(
                     msg.origin,

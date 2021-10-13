@@ -15,7 +15,7 @@
 use crate::util::{check_sig, get_compact_block, kms_client};
 use cita_cloud_proto::common::{Address, Hash};
 use cloud_util::common::h160_address_check;
-use cloud_util::crypto::get_block_hash;
+use cloud_util::crypto::{get_block_hash, hash_data};
 use prost::Message;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -94,9 +94,10 @@ impl ChainStatusInit {
             StatusCode::EncodeError
         })?;
 
+        let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
         check_sig(
             &self.signature,
-            &chain_status_bytes,
+            &msg_hash,
             &self
                 .chain_status
                 .as_ref()

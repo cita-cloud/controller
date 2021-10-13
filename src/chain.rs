@@ -87,9 +87,10 @@ impl Chain {
                 interval.tick().await;
                 match self
                     .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
-                    .await {
+                    .await
+                {
                     Ok(()) | Err(StatusCode::ReenterBlock) => break,
-                    _ => warn!("executor not ready! Retrying")
+                    _ => warn!("executor not ready! Retrying"),
                 }
             }
         }
@@ -118,7 +119,14 @@ impl Chain {
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
         if let Some((h, _, block)) = self.own_proposal.clone() {
             let status = {
-                if block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?.body.len() == 0 {
+                if block
+                    .body
+                    .as_ref()
+                    .ok_or(StatusCode::NoneBlockBody)?
+                    .body
+                    .len()
+                    == 0
+                {
                     StatusCode::NoTransaction
                 } else {
                     StatusCode::Success
@@ -197,8 +205,6 @@ impl Chain {
     ) -> Result<(), StatusCode> {
         if self.next_step(global_status).await == ChainStep::SyncStep {
             Err(StatusCode::NodeInSyncMode)
-        } else if self.own_proposal.is_some() {
-            Ok(())
         } else {
             let tx_list = {
                 let mut pool = self.pool.write().await;
@@ -365,6 +371,7 @@ impl Chain {
             let mut auth = self.auth.write().await;
             auth.insert_tx_hash(block_height, tx_hash_list.clone());
         }
+
         // update pool
         {
             let mut pool = self.pool.write().await;
