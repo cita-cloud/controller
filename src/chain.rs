@@ -124,8 +124,7 @@ impl Chain {
                     .as_ref()
                     .ok_or(StatusCode::NoneBlockBody)?
                     .body
-                    .len()
-                    == 0
+                    .is_empty()
                 {
                     StatusCode::NoTransaction
                 } else {
