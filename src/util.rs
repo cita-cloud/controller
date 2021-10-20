@@ -31,7 +31,7 @@ use cita_cloud_proto::blockchain::RawTransaction;
 use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof};
 use cita_cloud_proto::kms::kms_service_client::KmsServiceClient;
 use cloud_util::common::get_tx_hash;
-use cloud_util::crypto::{hash_data, pk2address, recover_signature};
+use cloud_util::crypto::{hash_data, recover_signature};
 use cloud_util::storage::load_data;
 use prost::Message;
 use status_code::StatusCode;
@@ -141,11 +141,7 @@ pub async fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec
         );
         Err(StatusCode::SigLenError)
     } else {
-        pk2address(
-            kms_client(),
-            &recover_signature(kms_client(), signature, tx_hash).await?,
-        )
-        .await
+        recover_signature(kms_client(), signature, tx_hash).await
     }
 }
 

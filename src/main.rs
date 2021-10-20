@@ -178,7 +178,7 @@ impl RpcService for RPCServer {
         &self,
         request: Request<Hash>,
     ) -> Result<Response<CompactBlock>, Status> {
-        debug!("send_raw_transaction request: {:?}", request);
+        debug!("get_block_by_hash request: {:?}", request);
 
         let hash = request.into_inner();
 
