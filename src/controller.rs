@@ -55,6 +55,7 @@ pub enum ControllerMsgType {
     SyncTxType,
     SyncTxRespondType,
     SendTxType,
+    SendTxsType,
     Noop,
 }
 
@@ -70,6 +71,7 @@ impl From<&str> for ControllerMsgType {
             "sync_tx" => Self::SyncTxType,
             "sync_tx_respond" => Self::SyncTxRespondType,
             "send_tx" => Self::SendTxType,
+            "send_txs" => Self::SendTxsType,
             _ => Self::Noop,
         }
     }
@@ -93,6 +95,7 @@ impl From<ControllerMsgType> for &str {
             ControllerMsgType::SyncTxType => "sync_tx",
             ControllerMsgType::SyncTxRespondType => "sync_tx_respond",
             ControllerMsgType::SendTxType => "send_tx",
+            ControllerMsgType::SendTxsType => "send_txs",
             ControllerMsgType::Noop => "noop",
         }
     }
@@ -236,7 +239,11 @@ impl Controller {
         }
     }
 
-    pub async fn batch_transactions(&self, raw_txs: RawTransactions) -> Result<Hashes, StatusCode> {
+    pub async fn batch_transactions(
+        &self,
+        raw_txs: RawTransactions,
+        broadcast: bool,
+    ) -> Result<Hashes, StatusCode> {
         {
             let auth = self.auth.read().await;
             auth.check_transactions(&raw_txs)?;
@@ -255,11 +262,14 @@ impl Controller {
 
         let mut hashes = Vec::new();
         let mut pool = self.pool.write().await;
-        for raw_tx in raw_txs.body {
+        for raw_tx in raw_txs.body.clone() {
             let hash = get_tx_hash(&raw_tx)?.to_vec();
             if pool.enqueue(raw_tx) {
                 hashes.push(Hash { hash })
             }
+        }
+        if broadcast {
+            self.multicast_send_txs(raw_txs).await;
         }
         Ok(Hashes { hashes })
     }
@@ -409,7 +419,7 @@ impl Controller {
                     };
                     if res {
                         let _ = self
-                            .batch_transactions(block.body.ok_or(StatusCode::NoneBlockBody)?)
+                            .batch_transactions(block.body.ok_or(StatusCode::NoneBlockBody)?, false)
                             .await;
 
                         log::info!("chain_check_proposal: finished");
@@ -809,10 +819,22 @@ impl Controller {
                     StatusCode::DecodeError
                 })?;
 
-                self.batch_transactions(RawTransactions {
-                    body: vec![send_tx],
-                })
+                self.batch_transactions(
+                    RawTransactions {
+                        body: vec![send_tx],
+                    },
+                    false,
+                )
                 .await?;
+            }
+
+            ControllerMsgType::SendTxsType => {
+                let body = RawTransactions::decode(msg.msg.as_slice()).map_err(|_| {
+                    warn!("decode {} msg failed", ControllerMsgType::SendTxsType);
+                    StatusCode::DecodeError
+                })?;
+
+                self.batch_transactions(body, false).await?;
             }
 
             ControllerMsgType::Noop => {
@@ -834,6 +856,7 @@ impl Controller {
 
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
+    impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
     // impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
     // impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 

@@ -56,6 +56,8 @@ pub struct ControllerConfig {
     pub origin_node_reconnect_interval: u64,
 
     pub log_file: String,
+
+    pub enable_forward: bool,
 }
 
 impl Default for ControllerConfig {
@@ -77,6 +79,7 @@ impl Default for ControllerConfig {
             server_retry_interval: 3,
             origin_node_reconnect_interval: 3600,
             log_file: "controller-log4rs.yaml".to_string(),
+            enable_forward: true,
         }
     }
 }

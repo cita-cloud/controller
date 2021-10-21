@@ -142,7 +142,7 @@ impl RpcService for RPCServer {
         let raw_tx = request.into_inner();
 
         self.controller
-            .rpc_send_raw_transaction(raw_tx, true)
+            .rpc_send_raw_transaction(raw_tx, self.controller.config.enable_forward)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
@@ -161,9 +161,8 @@ impl RpcService for RPCServer {
 
         let raw_txs = request.into_inner();
 
-        // todo broadcast send_txs
         self.controller
-            .batch_transactions(raw_txs)
+            .batch_transactions(raw_txs, self.controller.config.enable_forward)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
@@ -528,7 +527,10 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
         } else {
             self.controller.process_network_msg(msg).await.map_or_else(
                 |status| {
-                    warn!("rpc: process_network_msg failed: {}", status);
+                    if status != StatusCode::HistoryDupTx || rand::random::<u16>() < 8 {
+                        warn!("rpc: process_network_msg failed: {}", status);
+                    }
+
                     Ok(Response::new(status.into()))
                 },
                 |_| Ok(Response::new(StatusCode::Success.into())),
