@@ -122,11 +122,14 @@ impl SyncManager {
                 wr.insert(height, (remote_address.clone(), block));
             }
         }
-        log::info!(
-            "sync: insert_blocks: heights = {:?} from node(0x{})",
-            heights,
-            hex::encode(&remote_address.address)
-        );
+        if !heights.is_empty() {
+            log::info!(
+                "sync: insert_blocks: heights = {:?} from node(0x{})",
+                heights,
+                hex::encode(&remote_address.address)
+            );
+        }
+
         heights.len()
     }
 

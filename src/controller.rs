@@ -434,7 +434,7 @@ impl Controller {
                     wr.clear_candidate();
                 }
                 self.try_sync_block().await;
-                self.task_sender.send(EventTask::SyncBlock).unwrap();
+                // self.task_sender.send(EventTask::SyncBlock).unwrap();
             }
             _ => {}
         }
@@ -487,7 +487,7 @@ impl Controller {
                     wr.clear_candidate();
                 }
                 self.try_sync_block().await;
-                self.task_sender.send(EventTask::SyncBlock).unwrap();
+                // self.task_sender.send(EventTask::SyncBlock).unwrap();
                 Err(StatusCode::ProposalTooHigh)
             }
             Err(e) => Err(e),
@@ -730,8 +730,14 @@ impl Controller {
                                 .handle_sync_blocks(sync_blocks.clone())
                                 .await
                             {
-                                Ok(n) => {
-                                    if n != 0 {
+                                Ok(_) => {
+                                    if controller_clone
+                                        .sync_manager
+                                        .contains_block(
+                                            controller_clone.get_status().await.height + 1,
+                                        )
+                                        .await
+                                    {
                                         controller_clone
                                             .task_sender
                                             .send(EventTask::SyncBlock)
@@ -917,8 +923,17 @@ impl Controller {
         let old_status = self.get_global_status().await;
         let own_status = self.get_status().await;
         if status.height > old_status.1.height && status.height >= own_status.height {
+            log::info!(
+                "update global status node(0x{}) height({})",
+                hex::encode(&node.address),
+                status.height
+            );
+            let global_height = status.height;
             self.update_global_status(node.to_owned(), status).await;
-            self.try_sync_block().await;
+            if global_height > own_status.height {
+                self.try_sync_block().await;
+            }
+            // todo consider delete this
             if self
                 .sync_manager
                 .contains_block(own_status.height + 1)
@@ -986,7 +1001,8 @@ impl Controller {
             loop {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
-                if global_address.address.is_empty() {
+                if let Err(e) = h160_address_check(Some(&global_address)) {
+                    log::warn!("try_sync_block: global_address error: {:?}", e);
                     return;
                 }
 
@@ -1008,10 +1024,15 @@ impl Controller {
                         {
                             current_height = sync_req.end_height;
                             controller_clone
-                                .unicast_sync_block(origin, sync_req)
+                                .unicast_sync_block(origin, sync_req.clone())
                                 .await
                                 .await
                                 .unwrap();
+                            if sync_req.start_height == sync_req.end_height {
+                                return;
+                            }
+                        } else {
+                            return;
                         }
                     }
                     ChainStep::OnlineStep => {

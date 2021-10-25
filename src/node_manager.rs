@@ -50,6 +50,10 @@ impl ChainStatus {
         h160_address_check(self.address.as_ref())?;
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
+            log::warn!(
+                "ChainStatus check error: {:?}",
+                StatusCode::VersionOrIdCheckError
+            );
             Err(StatusCode::VersionOrIdCheckError)
         } else {
             self.check_hash(own_status).await?;
@@ -63,6 +67,10 @@ impl ChainStatus {
             if get_block_hash(kms_client(), compact_block.header.as_ref()).await?
                 != self.hash.clone().unwrap().hash
             {
+                log::warn!(
+                    "ChainStatus check_hash error: {:?}",
+                    StatusCode::HashCheckError
+                );
                 Err(StatusCode::HashCheckError)
             } else {
                 Ok(())
@@ -104,7 +112,7 @@ impl ChainStatusInit {
                 .ok_or(StatusCode::NoneChainStatus)?
                 .address
                 .as_ref()
-                .ok_or(StatusCode::ProvideAddressError)?
+                .ok_or(StatusCode::NoProvideAddress)?
                 .address,
         )
         .await?;
@@ -438,9 +446,9 @@ impl NodeManager {
         } else if record_origin != Some(origin) {
             let e = StatusCode::AddressOriginCheckError;
             log::warn!(
-                "check_address_origin: node(0x{}) {} ",
+                "check_address_origin: node(0x{}) {:?} ",
                 hex::encode(&node.address),
-                e.to_string()
+                e
             );
             Err(e)
         } else {

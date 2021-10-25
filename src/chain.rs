@@ -579,9 +579,7 @@ impl Chain {
     }
 
     pub async fn next_step(&self, global_status: &ChainStatus) -> ChainStep {
-        if global_status.height > self.block_number
-            && (self.candidates.is_empty() || global_status.height >= self.block_number)
-        {
+        if global_status.height > self.block_number && self.candidates.is_empty() {
             log::debug!("in sync mod");
             ChainStep::SyncStep
         } else {
