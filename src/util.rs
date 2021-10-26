@@ -23,7 +23,7 @@ use cita_cloud_proto::network::{
     network_service_client::NetworkServiceClient, NetworkStatusResponse,
 };
 use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, ExtKey};
-use log::{info, warn};
+use log::warn;
 use tonic::Request;
 
 use crate::config::{controller_config, ControllerConfig};
@@ -232,16 +232,6 @@ pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
         StatusCode::NetworkServerNotReady
     })?;
     Ok(response.into_inner())
-}
-
-pub fn print_main_chain(chain: &[Vec<u8>], block_number: u64) {
-    for (i, hash) in chain.iter().enumerate() {
-        info!(
-            "height: {} hash 0x{}",
-            i as u64 + block_number + 1,
-            hex::encode(&hash)
-        );
-    }
 }
 
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {

@@ -455,8 +455,7 @@ impl Chain {
                 return Err(StatusCode::ProposalCheckError);
             }
 
-            print_main_chain(&[block_hash.clone(); 1], self.block_number);
-
+            info!("height: {} hash 0x{}", height, hex::encode(&block_hash));
             self.finalize_block(full_block, block_hash.clone()).await?;
 
             self.block_number += 1;

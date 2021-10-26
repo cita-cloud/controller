@@ -197,16 +197,20 @@ impl SyncManager {
     ) -> Option<SyncBlockRequest> {
         let current_height = {
             let rd = self.syncing_block_list.read().await;
-            rd.keys().last().map_or_else(
-                || current_height,
-                |&h| {
-                    if h > current_height {
-                        h
-                    } else {
-                        current_height
-                    }
-                },
-            )
+            if rd.contains_key(&current_height) {
+                rd.keys().last().map_or_else(
+                    || current_height,
+                    |&h| {
+                        if h > current_height {
+                            h
+                        } else {
+                            current_height
+                        }
+                    },
+                )
+            } else {
+                current_height
+            }
         };
 
         let end_height = {

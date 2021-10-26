@@ -240,7 +240,7 @@ impl RpcService for RPCServer {
         debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
-            |e| Err(Status::invalid_argument(e)),
+            |e| Err(Status::invalid_argument(e.to_string())),
             |sys_config| {
                 let reply = Response::new(ProtoSystemConfig {
                     version: sys_config.version,

@@ -332,7 +332,7 @@ impl Controller {
         db_get_tx(&tx_hash).await
     }
 
-    pub async fn rpc_get_system_config(&self) -> Result<SystemConfig, String> {
+    pub async fn rpc_get_system_config(&self) -> Result<SystemConfig, StatusCode> {
         let auth = self.auth.read().await;
         let sys_config = auth.get_system_config();
         Ok(sys_config)
@@ -412,10 +412,10 @@ impl Controller {
                             hex::encode(&block_hash)
                         );
                         let mut chain = self.chain.write().await;
-                        chain
-                            .add_remote_proposal(&block_hash, block.clone())
-                            .await?
-                            && !chain.is_own(&block_hash)
+                        !chain.is_own(&block_hash)
+                            && chain
+                                .add_remote_proposal(&block_hash, block.clone())
+                                .await?
                     };
                     if res {
                         let _ = self
@@ -423,6 +423,8 @@ impl Controller {
                             .await;
 
                         log::info!("chain_check_proposal: finished");
+                    } else {
+                        log::info!("the proposal is own");
                     }
                 }
                 None => return Err(StatusCode::NoneProposal),
@@ -460,24 +462,17 @@ impl Controller {
             });
         }
 
-        match {
+        let res = {
             let mut chain = self.chain.write().await;
             chain.commit_block(height, proposal, proof).await
-        } {
+        };
+
+        match res {
             Ok((config, mut status)) => {
                 status.address = Some(self.local_address.clone());
                 self.set_status(status.clone()).await;
                 self.multicast_chain_status(status).await;
-                let (_, global_status) = self.get_global_status().await;
-                match {
-                    let chain = self.chain.read().await;
-                    chain.next_step(&global_status).await
-                } {
-                    ChainStep::SyncStep => {
-                        self.try_sync_block().await;
-                    }
-                    ChainStep::OnlineStep => {}
-                }
+                self.try_sync_block().await;
                 Ok(config)
             }
             Err(StatusCode::ProposalTooHigh) => {
@@ -1012,10 +1007,16 @@ impl Controller {
                     .await
                     .unwrap();
 
-                match {
-                    let chain = controller_clone.chain.read().await;
-                    chain.next_step(&global_status).await
-                } {
+                // try read chain state, if can't get chain default online state
+                let res = {
+                    if let Ok(chain) = controller_clone.chain.try_read() {
+                        chain.next_step(&global_status).await
+                    } else {
+                        ChainStep::OnlineStep
+                    }
+                };
+
+                match res {
                     ChainStep::SyncStep => {
                         if let Some(sync_req) = controller_clone
                             .sync_manager
