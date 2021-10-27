@@ -719,7 +719,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     });
 
-    let (task_sender, mut task_receiver) = mpsc::unbounded_channel();
+    // todo config
+    let (task_sender, mut task_receiver) = mpsc::channel(64);
 
     let controller = Controller::new(
         config.clone(),
@@ -787,6 +788,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             if let Ok(full_block) = get_full_block(compact_block, proof).await {
                                 block_vec.push(full_block);
                             } else {
+                                log::warn!("get full block({}) failed", h);
                                 break;
                             }
                         } else {

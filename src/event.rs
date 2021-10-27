@@ -15,7 +15,6 @@
 use crate::protocol::sync_manager::SyncBlockRequest;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum EventTask {
     // chain status respond
     SyncBlockReq(SyncBlockRequest, u64),

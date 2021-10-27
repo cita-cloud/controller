@@ -121,7 +121,7 @@ pub struct Controller {
 
     pub(crate) sync_manager: SyncManager,
 
-    task_sender: mpsc::UnboundedSender<EventTask>,
+    task_sender: mpsc::Sender<EventTask>,
     // sync state flag
     is_sync: Arc<RwLock<bool>>,
 }
@@ -133,7 +133,7 @@ impl Controller {
         current_block_hash: Vec<u8>,
         sys_config: SystemConfig,
         genesis: GenesisBlock,
-        task_sender: mpsc::UnboundedSender<EventTask>,
+        task_sender: mpsc::Sender<EventTask>,
     ) -> Self {
         let node_address = hex::decode(clean_0x(&config.node_address)).unwrap();
         log::info!("node address: {}", &config.node_address);
@@ -669,6 +669,7 @@ impl Controller {
                 );
                 self.task_sender
                     .send(EventTask::SyncBlockReq(sync_block_request, msg.origin))
+                    .await
                     .unwrap();
             }
 
@@ -688,6 +689,7 @@ impl Controller {
 
                 tokio::spawn(async move {
                     match sync_block_respond.respond {
+                        // todo check origin
                         Some(Respond::MissBlock(node)) => {
                             controller_clone.delete_global_status(&node).await;
                             controller_clone
@@ -713,6 +715,7 @@ impl Controller {
                                         controller_clone
                                             .task_sender
                                             .send(EventTask::SyncBlock)
+                                            .await
                                             .unwrap();
                                     }
                                 }
@@ -911,7 +914,7 @@ impl Controller {
                 .contains_block(own_status.height + 1)
                 .await
             {
-                self.task_sender.send(EventTask::SyncBlock).unwrap();
+                self.task_sender.send(EventTask::SyncBlock).await.unwrap();
             }
 
             return Ok(true);
