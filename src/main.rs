@@ -827,67 +827,69 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     let mut own_status = controller_for_task.get_status().await;
                     // get chain lock means syncing
                     controller_for_task.set_sync_state(true).await;
-
-                    match chain.next_step(&global_status).await {
-                        ChainStep::SyncStep => {
-                            while let Some((addr, block)) = controller_for_task
-                                .sync_manager
-                                .pop_block(own_status.height + 1)
-                                .await
-                            {
-                                chain.clear_candidate();
-                                match chain.process_block(block).await {
-                                    Ok((consensus_config, status)) => {
-                                        // todo reconfigure failed
-                                        reconfigure(consensus_config).await.is_success().unwrap();
-                                        controller_for_task.set_status(status.clone()).await;
-                                        own_status = status;
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "sync block error: {}, node: 0x{} been misbehavior_node",
-                                            e.to_string(),
-                                            hex::encode(&addr.address)
-                                        );
-                                        let _ = controller_for_task
-                                            .node_manager
-                                            .set_misbehavior_node(&addr)
-                                            .await;
-                                        if global_address == addr {
-                                            let (ex_addr, ex_status) =
-                                                controller_for_task.node_manager.pick_node().await;
-                                            controller_for_task
-                                                .update_global_status(ex_addr, ex_status)
-                                                .await;
+                    {
+                        let mut chain = controller_for_task.chain.write().await;
+                        match chain.next_step(&global_status).await {
+                            ChainStep::SyncStep => {
+                                while let Some((addr, block)) = controller_for_task
+                                    .sync_manager
+                                    .pop_block(own_status.height + 1)
+                                    .await
+                                {
+                                    chain.clear_candidate();
+                                    match chain.process_block(block).await {
+                                        Ok((consensus_config, status)) => {
+                                            // todo reconfigure failed
+                                            reconfigure(consensus_config).await.is_success().unwrap();
+                                            controller_for_task.set_status(status.clone()).await;
+                                            own_status = status;
                                         }
-                                        if let Some(range_heights) = controller_for_task
-                                            .sync_manager
-                                            .clear_node_block(&addr, &own_status)
-                                            .await
-                                        {
-                                            let (global_address, global_status) =
-                                                controller_for_task.get_global_status().await;
-                                            if !global_address.address.is_empty() {
-                                                let global_origin = controller_for_task
-                                                    .node_manager
-                                                    .get_origin(&global_address)
-                                                    .await
-                                                    .unwrap();
-                                                for range_height in range_heights {
-                                                    if let Some(reqs) = controller_for_task
-                                                        .sync_manager
-                                                        .re_sync_block_req(
-                                                            range_height,
-                                                            &global_status,
-                                                        )
-                                                    {
-                                                        for req in reqs {
-                                                            controller_for_task
-                                                                .unicast_sync_block(
-                                                                    global_origin,
-                                                                    req,
-                                                                )
-                                                                .await;
+                                        Err(e) => {
+                                            warn!(
+                                                "sync block error: {}, node: 0x{} been misbehavior_node",
+                                                e.to_string(),
+                                                hex::encode(&addr.address)
+                                            );
+                                            let _ = controller_for_task
+                                                .node_manager
+                                                .set_misbehavior_node(&addr)
+                                                .await;
+                                            if global_address == addr {
+                                                let (ex_addr, ex_status) =
+                                                    controller_for_task.node_manager.pick_node().await;
+                                                controller_for_task
+                                                    .update_global_status(ex_addr, ex_status)
+                                                    .await;
+                                            }
+                                            if let Some(range_heights) = controller_for_task
+                                                .sync_manager
+                                                .clear_node_block(&addr, &own_status)
+                                                .await
+                                            {
+                                                let (global_address, global_status) =
+                                                    controller_for_task.get_global_status().await;
+                                                if !global_address.address.is_empty() {
+                                                    let global_origin = controller_for_task
+                                                        .node_manager
+                                                        .get_origin(&global_address)
+                                                        .await
+                                                        .unwrap();
+                                                    for range_height in range_heights {
+                                                        if let Some(reqs) = controller_for_task
+                                                            .sync_manager
+                                                            .re_sync_block_req(
+                                                                range_height,
+                                                                &global_status,
+                                                            )
+                                                        {
+                                                            for req in reqs {
+                                                                controller_for_task
+                                                                    .unicast_sync_block(
+                                                                        global_origin,
+                                                                        req,
+                                                                    )
+                                                                    .await;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -896,10 +898,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                     }
                                 }
                             }
+                            ChainStep::OnlineStep => controller_for_task.sync_manager.clear().await,
                         }
-                        ChainStep::OnlineStep => controller_for_task.sync_manager.clear().await,
                     }
                     controller_for_task.set_sync_state(false).await;
+                    controller_for_task.try_sync_block().await;
                 }
             }
         }
