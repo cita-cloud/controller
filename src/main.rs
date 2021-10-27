@@ -543,18 +543,18 @@ use crate::chain::ChainStep;
 use crate::config::ControllerConfig;
 use crate::controller::Controller;
 use crate::event::EventTask;
-use crate::node_manager::chain_status_respond::Respond;
-use crate::node_manager::{ChainStatusInit, ChainStatusRespond};
+use crate::node_manager::ChainStatusInit;
+use crate::protocol::sync_manager::{SyncBlockRespond, SyncBlocks};
 use crate::util::{
-    get_compact_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
-    storage_client,
+    get_compact_block, get_full_block, init_grpc_client, kms_client, load_data_maybe_empty,
+    reconfigure, storage_client,
 };
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
     LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
 };
 use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
-use cloud_util::crypto::{get_block_hash, hash_data, sign_message};
+use cloud_util::crypto::{hash_data, sign_message};
 use cloud_util::network::register_network_msg_handler;
 use cloud_util::storage::load_data;
 use genesis::GenesisBlock;
@@ -778,89 +778,49 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     tokio::spawn(async move {
         while let Some(event_task) = task_receiver.recv().await {
             match event_task {
-                EventTask::ChainStatusRep(chain_status, origin) => {
-                    let node = chain_status.address.clone().unwrap();
-                    info!(
-                        "send chain status respond to 0x{}",
-                        hex::encode(&node.address)
-                    );
+                EventTask::SyncBlockReq(req, origin) => {
+                    use crate::protocol::sync_manager::sync_block_respond::Respond;
+                    let mut block_vec = Vec::new();
 
-                    let own_status = controller_for_task.get_status().await;
+                    for h in req.start_height..=req.end_height {
+                        if let Ok((compact_block, proof)) = get_compact_block(h).await {
+                            if let Ok(full_block) = get_full_block(compact_block, proof).await {
+                                block_vec.push(full_block);
+                            } else {
+                                break;
+                            }
+                        } else {
+                            log::warn!("handle sync_block error: not get block(h: {})", h);
+                            break;
+                        }
+                    }
 
-                    if own_status.chain_id != chain_status.chain_id
-                        || own_status.version != chain_status.version
-                    {
-                        warn!("chain id or version not identical, send not same chain");
-                        let chain_status_respond = ChainStatusRespond {
-                            respond: Some(Respond::NotSameChain(
+                    if block_vec.len() as u64 != req.end_height - req.start_height + 1 {
+                        let sync_block_respond = SyncBlockRespond {
+                            respond: Some(Respond::MissBlock(
                                 controller_for_task.local_address.clone(),
                             )),
                         };
-
                         controller_for_task
-                            .unicast_chain_status_respond(origin, chain_status_respond)
+                            .unicast_sync_block_respond(origin, sync_block_respond)
                             .await;
-
-                        continue;
+                    } else {
+                        log::info!(
+                            "send sync_block_res: {}-{}",
+                            req.start_height,
+                            req.end_height
+                        );
+                        let sync_block = SyncBlocks {
+                            address: Some(controller_for_task.local_address.clone()),
+                            sync_blocks: block_vec,
+                        };
+                        let sync_block_respond = SyncBlockRespond {
+                            respond: Some(Respond::Ok(sync_block)),
+                        };
+                        controller_for_task
+                            .unicast_sync_block_respond(origin, sync_block_respond)
+                            .await;
                     }
-
-                    if own_status.height >= chain_status.height {
-                        let own_old_compact_block = get_compact_block(chain_status.height)
-                            .await
-                            .map(|t| t.0)
-                            .unwrap();
-
-                        let own_old_block_hash =
-                            get_block_hash(kms_client(), own_old_compact_block.header.as_ref())
-                                .await
-                                .unwrap();
-
-                        if let Some(ext_hash) = chain_status.hash.clone() {
-                            if ext_hash.hash != own_old_block_hash {
-                                warn!("old block hash not identical, send not same chain");
-                                let chain_status_respond = ChainStatusRespond {
-                                    respond: Some(Respond::NotSameChain(
-                                        controller_for_task.local_address.clone(),
-                                    )),
-                                };
-
-                                controller_for_task
-                                    .unicast_chain_status_respond(origin, chain_status_respond)
-                                    .await;
-
-                                continue;
-                            }
-                        }
-                    }
-
-                    controller_for_task
-                        .node_manager
-                        .set_origin(&node, origin)
-                        .await;
-
-                    match controller_for_task
-                        .node_manager
-                        .set_node(&node, chain_status)
-                        .await
-                    {
-                        Ok(_) | Err(StatusCode::EarlyStatus) => {}
-                        Err(e) => {
-                            warn!("{}", e.to_string());
-                            continue;
-                        }
-                    }
-
-                    // let chain_status_respond = ChainStatusRespond {
-                    //     respond: Some(Respond::Ok(own_status)),
-                    // };
-                    //
-                    // controller_clone
-                    //     .unicast_chain_status_respond(
-                    //         controller_clone.network_port,
-                    //         origin,
-                    //         chain_status_respond,
-                    //     )
-                    //     .await;
                 }
                 EventTask::SyncBlock => {
                     log::debug!("receive sync block event");

@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::node_manager::ChainStatus;
+use crate::protocol::sync_manager::SyncBlockRequest;
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum EventTask {
     // chain status respond
-    ChainStatusRep(ChainStatus, u64),
+    SyncBlockReq(SyncBlockRequest, u64),
 
     // multicast sync block request
     SyncBlock,
