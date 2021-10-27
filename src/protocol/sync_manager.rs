@@ -19,7 +19,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const DEFAULT_SYNC_INTERVAL: u64 = 20;
+// todo config
+const DEFAULT_SYNC_INTERVAL: u64 = 10;
 
 #[derive(Clone, Default)]
 pub struct SyncManager {
