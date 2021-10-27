@@ -546,8 +546,8 @@ use crate::event::EventTask;
 use crate::node_manager::ChainStatusInit;
 use crate::protocol::sync_manager::{SyncBlockRespond, SyncBlocks};
 use crate::util::{
-    get_compact_block, get_full_block, init_grpc_client, kms_client, load_data_maybe_empty,
-    reconfigure, storage_client,
+    get_full_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
+    storage_client,
 };
 use crate::utxo_set::{
     SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
@@ -784,13 +784,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     let mut block_vec = Vec::new();
 
                     for h in req.start_height..=req.end_height {
-                        if let Ok((compact_block, proof)) = get_compact_block(h).await {
-                            if let Ok(full_block) = get_full_block(compact_block, proof).await {
-                                block_vec.push(full_block);
-                            } else {
-                                log::warn!("get full block({}) failed", h);
-                                break;
-                            }
+                        if let Ok(block) = get_full_block(h).await {
+                            block_vec.push(block);
                         } else {
                             log::warn!("handle sync_block error: not get block(h: {})", h);
                             break;

@@ -190,23 +190,14 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
     )
 }
 
-pub async fn get_full_block(
-    compact_block: CompactBlock,
-    proof: Vec<u8>,
-) -> Result<Block, StatusCode> {
-    let mut body = Vec::new();
-    if let Some(compact_body) = compact_block.body {
-        for hash in compact_body.tx_hashes {
-            let raw_tx = db_get_tx(&hash).await?;
-            body.push(raw_tx);
-        }
-    }
+pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
+    let height_bytes = height.to_be_bytes().to_vec();
 
-    Ok(Block {
-        version: compact_block.version,
-        header: compact_block.header,
-        body: Some(RawTransactions { body }),
-        proof,
+    let block_bytes = load_data(storage_client(), 11, height_bytes).await?;
+
+    Block::decode(block_bytes.as_slice()).map_err(|_| {
+        warn!("get_full_block: decode Block failed");
+        StatusCode::DecodeError
     })
 }
 
