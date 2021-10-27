@@ -662,37 +662,31 @@ impl Controller {
                         StatusCode::DecodeError
                     })?;
 
-                let controller = self.clone();
-
                 use crate::protocol::sync_manager::sync_block_respond::Respond;
-                tokio::spawn(async move {
-                    let mut block_vec = Vec::new();
+                let mut block_vec = Vec::new();
 
-                    for h in sync_block_request.start_height..=sync_block_request.end_height {
-                        if let Ok((compact_block, proof)) = get_compact_block(h).await {
-                            let full_block = get_full_block(compact_block, proof).await.unwrap();
-                            block_vec.push(full_block);
-                        } else {
-                            let sync_block_respond = SyncBlockRespond {
-                                respond: Some(Respond::MissBlock(controller.local_address.clone())),
-                            };
-                            controller
-                                .unicast_sync_block_respond(msg.origin, sync_block_respond)
-                                .await;
-                        }
+                for h in sync_block_request.start_height..=sync_block_request.end_height {
+                    if let Ok((compact_block, proof)) = get_compact_block(h).await {
+                        let full_block = get_full_block(compact_block, proof).await?;
+                        block_vec.push(full_block);
+                    } else {
+                        let sync_block_respond = SyncBlockRespond {
+                            respond: Some(Respond::MissBlock(self.local_address.clone())),
+                        };
+                        self.unicast_sync_block_respond(msg.origin, sync_block_respond)
+                            .await;
                     }
+                }
 
-                    let sync_block = SyncBlocks {
-                        address: Some(controller.local_address.clone()),
-                        sync_blocks: block_vec,
-                    };
-                    let sync_block_respond = SyncBlockRespond {
-                        respond: Some(Respond::Ok(sync_block)),
-                    };
-                    controller
-                        .unicast_sync_block_respond(msg.origin, sync_block_respond)
-                        .await;
-                });
+                let sync_block = SyncBlocks {
+                    address: Some(self.local_address.clone()),
+                    sync_blocks: block_vec,
+                };
+                let sync_block_respond = SyncBlockRespond {
+                    respond: Some(Respond::Ok(sync_block)),
+                };
+                self.unicast_sync_block_respond(msg.origin, sync_block_respond)
+                    .await;
             }
 
             ControllerMsgType::SyncBlockRespondType => {
