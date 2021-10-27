@@ -821,7 +821,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                 }
                 EventTask::SyncBlock => {
                     log::debug!("receive sync block event");
-                    let mut chain = controller_for_task.chain.write().await;
                     let (global_address, global_status) =
                         controller_for_task.get_global_status().await;
                     let mut own_status = controller_for_task.get_status().await;

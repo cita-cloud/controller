@@ -20,9 +20,7 @@ use crate::node_manager::{
     chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
 };
 use crate::pool::Pool;
-use crate::protocol::sync_manager::{
-    SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
-};
+use crate::protocol::sync_manager::{SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond, MAX_SYNC_REQ};
 use crate::util::*;
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -973,7 +971,7 @@ impl Controller {
         let mut current_height = self.get_status().await.height;
         let controller_clone = self.clone();
         tokio::spawn(async move {
-            loop {
+            for _ in 0..MAX_SYNC_REQ {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
                 if let Err(e) = h160_address_check(Some(&global_address)) {

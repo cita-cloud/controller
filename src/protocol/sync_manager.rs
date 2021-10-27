@@ -21,6 +21,7 @@ use tokio::sync::RwLock;
 
 // todo config
 const DEFAULT_SYNC_INTERVAL: u64 = 10;
+pub const MAX_SYNC_REQ: u64 = 10;
 
 #[derive(Clone, Default)]
 pub struct SyncManager {
@@ -93,12 +94,14 @@ pub mod sync_tx_respond {
 #[derive(Copy, Clone)]
 pub struct SyncConfig {
     sync_interval: u64,
+    max_sync: u64,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             sync_interval: DEFAULT_SYNC_INTERVAL,
+            max_sync: MAX_SYNC_REQ,
         }
     }
 }
@@ -253,7 +256,7 @@ impl SyncManager {
             }
         };
 
-        loop {
+        for _ in 0..self.sync_config.max_sync {
             let start_height = height_range.0;
             let end_height = {
                 if height_range.0 + self.sync_config.sync_interval <= height_range.1 {
