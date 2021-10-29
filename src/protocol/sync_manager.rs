@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::ControllerConfig;
 use crate::node_manager::ChainStatus;
 use cita_cloud_proto::blockchain::Block;
 use cita_cloud_proto::common::Address;
@@ -19,11 +20,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-// todo config
-const DEFAULT_SYNC_INTERVAL: u64 = 10;
-pub const MAX_SYNC_REQ: u64 = 10;
-
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SyncManager {
     syncing_block_list: Arc<RwLock<BTreeMap<u64, (Address, Block)>>>,
 
@@ -94,19 +91,26 @@ pub mod sync_tx_respond {
 #[derive(Copy, Clone)]
 pub struct SyncConfig {
     sync_interval: u64,
-    max_sync: u64,
+    sync_req: u64,
 }
 
-impl Default for SyncConfig {
-    fn default() -> Self {
+impl SyncConfig {
+    fn new(config: &ControllerConfig) -> Self {
         Self {
-            sync_interval: DEFAULT_SYNC_INTERVAL,
-            max_sync: MAX_SYNC_REQ,
+            sync_interval: config.sync_interval,
+            sync_req: config.sync_req,
         }
     }
 }
 
 impl SyncManager {
+    pub fn new(config: &ControllerConfig) -> Self {
+        Self {
+            syncing_block_list: Arc::new(RwLock::new(BTreeMap::new())),
+            sync_config: SyncConfig::new(config),
+        }
+    }
+
     pub async fn insert_blocks(
         &self,
         remote_address: Address,
@@ -201,17 +205,8 @@ impl SyncManager {
     ) -> Option<SyncBlockRequest> {
         let current_height = {
             let rd = self.syncing_block_list.read().await;
-            if rd.contains_key(&current_height) {
-                rd.keys().last().map_or_else(
-                    || current_height,
-                    |&h| {
-                        if h > current_height {
-                            h
-                        } else {
-                            current_height
-                        }
-                    },
-                )
+            if rd.contains_key(&(current_height + 1)) {
+                return None;
             } else {
                 current_height
             }
@@ -256,7 +251,7 @@ impl SyncManager {
             }
         };
 
-        for _ in 0..self.sync_config.max_sync {
+        for _ in 0..self.sync_config.sync_req {
             let start_height = height_range.0;
             let end_height = {
                 if height_range.0 + self.sync_config.sync_interval <= height_range.1 {

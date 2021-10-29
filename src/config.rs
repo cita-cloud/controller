@@ -58,6 +58,10 @@ pub struct ControllerConfig {
     pub log_file: String,
 
     pub enable_forward: bool,
+
+    pub sync_interval: u64,
+
+    pub sync_req: u64,
 }
 
 impl Default for ControllerConfig {
@@ -80,6 +84,8 @@ impl Default for ControllerConfig {
             origin_node_reconnect_interval: 3600,
             log_file: "controller-log4rs.yaml".to_string(),
             enable_forward: true,
+            sync_interval: 10,
+            sync_req: 10,
         }
     }
 }

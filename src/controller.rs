@@ -20,7 +20,9 @@ use crate::node_manager::{
     chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
 };
 use crate::pool::Pool;
-use crate::protocol::sync_manager::{SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond, MAX_SYNC_REQ};
+use crate::protocol::sync_manager::{
+    SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
+};
 use crate::util::*;
 use crate::utxo_set::SystemConfig;
 use crate::GenesisBlock;
@@ -167,6 +169,9 @@ impl Controller {
         )));
 
         Controller {
+            sync_manager: SyncManager::new(&config),
+            node_manager: NodeManager::default(),
+
             config,
             auth,
             pool,
@@ -181,8 +186,6 @@ impl Controller {
                 },
                 ChainStatus::default(),
             ))),
-            node_manager: NodeManager::default(),
-            sync_manager: SyncManager::default(),
             task_sender,
             is_sync: Arc::new(RwLock::new(false)),
         }
@@ -971,7 +974,7 @@ impl Controller {
         let mut current_height = self.get_status().await.height;
         let controller_clone = self.clone();
         tokio::spawn(async move {
-            for _ in 0..MAX_SYNC_REQ {
+            for _ in 0..controller_clone.config.sync_req {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
                 if let Err(e) = h160_address_check(Some(&global_address)) {

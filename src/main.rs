@@ -839,7 +839,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                     match chain.process_block(block).await {
                                         Ok((consensus_config, status)) => {
                                             // todo reconfigure failed
-                                            reconfigure(consensus_config).await.is_success().unwrap();
+                                            reconfigure(consensus_config)
+                                                .await
+                                                .is_success()
+                                                .unwrap();
                                             controller_for_task.set_status(status.clone()).await;
                                             own_status = status;
                                         }
@@ -854,8 +857,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                 .set_misbehavior_node(&addr)
                                                 .await;
                                             if global_address == addr {
-                                                let (ex_addr, ex_status) =
-                                                    controller_for_task.node_manager.pick_node().await;
+                                                let (ex_addr, ex_status) = controller_for_task
+                                                    .node_manager
+                                                    .pick_node()
+                                                    .await;
                                                 controller_for_task
                                                     .update_global_status(ex_addr, ex_status)
                                                     .await;
