@@ -40,6 +40,7 @@ use tokio::time;
 pub enum ChainStep {
     SyncStep,
     OnlineStep,
+    BusyState,
 }
 
 #[allow(dead_code)]

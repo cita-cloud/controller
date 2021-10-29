@@ -85,7 +85,7 @@ impl Default for ControllerConfig {
             log_file: "controller-log4rs.yaml".to_string(),
             enable_forward: true,
             sync_interval: 10,
-            sync_req: 10,
+            sync_req: 5,
         }
     }
 }

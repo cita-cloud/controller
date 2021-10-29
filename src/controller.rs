@@ -947,7 +947,11 @@ impl Controller {
         rd.clone()
     }
 
-    pub async fn set_status(&self, status: ChainStatus) {
+    pub async fn set_status(&self, mut status: ChainStatus) {
+        if h160_address_check(status.address.as_ref()).is_err() {
+            status.address = Some(self.local_address.clone())
+        }
+
         let mut wr = self.current_status.write().await;
         *wr = status;
     }
@@ -967,7 +971,9 @@ impl Controller {
     }
 
     pub async fn try_sync_block(&self) {
-        if self.get_sync_state().await {
+        let (_, global_status) = self.get_global_status().await;
+        // sync mode will return exclude global_height % 100 == 0
+        if self.get_sync_state().await && global_status.height % 100 != 0 {
             return;
         }
 
@@ -993,7 +999,7 @@ impl Controller {
                     if let Ok(chain) = controller_clone.chain.try_read() {
                         chain.next_step(&global_status).await
                     } else {
-                        ChainStep::OnlineStep
+                        ChainStep::BusyState
                     }
                 };
 
@@ -1018,12 +1024,65 @@ impl Controller {
                         }
                     }
                     ChainStep::OnlineStep => {
+                        controller_clone.set_sync_state(false).await;
                         controller_clone.sync_manager.clear().await;
                         return;
                     }
+                    ChainStep::BusyState => return,
                 }
             }
         });
+    }
+
+    pub async fn sync_block(&self) -> Result<(), StatusCode> {
+        let mut current_height = self.get_status().await.height;
+        for _ in 0..self.config.sync_req {
+            let (global_address, global_status) = self.get_global_status().await;
+
+            if let Err(e) = h160_address_check(Some(&global_address)) {
+                log::warn!("try_sync_block: global_address error: {:?}", e);
+                return Err(e);
+            }
+
+            let origin = self.node_manager.get_origin(&global_address).await.unwrap();
+
+            // try read chain state, if can't get chain default online state
+            let res = {
+                if let Ok(chain) = self.chain.try_read() {
+                    chain.next_step(&global_status).await
+                } else {
+                    ChainStep::BusyState
+                }
+            };
+
+            match res {
+                ChainStep::SyncStep => {
+                    if let Some(sync_req) = self
+                        .sync_manager
+                        .get_sync_block_req(current_height, &global_status)
+                        .await
+                    {
+                        current_height = sync_req.end_height;
+                        self.unicast_sync_block(origin, sync_req.clone())
+                            .await
+                            .await
+                            .unwrap();
+                        if sync_req.start_height == sync_req.end_height {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                ChainStep::OnlineStep => {
+                    self.set_sync_state(false).await;
+                    self.sync_manager.clear().await;
+                    break;
+                }
+                ChainStep::BusyState => break,
+            }
+        }
+        Ok(())
     }
 
     pub async fn get_sync_state(&self) -> bool {

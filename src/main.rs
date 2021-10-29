@@ -525,10 +525,11 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
         if msg.module != "controller" {
             Ok(Response::new(StatusCode::ModuleNotController.into()))
         } else {
+            let msg_type = msg.r#type.clone();
             self.controller.process_network_msg(msg).await.map_or_else(
                 |status| {
                     if status != StatusCode::HistoryDupTx || rand::random::<u16>() < 8 {
-                        warn!("rpc: process_network_msg failed: {}", status);
+                        warn!("rpc: process_network_msg({}) failed: {}", msg_type, status);
                     }
 
                     Ok(Response::new(status.into()))
@@ -837,12 +838,13 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                 {
                                     chain.clear_candidate();
                                     match chain.process_block(block).await {
-                                        Ok((consensus_config, status)) => {
+                                        Ok((consensus_config, mut status)) => {
                                             // todo reconfigure failed
                                             reconfigure(consensus_config)
                                                 .await
                                                 .is_success()
                                                 .unwrap();
+                                            status.address = Some(controller_for_task.local_address.clone());
                                             controller_for_task.set_status(status.clone()).await;
                                             own_status = status;
                                         }
@@ -902,11 +904,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                     }
                                 }
                             }
-                            ChainStep::OnlineStep => controller_for_task.sync_manager.clear().await,
+                            ChainStep::OnlineStep => {
+                                controller_for_task.set_sync_state(false).await;
+                                controller_for_task.sync_manager.clear().await;
+                            }
+                            ChainStep::BusyState => unreachable!(),
                         }
                     }
-                    controller_for_task.set_sync_state(false).await;
-                    controller_for_task.try_sync_block().await;
+                    controller_for_task.sync_block().await.unwrap();
                 }
             }
         }
