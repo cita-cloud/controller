@@ -10,7 +10,8 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 log4rs = { version = "1.0", features = ["gzip"] }
-clap = "3.0.0-beta.2"
+clap = "=3.0.0-beta.4"
+clap_derive = "=3.0.0-beta.4"
 git-version = "0.3.5"
 tonic = "0.5"
 prost = "0.8"
@@ -29,9 +30,9 @@ bincode = "1.3.3"
 libsm = "0.4"
 efficient-sm2 = "0.1"
 
-cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto", branch = "wip-7.0.0-dev" }
-status_code = { git = "https://github.com/cita-cloud/status_code" }
+cloud-util = "0.1"
+cita_cloud_proto = "=6.3.0"
+status_code = { package = "cloud-code", version = "0.1" }
 
 [build-dependencies]
 tonic-build = "0.5"

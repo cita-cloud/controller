@@ -844,7 +844,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                 .await
                                                 .is_success()
                                                 .unwrap();
-                                            status.address = Some(controller_for_task.local_address.clone());
+                                            status.address =
+                                                Some(controller_for_task.local_address.clone());
                                             controller_for_task.set_status(status.clone()).await;
                                             own_status = status;
                                         }
