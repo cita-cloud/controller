@@ -12,32 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::blockchain::{Block, CompactBlock, RawTransactions};
-use cita_cloud_proto::consensus::consensus_service_client::ConsensusServiceClient;
-use cita_cloud_proto::executor::executor_service_client::ExecutorServiceClient;
-// use cita_cloud_proto::kms::{
-//     kms_service_client::KmsServiceClient, HashDataRequest, RecoverSignatureRequest,
-//     VerifyDataHashRequest,
-// };
-use cita_cloud_proto::network::{
-    network_service_client::NetworkServiceClient, NetworkStatusResponse,
-};
-use cita_cloud_proto::storage::{storage_service_client::StorageServiceClient, ExtKey};
-use log::warn;
-use tonic::Request;
-
 use crate::config::{controller_config, ControllerConfig};
-use cita_cloud_proto::blockchain::RawTransaction;
-use cita_cloud_proto::common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof};
-use cita_cloud_proto::kms::kms_service_client::KmsServiceClient;
-use cloud_util::common::get_tx_hash;
-use cloud_util::crypto::{hash_data, recover_signature};
-use cloud_util::storage::load_data;
+use cita_cloud_proto::{
+    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
+    common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
+    consensus::consensus_service_client::ConsensusServiceClient,
+    executor::executor_service_client::ExecutorServiceClient,
+    kms::kms_service_client::KmsServiceClient,
+    network::{network_service_client::NetworkServiceClient, NetworkStatusResponse},
+    storage::{storage_service_client::StorageServiceClient, ExtKey},
+};
+use cloud_util::{
+    common::get_tx_hash,
+    crypto::{hash_data, recover_signature},
+    storage::load_data,
+};
+use log::warn;
 use prost::Message;
 use status_code::StatusCode;
 use tokio::sync::OnceCell;
-use tonic::transport::Channel;
-use tonic::transport::Endpoint;
+use tonic::{
+    transport::{Channel, Endpoint},
+    Request,
+};
 
 pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCell::const_new();
 pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();

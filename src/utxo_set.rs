@@ -13,8 +13,7 @@
 // limitations under the License.
 
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
-use cloud_util::clean_0x;
-use cloud_util::common::read_toml;
+use cloud_util::{clean_0x, common::read_toml};
 use log::warn;
 use serde_derive::Deserialize;
 use std::collections::HashMap;

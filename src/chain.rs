@@ -12,29 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::Authentication;
-use crate::node_manager::ChainStatus;
-use crate::pool::Pool;
-use crate::util::*;
-use crate::utxo_set::SystemConfig;
-use crate::GenesisBlock;
-use cita_cloud_proto::blockchain::raw_transaction::Tx;
-use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransaction, RawTransactions};
-use cita_cloud_proto::common::{
-    proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum,
+use crate::{
+    auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
+    GenesisBlock,
 };
-use cloud_util::common::get_tx_hash;
-use cloud_util::crypto::{get_block_hash, hash_data};
-use cloud_util::storage::{load_data, store_data};
-use cloud_util::unix_now;
+use cita_cloud_proto::{
+    blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
+    common::{proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum},
+};
+use cloud_util::{
+    common::get_tx_hash,
+    crypto::{get_block_hash, hash_data},
+    storage::{load_data, store_data},
+    unix_now,
+};
 use log::{info, warn};
 use prost::Message;
 use status_code::StatusCode;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::RwLock;
-use tokio::time;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{sync::RwLock, time};
 
 #[derive(PartialEq)]
 pub enum ChainStep {

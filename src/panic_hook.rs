@@ -14,9 +14,10 @@
 
 use backtrace::Backtrace;
 use log::error;
-use std::panic::{self, PanicInfo};
-use std::process;
-use std::thread;
+use std::{
+    panic::{self, PanicInfo},
+    process, thread,
+};
 
 /// Set the panic hook
 pub fn set_panic_handler() {

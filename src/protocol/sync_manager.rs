@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::ControllerConfig;
-use crate::node_manager::ChainStatus;
-use cita_cloud_proto::blockchain::Block;
-use cita_cloud_proto::common::Address;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use crate::{config::ControllerConfig, node_manager::ChainStatus};
+use cita_cloud_proto::{blockchain::Block, common::Address};
+use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
 
 #[derive(Clone)]

@@ -12,38 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::Authentication;
-use crate::chain::{Chain, ChainStep};
-use crate::config::ControllerConfig;
-use crate::event::EventTask;
-use crate::node_manager::{
-    chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
+use crate::{
+    auth::Authentication,
+    chain::{Chain, ChainStep},
+    config::ControllerConfig,
+    event::EventTask,
+    node_manager::{
+        chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond,
+        NodeManager,
+    },
+    pool::Pool,
+    protocol::sync_manager::{
+        SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
+    },
+    util::*,
+    utxo_set::SystemConfig,
+    GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
 };
-use crate::pool::Pool;
-use crate::protocol::sync_manager::{
-    SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
-};
-use crate::util::*;
-use crate::utxo_set::SystemConfig;
-use crate::GenesisBlock;
-use crate::{impl_broadcast, impl_multicast, impl_unicast};
-use cita_cloud_proto::common::{Empty, Hashes, NodeInfo, NodeNetInfo, TotalNodeInfo};
 use cita_cloud_proto::{
     blockchain::{CompactBlock, RawTransaction, RawTransactions},
-    common::{proposal_enum::Proposal, Address, ConsensusConfiguration, Hash, ProposalEnum},
+    common::{
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
+        NodeNetInfo, ProposalEnum, TotalNodeInfo,
+    },
     network::NetworkMsg,
 };
-use cloud_util::clean_0x;
-use cloud_util::common::{get_tx_hash, h160_address_check};
-use cloud_util::crypto::{get_block_hash, hash_data, sign_message};
-use cloud_util::storage::load_data;
+use cloud_util::{
+    clean_0x,
+    common::{get_tx_hash, h160_address_check},
+    crypto::{get_block_hash, hash_data, sign_message},
+    storage::load_data,
+};
 use log::warn;
 use prost::Message;
 use status_code::StatusCode;
-use std::sync::Arc;
-use std::thread::sleep;
-use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, RwLock},
+    time::sleep,
+};
 use tonic::{Request, Response};
 
 #[derive(Debug)]
@@ -358,7 +365,8 @@ impl Controller {
             tokio::spawn(async move {
                 sleep(Duration::from_secs(
                     controller_for_add.config.server_retry_interval,
-                ));
+                ))
+                .await;
                 controller_for_add
                     .task_sender
                     .send(EventTask::BroadCastCSI)
