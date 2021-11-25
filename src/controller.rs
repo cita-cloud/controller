@@ -41,6 +41,8 @@ use log::warn;
 use prost::Message;
 use status_code::StatusCode;
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tonic::{Request, Response};
 
@@ -121,7 +123,7 @@ pub struct Controller {
 
     pub(crate) sync_manager: SyncManager,
 
-    task_sender: mpsc::Sender<EventTask>,
+    pub(crate) task_sender: mpsc::Sender<EventTask>,
     // sync state flag
     is_sync: Arc<RwLock<bool>>,
 }
@@ -343,10 +345,25 @@ impl Controller {
         &self,
         request: Request<NodeNetInfo>,
     ) -> Response<cita_cloud_proto::common::StatusCode> {
-        network_client().add_node(request).await.map_or_else(
-            |_| Response::new(StatusCode::NetworkServerNotReady.into()),
-            |res| res,
-        )
+        let res = network_client()
+            .add_node(request)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("rpc_add_node failed: {}", e.to_string());
+                Response::new(StatusCode::NetworkServerNotReady.into())
+            });
+
+        let controller_for_add = self.clone();
+        if StatusCode::from(res.get_ref().code).is_success().is_ok() {
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(controller_for_add.config.server_retry_interval));
+                controller_for_add.task_sender
+                    .send(EventTask::BroadCastCSI)
+                    .await
+                    .unwrap();
+            });
+        }
+        res
     }
 
     pub async fn rpc_get_peers_info(
@@ -378,6 +395,10 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
+        if self.get_sync_state().await {
+            return Err(StatusCode::NodeInSyncMode);
+        }
+
         let mut chain = self.chain.write().await;
         chain
             .add_proposal(
@@ -1046,13 +1067,9 @@ impl Controller {
 
             let origin = self.node_manager.get_origin(&global_address).await.unwrap();
 
-            // try read chain state, if can't get chain default online state
             let res = {
-                if let Ok(chain) = self.chain.try_read() {
-                    chain.next_step(&global_status).await
-                } else {
-                    ChainStep::BusyState
-                }
+                let chain = self.chain.read().await;
+                chain.next_step(&global_status).await
             };
 
             match res {
@@ -1079,7 +1096,7 @@ impl Controller {
                     self.sync_manager.clear().await;
                     break;
                 }
-                ChainStep::BusyState => break,
+                ChainStep::BusyState => unreachable!(),
             }
         }
         Ok(())

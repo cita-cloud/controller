@@ -745,31 +745,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         loop {
             interval.tick().await;
             {
-                let status = controller_for_reconnect.get_status().await;
-
-                let mut chain_status_bytes = Vec::new();
-                status
-                    .encode(&mut chain_status_bytes)
-                    .map_err(|_| {
-                        log::warn!("process_network_msg: encode ChainStatus failed");
-                        StatusCode::EncodeError
-                    })
-                    .unwrap();
-                let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
-                let signature = sign_message(
-                    kms_client(),
-                    controller_for_reconnect.config.key_id,
-                    &msg_hash,
-                )
-                .await
-                .unwrap();
-
                 controller_for_reconnect
-                    .broadcast_chain_status_init(ChainStatusInit {
-                        chain_status: Some(status),
-                        signature,
-                    })
-                    .await
+                    .task_sender
+                    .send(EventTask::BroadCastCSI)
                     .await
                     .unwrap();
             }
@@ -913,6 +891,33 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         }
                     }
                     controller_for_task.sync_block().await.unwrap();
+                }
+                EventTask::BroadCastCSI => {
+                    log::info!("receive BroadCastCSI event task");
+                    let status = controller_for_task.get_status().await;
+
+                    let mut chain_status_bytes = Vec::new();
+                    status
+                        .encode(&mut chain_status_bytes)
+                        .map_err(|_| {
+                            log::warn!("process_network_msg: encode ChainStatus failed");
+                            StatusCode::EncodeError
+                        })
+                        .unwrap();
+                    let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
+                    let signature =
+                        sign_message(kms_client(), controller_for_task.config.key_id, &msg_hash)
+                            .await
+                            .unwrap();
+
+                    controller_for_task
+                        .broadcast_chain_status_init(ChainStatusInit {
+                            chain_status: Some(status),
+                            signature,
+                        })
+                        .await
+                        .await
+                        .unwrap();
                 }
             }
         }
