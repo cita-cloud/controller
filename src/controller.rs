@@ -356,8 +356,11 @@ impl Controller {
         let controller_for_add = self.clone();
         if StatusCode::from(res.get_ref().code).is_success().is_ok() {
             tokio::spawn(async move {
-                sleep(Duration::from_secs(controller_for_add.config.server_retry_interval));
-                controller_for_add.task_sender
+                sleep(Duration::from_secs(
+                    controller_for_add.config.server_retry_interval,
+                ));
+                controller_for_add
+                    .task_sender
                     .send(EventTask::BroadCastCSI)
                     .await
                     .unwrap();
