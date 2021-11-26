@@ -26,10 +26,51 @@ mod util;
 mod event;
 mod utxo_set;
 
-use crate::panic_hook::set_panic_handler;
+use crate::{
+    chain::ChainStep,
+    config::ControllerConfig,
+    controller::Controller,
+    event::EventTask,
+    node_manager::ChainStatusInit,
+    panic_hook::set_panic_handler,
+    protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
+    util::{
+        get_full_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
+        storage_client,
+    },
+    utxo_set::{
+        SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
+        LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
+    },
+};
+use cita_cloud_proto::{
+    blockchain::{raw_transaction::Tx::UtxoTx, CompactBlock, RawTransaction, RawTransactions},
+    common::{
+        ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
+        Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
+    },
+    controller::SystemConfig,
+    controller::{
+        rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
+        PeerCount, SoftwareVersion, TransactionIndex,
+    },
+    network::RegisterInfo,
+};
 use clap::Clap;
+use cloud_util::{
+    crypto::{hash_data, sign_message},
+    network::register_network_msg_handler,
+    storage::load_data,
+};
+use genesis::GenesisBlock;
 use git_version::git_version;
 use log::{debug, info, warn};
+use prost::Message;
+use status_code::StatusCode;
+use std::net::AddrParseError;
+use std::time::Duration;
+use tokio::{sync::mpsc, time};
+use tonic::{transport::Server, Request, Response, Status};
 
 const GIT_VERSION: &str = git_version!(
     args = ["--tags", "--always", "--dirty=-modified"],
@@ -86,20 +127,6 @@ fn main() {
         }
     }
 }
-
-use cita_cloud_proto::network::RegisterInfo;
-
-use cita_cloud_proto::blockchain::{CompactBlock, RawTransaction, RawTransactions};
-use cita_cloud_proto::common::{
-    ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
-    Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
-};
-use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
-use cita_cloud_proto::controller::{
-    rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-    PeerCount, SoftwareVersion, TransactionIndex,
-};
-use tonic::{transport::Server, Request, Response, Status};
 
 // grpc server of RPC
 pub struct RPCServer {
@@ -236,13 +263,13 @@ impl RpcService for RPCServer {
     async fn get_system_config(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<ProtoSystemConfig>, Status> {
+    ) -> Result<Response<SystemConfig>, Status> {
         debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
             |e| Err(Status::invalid_argument(e.to_string())),
             |sys_config| {
-                let reply = Response::new(ProtoSystemConfig {
+                let reply = Response::new(SystemConfig {
                     version: sys_config.version,
                     chain_id: sys_config.chain_id,
                     admin: sys_config.admin,
@@ -291,7 +318,7 @@ impl RpcService for RPCServer {
     ) -> Result<Response<SoftwareVersion>, Status> {
         debug!("get_version request: {:?}", request);
         let reply = Response::new(SoftwareVersion {
-            version: "6.2.0".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
         });
         Ok(reply)
     }
@@ -540,32 +567,6 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
     }
 }
 
-use crate::chain::ChainStep;
-use crate::config::ControllerConfig;
-use crate::controller::Controller;
-use crate::event::EventTask;
-use crate::node_manager::ChainStatusInit;
-use crate::protocol::sync_manager::{SyncBlockRespond, SyncBlocks};
-use crate::util::{
-    get_full_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
-    storage_client,
-};
-use crate::utxo_set::{
-    SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
-    LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
-};
-use cita_cloud_proto::blockchain::raw_transaction::Tx::UtxoTx;
-use cloud_util::crypto::{hash_data, sign_message};
-use cloud_util::network::register_network_msg_handler;
-use cloud_util::storage::load_data;
-use genesis::GenesisBlock;
-use prost::Message;
-use status_code::StatusCode;
-use std::net::AddrParseError;
-use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::time;
-
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     // read consensus-config.toml
@@ -745,31 +746,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         loop {
             interval.tick().await;
             {
-                let status = controller_for_reconnect.get_status().await;
-
-                let mut chain_status_bytes = Vec::new();
-                status
-                    .encode(&mut chain_status_bytes)
-                    .map_err(|_| {
-                        log::warn!("process_network_msg: encode ChainStatus failed");
-                        StatusCode::EncodeError
-                    })
-                    .unwrap();
-                let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
-                let signature = sign_message(
-                    kms_client(),
-                    controller_for_reconnect.config.key_id,
-                    &msg_hash,
-                )
-                .await
-                .unwrap();
-
                 controller_for_reconnect
-                    .broadcast_chain_status_init(ChainStatusInit {
-                        chain_status: Some(status),
-                        signature,
-                    })
-                    .await
+                    .task_sender
+                    .send(EventTask::BroadCastCSI)
                     .await
                     .unwrap();
             }
@@ -913,6 +892,33 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         }
                     }
                     controller_for_task.sync_block().await.unwrap();
+                }
+                EventTask::BroadCastCSI => {
+                    log::info!("receive BroadCastCSI event task");
+                    let status = controller_for_task.get_status().await;
+
+                    let mut chain_status_bytes = Vec::new();
+                    status
+                        .encode(&mut chain_status_bytes)
+                        .map_err(|_| {
+                            log::warn!("process_network_msg: encode ChainStatus failed");
+                            StatusCode::EncodeError
+                        })
+                        .unwrap();
+                    let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
+                    let signature =
+                        sign_message(kms_client(), controller_for_task.config.key_id, &msg_hash)
+                            .await
+                            .unwrap();
+
+                    controller_for_task
+                        .broadcast_chain_status_init(ChainStatusInit {
+                            chain_status: Some(status),
+                            signature,
+                        })
+                        .await
+                        .await
+                        .unwrap();
                 }
             }
         }

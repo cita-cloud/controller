@@ -14,9 +14,7 @@
 
 use crate::util::kms_client;
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
-use cloud_util::clean_0x;
-use cloud_util::common::read_toml;
-use cloud_util::crypto::hash_data;
+use cloud_util::{clean_0x, common::read_toml, crypto::hash_data};
 use prost::Message;
 use serde_derive::Deserialize;
 

@@ -18,7 +18,8 @@ use crate::protocol::sync_manager::SyncBlockRequest;
 pub enum EventTask {
     // chain status respond
     SyncBlockReq(SyncBlockRequest, u64),
-
     // multicast sync block request
     SyncBlock,
+    // broadcast chain status init
+    BroadCastCSI,
 }

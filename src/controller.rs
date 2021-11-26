@@ -12,36 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::Authentication;
-use crate::chain::{Chain, ChainStep};
-use crate::config::ControllerConfig;
-use crate::event::EventTask;
-use crate::node_manager::{
-    chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond, NodeManager,
+use crate::{
+    auth::Authentication,
+    chain::{Chain, ChainStep},
+    config::ControllerConfig,
+    event::EventTask,
+    node_manager::{
+        chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond,
+        NodeManager,
+    },
+    pool::Pool,
+    protocol::sync_manager::{
+        SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
+    },
+    util::*,
+    utxo_set::SystemConfig,
+    GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
 };
-use crate::pool::Pool;
-use crate::protocol::sync_manager::{
-    SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
-};
-use crate::util::*;
-use crate::utxo_set::SystemConfig;
-use crate::GenesisBlock;
-use crate::{impl_broadcast, impl_multicast, impl_unicast};
-use cita_cloud_proto::common::{Empty, Hashes, NodeInfo, NodeNetInfo, TotalNodeInfo};
 use cita_cloud_proto::{
     blockchain::{CompactBlock, RawTransaction, RawTransactions},
-    common::{proposal_enum::Proposal, Address, ConsensusConfiguration, Hash, ProposalEnum},
+    common::{
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
+        NodeNetInfo, ProposalEnum, TotalNodeInfo,
+    },
     network::NetworkMsg,
 };
-use cloud_util::clean_0x;
-use cloud_util::common::{get_tx_hash, h160_address_check};
-use cloud_util::crypto::{get_block_hash, hash_data, sign_message};
-use cloud_util::storage::load_data;
+use cloud_util::{
+    clean_0x,
+    common::{get_tx_hash, h160_address_check},
+    crypto::{get_block_hash, hash_data, sign_message},
+    storage::load_data,
+};
 use log::warn;
 use prost::Message;
 use status_code::StatusCode;
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, RwLock},
+    time::sleep,
+};
 use tonic::{Request, Response};
 
 #[derive(Debug)]
@@ -121,7 +130,7 @@ pub struct Controller {
 
     pub(crate) sync_manager: SyncManager,
 
-    task_sender: mpsc::Sender<EventTask>,
+    pub(crate) task_sender: mpsc::Sender<EventTask>,
     // sync state flag
     is_sync: Arc<RwLock<bool>>,
 }
@@ -343,10 +352,29 @@ impl Controller {
         &self,
         request: Request<NodeNetInfo>,
     ) -> Response<cita_cloud_proto::common::StatusCode> {
-        network_client().add_node(request).await.map_or_else(
-            |_| Response::new(StatusCode::NetworkServerNotReady.into()),
-            |res| res,
-        )
+        let res = network_client()
+            .add_node(request)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("rpc_add_node failed: {}", e.to_string());
+                Response::new(StatusCode::NetworkServerNotReady.into())
+            });
+
+        let controller_for_add = self.clone();
+        if StatusCode::from(res.get_ref().code).is_success().is_ok() {
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(
+                    controller_for_add.config.server_retry_interval,
+                ))
+                .await;
+                controller_for_add
+                    .task_sender
+                    .send(EventTask::BroadCastCSI)
+                    .await
+                    .unwrap();
+            });
+        }
+        res
     }
 
     pub async fn rpc_get_peers_info(
@@ -378,6 +406,10 @@ impl Controller {
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
+        if self.get_sync_state().await {
+            return Err(StatusCode::NodeInSyncMode);
+        }
+
         let mut chain = self.chain.write().await;
         chain
             .add_proposal(
@@ -1046,13 +1078,9 @@ impl Controller {
 
             let origin = self.node_manager.get_origin(&global_address).await.unwrap();
 
-            // try read chain state, if can't get chain default online state
             let res = {
-                if let Ok(chain) = self.chain.try_read() {
-                    chain.next_step(&global_status).await
-                } else {
-                    ChainStep::BusyState
-                }
+                let chain = self.chain.read().await;
+                chain.next_step(&global_status).await
             };
 
             match res {
@@ -1079,7 +1107,7 @@ impl Controller {
                     self.sync_manager.clear().await;
                     break;
                 }
-                ChainStep::BusyState => break,
+                ChainStep::BusyState => unreachable!(),
             }
         }
         Ok(())

@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{get_compact_block, verify_tx_hash, verify_tx_signature};
-use crate::utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION};
-use cita_cloud_proto::blockchain::raw_transaction::Tx::{NormalTx, UtxoTx};
+use crate::{
+    util::{get_compact_block, verify_tx_hash, verify_tx_signature},
+    utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
+};
 use cita_cloud_proto::blockchain::{
+    raw_transaction::Tx::{NormalTx, UtxoTx},
     RawTransaction, RawTransactions, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
 };
 use prost::Message;
 use status_code::StatusCode;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::iter::FromIterator;
+use std::{
+    collections::{HashMap, HashSet},
+    iter::FromIterator,
+};
 
 #[derive(Clone)]
 pub struct Authentication {
