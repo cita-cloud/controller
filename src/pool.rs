@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cita_cloud_proto::blockchain::raw_transaction::Tx;
-use cita_cloud_proto::blockchain::RawTransaction;
-use std::borrow::Borrow;
-use std::cmp::{Eq, PartialEq};
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
+use std::{
+    borrow::Borrow,
+    cmp::{Eq, PartialEq},
+    collections::HashSet,
+    hash::{Hash, Hasher},
+};
 
 // wrapper type for Hash
 #[derive(Clone)]

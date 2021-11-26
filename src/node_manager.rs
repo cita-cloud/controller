@@ -14,15 +14,18 @@
 
 use crate::util::{check_sig, get_compact_block, kms_client};
 use cita_cloud_proto::common::{Address, Hash};
-use cloud_util::common::h160_address_check;
-use cloud_util::crypto::{get_block_hash, hash_data};
+use cloud_util::{
+    common::h160_address_check,
+    crypto::{get_block_hash, hash_data},
+};
 use prost::Message;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{seq::SliceRandom, thread_rng};
 use status_code::StatusCode;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::RwLock;
 
 #[derive(Debug)]
