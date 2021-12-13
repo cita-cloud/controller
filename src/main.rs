@@ -25,6 +25,7 @@ mod protocol;
 mod util;
 mod event;
 mod utxo_set;
+mod wal;
 
 use crate::{
     chain::ChainStep,
@@ -790,33 +791,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     }
     info!("load sys_config complete");
-
-    // send configuration to consensus
-    let sys_config_clone = sys_config.clone();
-    let mut server_retry_interval =
-        time::interval(Duration::from_secs(config.server_retry_interval));
-    tokio::spawn(async move {
-        loop {
-            server_retry_interval.tick().await;
-            // reconfigure consensus
-            {
-                info!("time to first reconfigure consensus!");
-                if reconfigure(ConsensusConfiguration {
-                    height: current_block_number,
-                    block_interval: sys_config_clone.clone().block_interval,
-                    validators: sys_config_clone.clone().validators,
-                })
-                .await
-                .is_success()
-                .is_ok()
-                {
-                    break;
-                } else {
-                    warn!("reconfigure failed! Retrying")
-                }
-            }
-        }
-    });
 
     // todo config
     let (task_sender, mut task_receiver) = mpsc::channel(64);

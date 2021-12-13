@@ -43,13 +43,13 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
 };
-use log::warn;
+use log::{info, warn};
 use prost::Message;
 use status_code::StatusCode;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, RwLock},
-    time::sleep,
+    time::{self, sleep},
 };
 use tonic::{Request, Response};
 
@@ -175,6 +175,7 @@ impl Controller {
             pool.clone(),
             auth.clone(),
             genesis,
+            &config.wal_path,
         )));
 
         Controller {
@@ -201,18 +202,51 @@ impl Controller {
     }
 
     pub async fn init(&self, init_block_number: u64, sys_config: SystemConfig) {
+        let status;
+        let sys_config_clone = sys_config.clone();
+        let mut consensus_config = ConsensusConfiguration {
+            height: init_block_number,
+            block_interval: sys_config_clone.block_interval,
+            validators: sys_config_clone.validators,
+        };
         {
-            let chain = self.chain.write().await;
+            let mut chain = self.chain.write().await;
             chain
                 .init(init_block_number, self.config.server_retry_interval)
                 .await;
             chain.init_auth(init_block_number).await;
+            status = chain.load_wal_log().await;
         }
-        let status = self
-            .init_status(init_block_number, sys_config)
-            .await
-            .unwrap();
-        self.set_status(status.clone()).await;
+        if let Some((new_consensus_config, status)) = status {
+            self.set_status(status.clone()).await;
+            consensus_config = new_consensus_config.clone();
+            log::info!("wal redo status_height: {}", status.height);
+        } else {
+            let status = self
+                .init_status(init_block_number, sys_config)
+                .await
+                .unwrap();
+            self.set_status(status.clone()).await;
+            log::info!("init_block_number: {}", init_block_number);
+        }
+        // send configuration to consensus
+        let mut server_retry_interval =
+            time::interval(Duration::from_secs(self.config.server_retry_interval));
+        loop {
+            server_retry_interval.tick().await;
+            {
+                if reconfigure(consensus_config.clone())
+                    .await
+                    .is_success()
+                    .is_ok()
+                {
+                    info!("reconfigure consensus success! {:?}", &consensus_config);
+                    break;
+                } else {
+                    warn!("reconfigure consensus failed! Retrying")
+                }
+            }
+        }
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {

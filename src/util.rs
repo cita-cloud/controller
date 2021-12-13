@@ -198,7 +198,7 @@ pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
     })
 }
 
-pub async fn exec_block(block: Block) -> Result<Vec<u8>, StatusCode> {
+pub async fn exec_block(block: Block) -> Result<(StatusCode, Vec<u8>), StatusCode> {
     let mut client = executor_client();
     let request = Request::new(block);
     let response = client.exec(request).await.map_err(|e| {
@@ -208,8 +208,20 @@ pub async fn exec_block(block: Block) -> Result<Vec<u8>, StatusCode> {
 
     let hash_respond = response.into_inner();
 
-    StatusCode::from(hash_respond.status.ok_or(StatusCode::NoneStatusCode)?).is_success()?;
-    Ok(hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash)
+    match StatusCode::from(hash_respond.status.ok_or(StatusCode::NoneStatusCode)?) {
+        StatusCode::Success => Ok((
+            StatusCode::Success,
+            hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash,
+        )),
+        StatusCode::ReenterBlock => {
+            warn!("exec_block error: ReenterBlock");
+            Ok((
+                StatusCode::ReenterBlock,
+                hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash,
+            ))
+        }
+        _ => Err(StatusCode::ExecuteServerNotReady),
+    }
 }
 
 pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
