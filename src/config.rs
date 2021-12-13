@@ -62,6 +62,8 @@ pub struct ControllerConfig {
     pub sync_interval: u64,
 
     pub sync_req: u64,
+
+    pub wal_path: String,
 }
 
 impl Default for ControllerConfig {
@@ -86,6 +88,7 @@ impl Default for ControllerConfig {
             enable_forward: true,
             sync_interval: 10,
             sync_req: 5,
+            wal_path: "./data/wal/chain".to_string(),
         }
     }
 }
