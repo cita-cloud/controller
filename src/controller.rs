@@ -175,6 +175,7 @@ impl Controller {
             pool.clone(),
             auth.clone(),
             genesis,
+            &config.wal_path,
         )));
 
         Controller {
@@ -201,18 +202,26 @@ impl Controller {
     }
 
     pub async fn init(&self, init_block_number: u64, sys_config: SystemConfig) {
+        let status;
         {
-            let chain = self.chain.write().await;
+            let mut chain = self.chain.write().await;
             chain
                 .init(init_block_number, self.config.server_retry_interval)
                 .await;
             chain.init_auth(init_block_number).await;
+            status = chain.load_wal_log().await;
         }
-        let status = self
-            .init_status(init_block_number, sys_config)
-            .await
-            .unwrap();
-        self.set_status(status.clone()).await;
+        if let Some(status) = status {
+            self.set_status(status.clone()).await;
+            log::info!("wal redo status_height: {}", status.height);
+        } else {
+            let status = self
+                .init_status(init_block_number, sys_config)
+                .await
+                .unwrap();
+            self.set_status(status.clone()).await;
+            log::info!("init_block_number: {}", init_block_number);
+        }
     }
 
     pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {

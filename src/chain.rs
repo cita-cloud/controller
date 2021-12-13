@@ -13,9 +13,15 @@
 // limitations under the License.
 
 use crate::{
-    auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
+    auth::Authentication,
+    node_manager::ChainStatus,
+    pool::Pool,
+    util::*,
+    utxo_set::SystemConfig,
+    wal::{LogType, StoreData, Wal},
     GenesisBlock,
 };
+use bincode::deserialize;
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
     common::{proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum},
@@ -54,6 +60,11 @@ pub struct Chain {
     auth: Arc<RwLock<Authentication>>,
 
     genesis: GenesisBlock,
+
+    wal_log: Arc<RwLock<Wal>>,
+
+    /// executor service port
+    executor_port: u16,
 }
 
 impl Chain {
@@ -63,6 +74,7 @@ impl Chain {
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
+        wal_path: &str,
     ) -> Self {
         Chain {
             block_number: current_block_number,
@@ -72,6 +84,8 @@ impl Chain {
             pool,
             auth,
             genesis,
+            wal_log: Arc::new(RwLock::new(Wal::create(wal_path).unwrap())),
+            executor_port: 50002,
         }
     }
 
@@ -311,29 +325,13 @@ impl Chain {
     }
 
     async fn finalize_block(&self, block: Block, block_hash: Vec<u8>) -> Result<(), StatusCode> {
-        // region 1: tx_hash - tx
-        if let Some(raw_txs) = block.body.clone() {
-            for raw_tx in raw_txs.body {
-                if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
-                    let res = {
-                        let mut auth = self.auth.write().await;
-                        auth.update_system_config(&utxo_tx)
-                    };
-                    if res {
-                        // if sys_config changed, store utxo tx hash into global region
-                        let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
-                        store_data(
-                            storage_client(),
-                            0,
-                            lock_id.to_be_bytes().to_vec(),
-                            utxo_tx.transaction_hash.clone(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                };
-            }
-        }
+        let block_height = block
+            .header
+            .as_ref()
+            .ok_or(StatusCode::NoneBlockHeader)?
+            .height;
+
+        let block_height_bytes = block_height.to_be_bytes().to_vec();
 
         let block_bytes = {
             let mut buf = Vec::with_capacity(block.encoded_len());
@@ -344,38 +342,83 @@ impl Chain {
             buf
         };
 
-        let block_height = block
-            .header
-            .as_ref()
-            .ok_or(StatusCode::NoneBlockHeader)?
-            .height;
-        let block_height_bytes = block_height.to_be_bytes().to_vec();
-
-        store_data(
-            storage_client(),
-            11,
-            block_height_bytes.clone(),
-            block_bytes,
-        )
-        .await
-        .is_success()?;
+        // region 1: tx_hash - tx
+        let mut store_data_sys_config_utxo: Option<StoreData> = None;
+        if let Some(raw_txs) = block.body.clone() {
+            for raw_tx in raw_txs.body {
+                if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
+                    let res = {
+                        let mut auth = self.auth.write().await;
+                        auth.update_system_config(&utxo_tx)
+                    };
+                    if res {
+                        // if sys_config changed, store utxo tx hash into global region
+                        let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
+                        store_data_sys_config_utxo = Some(StoreData {
+                            region: 0,
+                            key: lock_id.to_be_bytes().to_vec(),
+                            value: utxo_tx.transaction_hash.clone(),
+                        });
+                    }
+                };
+            }
+        }
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
+
+        let store_data_block = StoreData {
+            region: 11,
+            key: block_height_bytes.clone(),
+            value: block_bytes,
+        };
+
+        // region 0: 0 - current height; 1 - current hash
+        let store_data_current_height = StoreData {
+            region: 0,
+            key: 0u64.to_be_bytes().to_vec(),
+            value: block_height_bytes.clone(),
+        };
+
+        let store_data_current_hash = StoreData {
+            region: 0,
+            key: 1u64.to_be_bytes().to_vec(),
+            value: block_hash.clone(),
+        };
+
+        if block_height > 0 {
+            info!("block_height > 0");
+            let mut wal_data: Vec<StoreData> = Vec::new();
+
+            if let Some(store_data_sys_config_utxo) = store_data_sys_config_utxo.clone() {
+                wal_data.push(store_data_sys_config_utxo);
+            }
+            wal_data.push(store_data_block.clone());
+            wal_data.push(store_data_current_height.clone());
+            wal_data.push(store_data_current_hash.clone());
+
+            // region 6 : block_height - executed_block_hash
+            let store_data_executed_block_hash = StoreData {
+                region: 6,
+                key: block_height_bytes.clone(),
+                value: vec![0],
+            };
+            wal_data.push(store_data_executed_block_hash);
+
+            let smsg = bincode::serialize(&wal_data).unwrap();
+            if let Err(status_code) = self
+                .wal_save_message(block_height, LogType::FinalizeBlock, &smsg)
+                .await
+            {
+                return Err(status_code);
+            }
+        }
 
         // exec block
         let executed_block_hash = exec_block(block).await.map_err(|e| {
             warn!("exec_block({}) error: {}", block_height, e.to_string());
             e
         })?;
-        // region 6 : block_height - executed_block_hash
-        store_data(
-            storage_client(),
-            6,
-            block_height_bytes.clone(),
-            executed_block_hash.clone(),
-        )
-        .await
-        .is_success()?;
+        info!("executed_block_hash: {:?}", &executed_block_hash);
 
         // update auth and pool
         {
@@ -385,20 +428,45 @@ impl Chain {
             pool.update(&tx_hash_list);
         }
 
-        // region 0: 0 - current height; 1 - current hash
+        if let Some(store_data_sys_config_utxo) = store_data_sys_config_utxo {
+            store_data(
+                storage_client(),
+                store_data_sys_config_utxo.region,
+                store_data_sys_config_utxo.key,
+                store_data_sys_config_utxo.value,
+            )
+            .await
+            .is_success()?;
+        }
         store_data(
             storage_client(),
-            0,
-            0u64.to_be_bytes().to_vec(),
-            block_height_bytes,
+            store_data_block.region,
+            store_data_block.key,
+            store_data_block.value,
         )
         .await
         .is_success()?;
         store_data(
             storage_client(),
-            0,
-            1u64.to_be_bytes().to_vec(),
-            block_hash.clone(),
+            6,
+            block_height_bytes.clone(),
+            executed_block_hash,
+        )
+        .await
+        .is_success()?;
+        store_data(
+            storage_client(),
+            store_data_current_height.region,
+            store_data_current_height.key,
+            store_data_current_height.value,
+        )
+        .await
+        .is_success()?;
+        store_data(
+            storage_client(),
+            store_data_current_hash.region,
+            store_data_current_hash.key,
+            store_data_current_hash.value,
         )
         .await
         .is_success()?;
@@ -609,5 +677,142 @@ impl Chain {
     pub fn clear_candidate(&mut self) {
         self.candidates.clear();
         self.own_proposal = None;
+    }
+
+    async fn wal_save_message(
+        &self,
+        height: u64,
+        ltype: LogType,
+        msg: &[u8],
+    ) -> Result<u64, StatusCode> {
+        match self.wal_log.write().await.save(height, ltype, msg) {
+            Ok(hlen) => Ok(hlen),
+            Err(e) => {
+                log::error!("wal failed: {}", e.to_string());
+                Err(StatusCode::NoneStatusCode)
+            }
+        }
+    }
+
+    pub async fn load_wal_log(&mut self) -> Option<ChainStatus> {
+        let vec_buf = self.wal_log.read().await.load();
+        if vec_buf.is_empty() {
+            return None;
+        }
+        let height = self.wal_log.read().await.get_cur_height();
+        let config = self.get_system_config().await;
+        let mut consensus_config = ConsensusConfiguration {
+            height,
+            block_interval: config.block_interval,
+            validators: config.validators.clone(),
+        };
+        let mut chain_status = ChainStatus {
+            version: config.version,
+            chain_id: config.chain_id.clone(),
+            height,
+            hash: Some(Hash {
+                hash: self.block_hash.clone(),
+            }),
+            address: None,
+        };
+        for (mtype, vec_out) in vec_buf {
+            let log_type: LogType = mtype.into();
+            info!("load_wal_log chain type {:?}({})", log_type, mtype);
+            if let LogType::FinalizeBlock = log_type {
+                let wal_data: Vec<StoreData> = match deserialize(&vec_out) {
+                    Err(e) => {
+                        warn!("load_wal_log: deserialize({:?}) error {}", log_type, e);
+                        continue;
+                    }
+                    Ok(p) => p,
+                };
+
+                let mut block_hash = Vec::new();
+                let mut storage_data_exec = None;
+                for data in wal_data {
+                    if data.region == 6 {
+                        info!("redo exec_block: {:?}", data.key);
+                        storage_data_exec = Some(data.clone());
+                        continue;
+                    }
+                    if data.region == 0 && data.key == 1u64.to_be_bytes().to_vec() {
+                        block_hash = data.value.clone();
+                    }
+                    store_data(storage_client(), data.region, data.key.clone(), data.value).await;
+                    if let Ok(v) = load_data(storage_client(), data.region, data.key.clone()).await
+                    {
+                        info!(
+                            "store success region: {}, key: {:?}, value: {:?}",
+                            &data.region, &data.key, v
+                        );
+                    }
+                }
+
+                if !block_hash.is_empty() {
+                    match Block::decode(block_hash.as_slice()) {
+                        Ok(block) => {
+                            self.block_number = height;
+                            self.block_hash = block_hash;
+
+                            if let Some(storage_data_exec) = storage_data_exec {
+                                match exec_block(block).await {
+                                    Ok(executed_block_hash) => {
+                                        store_data(
+                                            storage_client(),
+                                            storage_data_exec.region,
+                                            storage_data_exec.key,
+                                            executed_block_hash,
+                                        )
+                                        .await;
+                                    }
+                                    Err(e) => {
+                                        warn!("wal redo exec_block error: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            panic!("wal block_hash decode error: {}", e);
+                        }
+                    }
+                }
+                consensus_config = ConsensusConfiguration {
+                    height,
+                    block_interval: config.block_interval,
+                    validators: config.validators.clone(),
+                };
+                chain_status = ChainStatus {
+                    version: config.version,
+                    chain_id: config.chain_id.clone(),
+                    height,
+                    hash: Some(Hash {
+                        hash: self.block_hash.clone(),
+                    }),
+                    address: None,
+                };
+            }
+        }
+        // candidate_block need update
+        self.clear_candidate();
+        let mut interval = time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            // reconfigure consensus
+            {
+                info!("time to first reconfigure consensus!");
+                if reconfigure(consensus_config.clone())
+                    .await
+                    .is_success()
+                    .is_ok()
+                {
+                    break;
+                } else {
+                    warn!("reconfigure failed! Retrying")
+                }
+            }
+        }
+        self.wal_log.write().await.clear_file().unwrap();
+        info!("load_wal_log ends");
+        Some(chain_status)
     }
 }
