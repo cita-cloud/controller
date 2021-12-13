@@ -29,6 +29,7 @@ backtrace = "0.3.60"
 bincode = "1.3.3"
 libsm = "0.4"
 efficient-sm2 = "0.1"
+crc32fast = "1.2"
 
 cloud-util = "0.1"
 cita_cloud_proto = "=6.3.0"
