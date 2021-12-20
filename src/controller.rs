@@ -1016,7 +1016,7 @@ impl Controller {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
                 if let Err(e) = h160_address_check(Some(&global_address)) {
-                    log::warn!("try_sync_block: global_address error: {:?}", e);
+                    log::debug!("try_sync_block: global_address error: {:?}", e);
                     return;
                 }
 

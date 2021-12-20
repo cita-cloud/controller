@@ -37,7 +37,7 @@ impl GenesisBlock {
             timestamp: self.timestamp,
             height: 0,
             transactions_root: vec![0u8; 32],
-            proposer: vec![0u8; 20],
+            proposer: vec![0u8; 32],
         };
         Block {
             version: 0,

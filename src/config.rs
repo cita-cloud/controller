@@ -22,45 +22,48 @@ pub fn controller_config() -> &'static ControllerConfig {
     CONFIG.get().unwrap()
 }
 
+/// ControllerConfig define majority of controller conduction: micro-server port, reconnect,
+/// discovery other node, sync, log config, kms related
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ControllerConfig {
+    /// controller service port
     pub controller_port: u16,
-
+    /// network service port
     pub network_port: u16,
-
+    /// consensus service port
     pub consensus_port: u16,
-
+    /// storage service port
     pub storage_port: u16,
-
+    /// kms service port
     pub kms_port: u16,
-
+    /// executor service port
     pub executor_port: u16,
-
+    /// self node address
     pub node_address: String,
-
+    /// audit blocks epoch length
     pub block_limit: u64,
-
+    /// block contains txs upper-limit
     pub package_limit: u64,
-
+    /// address length from kms
     pub address_len: u32,
-
+    /// hash length from kms
     pub hash_len: u32,
-
+    /// signature length from kms
     pub signature_len: u32,
-
+    /// account index in kmsdb
     pub key_id: u64,
-
+    /// other micro-serv reconnect interval
     pub server_retry_interval: u64,
-
+    /// discovery other nodes interval
     pub origin_node_reconnect_interval: u64,
-
+    /// controller log4rs config file name
     pub log_file: String,
-
+    /// switch of tx forward
     pub enable_forward: bool,
-
+    /// sync block height interval
     pub sync_interval: u64,
-
+    /// sync block request times
     pub sync_req: u64,
 }
 
