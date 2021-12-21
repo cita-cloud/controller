@@ -699,56 +699,51 @@ impl Chain {
         for (mtype, vec_out) in vec_buf {
             let log_type: LogType = mtype.into();
             info!("load_wal_log chain type {:?}({})", log_type, mtype);
-            match log_type {
-                LogType::FinalizeBlock => {
-                    let wal_data: Vec<StoreData> = match deserialize(&vec_out) {
-                        Err(e) => {
-                            warn!("load_wal_log: deserialize({:?}) error {}", log_type, e);
-                            continue;
-                        }
-                        Ok(p) => p,
-                    };
+            if let LogType::FinalizeBlock = log_type {
+                let wal_data: Vec<StoreData> = match deserialize(&vec_out) {
+                    Err(e) => {
+                        warn!("load_wal_log: deserialize({:?}) error {}", log_type, e);
+                        continue;
+                    }
+                    Ok(p) => p,
+                };
 
-                    let mut block_hash = Vec::new();
-                    for data in wal_data {
-                        if data.region == 6 {
-                            info!("redo executed_block_hash: {:?}", data.value);
-                            // continue;
-                        }
-                        if data.region == 0 && data.key == 1u64.to_be_bytes().to_vec() {
-                            block_hash = data.value.clone();
-                        }
-                        store_data(storage_client(), data.region, data.key.clone(), data.value)
-                            .await;
-                        if let Ok(v) =
-                            load_data(storage_client(), data.region, data.key.clone()).await
-                        {
-                            info!(
-                                "store success region: {}, key: {:?}, value: {:?}",
-                                &data.region, &data.key, v
-                            );
-                        }
+                let mut block_hash = Vec::new();
+                for data in wal_data {
+                    if data.region == 6 {
+                        info!("redo executed_block_hash: {:?}", data.value);
+                        // continue;
                     }
-                    if !block_hash.is_empty() {
-                        self.block_number = height;
-                        self.block_hash = block_hash;
+                    if data.region == 0 && data.key == 1u64.to_be_bytes().to_vec() {
+                        block_hash = data.value.clone();
                     }
-                    consensus_config = ConsensusConfiguration {
-                        height,
-                        block_interval: config.block_interval,
-                        validators: config.validators.clone(),
-                    };
-                    chain_status = ChainStatus {
-                        version: config.version,
-                        chain_id: config.chain_id.clone(),
-                        height,
-                        hash: Some(Hash {
-                            hash: self.block_hash.clone(),
-                        }),
-                        address: None,
-                    };
+                    store_data(storage_client(), data.region, data.key.clone(), data.value).await;
+                    if let Ok(v) = load_data(storage_client(), data.region, data.key.clone()).await
+                    {
+                        info!(
+                            "store success region: {}, key: {:?}, value: {:?}",
+                            &data.region, &data.key, v
+                        );
+                    }
                 }
-                _ => {}
+                if !block_hash.is_empty() {
+                    self.block_number = height;
+                    self.block_hash = block_hash;
+                }
+                consensus_config = ConsensusConfiguration {
+                    height,
+                    block_interval: config.block_interval,
+                    validators: config.validators.clone(),
+                };
+                chain_status = ChainStatus {
+                    version: config.version,
+                    chain_id: config.chain_id.clone(),
+                    height,
+                    hash: Some(Hash {
+                        hash: self.block_hash.clone(),
+                    }),
+                    address: None,
+                };
             }
         }
         // candidate_block need update
