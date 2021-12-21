@@ -1,10 +1,12 @@
-name: Rust-check
+name: Github Action
 
 on:
-  push:
-    branches: [ master,main,'v*' ]
   pull_request:
-    branches: [ master,main,'v*' ]
+  push:
+    branches:
+      - master
+      - main
+      - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,56 +15,59 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Depends on all action sthat are required for a "successful" CI run.
-  tests-pass:
-    name: all systems go
-    runs-on: ubuntu-latest
-    needs:
-      - fmt
-      - test
-      - clippy
-    steps:
-      - run: exit 0
-
   fmt:
-    name: fmt
-    runs-on: ubuntu-latest
+    name: Fmt
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
     if: "!contains(github.event.head_commit.message, 'skip ci')"
     steps:
       - uses: actions/checkout@v2
-      - name: Install Rust
-        run: rustup update stable
-      - name: Install rustfmt
-        run: rustup component add rustfmt
-
-      # Check fmt
-      - name: "fmt --check"
-        run: cargo fmt -- --check
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
 
   clippy:
-    name: clippy
-    runs-on: ubuntu-latest
+    name: Clippy
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
     if: "!contains(github.event.head_commit.message, 'skip ci')"
     steps:
       - uses: actions/checkout@v2
-      - name: Install Rust
-        run: rustup update stable
-      - name: Install clippy
-        run: rustup component add clippy
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all
 
-      # Run clippy
-      - name: "clippy --all"
-        run: cargo clippy --all --tests
-
-  test:
-    name: test
-    runs-on: ubuntu-latest
+  check:
+    name: Check
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
     if: "!contains(github.event.head_commit.message, 'skip ci')"
     steps:
       - uses: actions/checkout@v2
-      - name: Install Rust
-        run: rustup update stable
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
 
-      # test all
-      - name: "test --all"
-        run: cargo test --all
+  build:
+    name: Build
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
+    if: "!contains(github.event.head_commit.message, 'skip ci')"
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
