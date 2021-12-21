@@ -945,11 +945,11 @@ impl Controller {
             if global_height > own_status.height {
                 self.try_sync_block().await;
             }
-            // todo consider delete this
-            if self
-                .sync_manager
-                .contains_block(own_status.height + 1)
-                .await
+            if (!self.get_sync_state().await || global_height % self.config.force_sync_epoch == 0)
+                && self
+                    .sync_manager
+                    .contains_block(own_status.height + 1)
+                    .await
             {
                 self.task_sender.send(EventTask::SyncBlock).await.unwrap();
             }
@@ -1008,8 +1008,8 @@ impl Controller {
 
     pub async fn try_sync_block(&self) {
         let (_, global_status) = self.get_global_status().await;
-        // sync mode will return exclude global_height % 100 == 0
-        if self.get_sync_state().await && global_status.height % 100 != 0 {
+        // sync mode will return exclude global_height % self.config.force_sync_epoch == 0
+        if self.get_sync_state().await && global_status.height % self.config.force_sync_epoch != 0 {
             return;
         }
 
@@ -1020,7 +1020,7 @@ impl Controller {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
                 if let Err(e) = h160_address_check(Some(&global_address)) {
-                    log::warn!("try_sync_block: global_address error: {:?}", e);
+                    log::debug!("try_sync_block: global_address error: {:?}", e);
                     return;
                 }
 
