@@ -108,6 +108,7 @@ impl Authentication {
         if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
             return Err(StatusCode::InvalidChainId);
         }
+        log::info!("add test");
         Ok(())
     }
 
