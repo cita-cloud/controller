@@ -20,7 +20,9 @@ use serde_derive::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
+    /// the timestamp of genesis block
     pub timestamp: u64,
+    /// the previous_block hash for genesis block, default 0x000..000
     pub prevhash: String,
 }
 
