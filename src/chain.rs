@@ -79,16 +79,21 @@ impl Chain {
     pub async fn init(&self, init_block_number: u64) {
         if init_block_number == 0 {
             info!("finalize genesis block");
-            let mut interval = time::interval(Duration::from_secs(3));
-            loop {
-                interval.tick().await;
-                match self
-                    .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
-                    .await
-                {
-                    Ok(()) | Err(StatusCode::ReenterBlock) => break,
-                    _ => warn!("executor not ready! Retrying"),
+        } else {
+            info!("confirm executor status");
+        }
+        let mut interval = time::interval(Duration::from_secs(3));
+        loop {
+            interval.tick().await;
+            match self
+                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
+                .await
+            {
+                Ok(()) | Err(StatusCode::ReenterBlock) => {
+                    info!("executor is ready!");
+                    break;
                 }
+                Err(code) => warn!("chain init failed with: {:?}! Retrying.", &code),
             }
         }
     }
