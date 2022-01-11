@@ -112,6 +112,16 @@ impl SystemConfig {
             }
         }
 
+        let ret = self.match_data(lock_id, data);
+
+        if ret {
+            self.utxo_tx_hashes.insert(lock_id, tx_hash);
+        }
+
+        ret
+    }
+
+    pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>) -> bool {
         let ret = match lock_id {
             LOCK_ID_VERSION => {
                 self.version = u32_decode(data);
@@ -153,7 +163,7 @@ impl SystemConfig {
                 }
             }
             LOCK_ID_EMERGENCY_BRAKE => {
-                self.emergency_brake = !data.is_empty();
+                self.emergency_brake = u32_decode(data) != 0;
                 true
             }
             _ => {
@@ -161,10 +171,6 @@ impl SystemConfig {
                 false
             }
         };
-
-        if ret {
-            self.utxo_tx_hashes.insert(lock_id, tx_hash);
-        }
 
         ret
     }
