@@ -115,6 +115,16 @@ impl Chain {
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
         if let Some((h, _, block)) = self.own_proposal.clone() {
+            // check again avoid bad proposal
+            {
+                let auth = self.auth.read().await;
+                auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)
+                    .map_err(|e| {
+                        warn!("get_proposal: check_transactions failed: {:?}", e);
+                        e
+                    })?;
+            }
+
             let status = {
                 if block
                     .body
@@ -129,9 +139,10 @@ impl Chain {
                 }
             };
 
-            return Ok((h, self.assemble_proposal(block, h).await?, status));
+            Ok((h, self.assemble_proposal(block, h).await?, status))
+        } else {
+            Err(StatusCode::NoCandidate)
         }
-        Err(StatusCode::NoCandidate)
     }
 
     pub async fn assemble_proposal(
@@ -362,15 +373,11 @@ impl Chain {
         .await
         .is_success()?;
 
-        // this must be before update pool
+        // update auth and pool
         {
             let mut auth = self.auth.write().await;
-            auth.insert_tx_hash(block_height, tx_hash_list.clone());
-        }
-
-        // update pool
-        {
             let mut pool = self.pool.write().await;
+            auth.insert_tx_hash(block_height, tx_hash_list.clone());
             pool.update(&tx_hash_list);
         }
 

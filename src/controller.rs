@@ -226,13 +226,10 @@ impl Controller {
     ) -> Result<Vec<u8>, StatusCode> {
         let tx_hash = get_tx_hash(&raw_tx)?.to_vec();
 
-        {
-            let auth = self.auth.read().await;
-            auth.check_raw_tx(&raw_tx).await?;
-        };
-
         let res = {
+            let auth = self.auth.read().await;
             let mut pool = self.pool.write().await;
+            auth.check_raw_tx(&raw_tx).await?;
             pool.enqueue(raw_tx.clone())
         };
         if res {
@@ -254,11 +251,6 @@ impl Controller {
         raw_txs: RawTransactions,
         broadcast: bool,
     ) -> Result<Hashes, StatusCode> {
-        {
-            let auth = self.auth.read().await;
-            auth.check_transactions(&raw_txs)?;
-        }
-
         match kms_client().check_transactions(raw_txs.clone()).await {
             Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
             Err(e) => {
@@ -271,11 +263,15 @@ impl Controller {
         }
 
         let mut hashes = Vec::new();
-        let mut pool = self.pool.write().await;
-        for raw_tx in raw_txs.body.clone() {
-            let hash = get_tx_hash(&raw_tx)?.to_vec();
-            if pool.enqueue(raw_tx) {
-                hashes.push(Hash { hash })
+        {
+            let auth = self.auth.read().await;
+            let mut pool = self.pool.write().await;
+            auth.check_transactions(&raw_txs)?;
+            for raw_tx in raw_txs.body.clone() {
+                let hash = get_tx_hash(&raw_tx)?.to_vec();
+                if pool.enqueue(raw_tx) {
+                    hashes.push(Hash { hash })
+                }
             }
         }
         if broadcast {
@@ -451,9 +447,11 @@ impl Controller {
                                 .await?
                     };
                     if res {
-                        let _ = self
-                            .batch_transactions(block.body.ok_or(StatusCode::NoneBlockBody)?, false)
-                            .await;
+                        self.batch_transactions(
+                            block.body.ok_or(StatusCode::NoneBlockBody)?,
+                            false,
+                        )
+                        .await?;
 
                         log::info!("chain_check_proposal: finished");
                     } else {
@@ -833,13 +831,7 @@ impl Controller {
                     StatusCode::DecodeError
                 })?;
 
-                self.batch_transactions(
-                    RawTransactions {
-                        body: vec![send_tx],
-                    },
-                    false,
-                )
-                .await?;
+                self.rpc_send_raw_transaction(send_tx, false).await?;
             }
 
             ControllerMsgType::SendTxsType => {
