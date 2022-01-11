@@ -60,7 +60,7 @@ use clap::Clap;
 use cloud_util::{
     crypto::{hash_data, sign_message},
     network::register_network_msg_handler,
-    storage::load_data,
+    storage::{load_data, store_data},
 };
 use genesis::GenesisBlock;
 use git_version::git_version;
@@ -674,22 +674,110 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     );
 
     let mut sys_config = SystemConfigFile::new(&opts.config_path).to_system_config();
-    if current_block_number != 0 {
+    info!("local_file_sys_config: {:?}", sys_config);
+    if current_block_number == 0 {
+        for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
+            match lock_id {
+                LOCK_ID_VERSION => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        sys_config.version.to_be_bytes().to_vec(),
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_CHAIN_ID => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        sys_config.chain_id.clone(),
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_ADMIN => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        sys_config.admin.clone(),
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_BLOCK_INTERVAL => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        sys_config.block_interval.to_be_bytes().to_vec(),
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_VALIDATORS => {
+                    let mut validators = Vec::new();
+                    for validator in sys_config.validators.iter() {
+                        validators.append(&mut validator.clone());
+                    }
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        validators,
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_EMERGENCY_BRAKE => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        (sys_config.emergency_brake as u32).to_be_bytes().to_vec(),
+                    )
+                    .await
+                    .is_success()?;
+                }
+                _ => {
+                    warn!("Invalid lock_id");
+                }
+            };
+        }
+        info!("sys_config is initialized and persisted");
+    } else {
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             let key = id.to_be_bytes().to_vec();
             // region 0 global
-            let tx_hash = load_data_maybe_empty(0, key).await.unwrap();
-            if tx_hash.is_empty() {
-                continue;
+            let data_or_tx_hash = load_data_maybe_empty(0, key).await.unwrap();
+            if data_or_tx_hash.is_empty() {
+                panic!("sys_config[{}] tx is is_empty", id);
             }
-            // region 1: tx_hash - tx
-            let raw_tx_bytes = load_data(storage_client(), 1, tx_hash).await.unwrap();
-            let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
-            let tx = raw_tx.tx.unwrap();
-            if let UtxoTx(utxo_tx) = tx {
-                sys_config.update(&utxo_tx, true);
+            if data_or_tx_hash.len() == config.hash_len as usize {
+                // region 1: tx_hash - tx
+                match load_data(storage_client(), 1, data_or_tx_hash.clone()).await {
+                    Ok(raw_tx_bytes) => {
+                        let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
+                        let tx = raw_tx.tx.unwrap();
+                        if let UtxoTx(utxo_tx) = tx {
+                            sys_config.update(&utxo_tx, true);
+                        } else {
+                            panic!("sys_config[{}] tx is not utxo_tx", id);
+                        }
+                    }
+                    Err(e) => {
+                        if !sys_config.match_data(id, data_or_tx_hash) {
+                            panic!("sys_config[{}] get tx error: {}", id, e);
+                        }
+                    }
+                }
             } else {
-                panic!("tx is not utxo_tx");
+                if !sys_config.match_data(id, data_or_tx_hash) {
+                    panic!("sys_config[{}] match data error", id);
+                }
             }
         }
     }
