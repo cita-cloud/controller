@@ -76,13 +76,13 @@ impl Chain {
         }
     }
 
-    pub async fn init(&self, init_block_number: u64) {
+    pub async fn init(&self, init_block_number: u64, server_retry_interval: u64) {
         if init_block_number == 0 {
             info!("finalize genesis block");
         } else {
             info!("confirm executor status");
         }
-        let mut interval = time::interval(Duration::from_secs(3));
+        let mut interval = time::interval(Duration::from_secs(server_retry_interval));
         loop {
             interval.tick().await;
             match self
