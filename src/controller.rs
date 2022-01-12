@@ -203,7 +203,9 @@ impl Controller {
     pub async fn init(&self, init_block_number: u64, sys_config: SystemConfig) {
         {
             let chain = self.chain.write().await;
-            chain.init(init_block_number).await;
+            chain
+                .init(init_block_number, self.config.server_retry_interval)
+                .await;
             chain.init_auth(init_block_number).await;
         }
         let status = self
