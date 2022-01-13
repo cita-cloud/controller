@@ -39,7 +39,7 @@ use crate::{
         storage_client,
     },
     utxo_set::{
-        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
+        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
         LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
     },
 };
@@ -745,6 +745,16 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         } else {
                             vec![]
                         },
+                    )
+                    .await
+                    .is_success()?;
+                }
+                LOCK_ID_BLOCK_LIMIT => {
+                    store_data(
+                        storage_client(),
+                        0,
+                        lock_id.to_be_bytes().to_vec(),
+                        sys_config.block_limit.to_be_bytes().to_vec(),
                     )
                     .await
                     .is_success()?;
