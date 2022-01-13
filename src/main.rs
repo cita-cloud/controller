@@ -39,7 +39,7 @@ use crate::{
         storage_client,
     },
     utxo_set::{
-        SystemConfigFile, LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
+        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
         LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
     },
 };
@@ -588,9 +588,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     };
     info!("grpc port of this service: {}", grpc_port);
 
-    let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
+    let mut server_retry_interval =
+        time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
-        interval.tick().await;
+        server_retry_interval.tick().await;
 
         // register endpoint
         let request = RegisterInfo {
@@ -611,9 +612,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     }
 
-    let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
+    let mut server_retry_interval =
+        time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
-        interval.tick().await;
+        server_retry_interval.tick().await;
         // register endpoint
         {
             if let Ok(crypto_info) = kms_client().get_crypto_info(Request::new(Empty {})).await {
@@ -635,13 +637,15 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         warn!("kms not ready! Retrying");
     }
 
-    // load genesis.toml
+    // load sys_config
+    info!("load sys_config");
     let genesis = GenesisBlock::new(&opts.config_path);
     let current_block_number;
     let current_block_hash;
-    let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
+    let mut server_retry_interval =
+        time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
-        interval.tick().await;
+        server_retry_interval.tick().await;
         {
             match load_data_maybe_empty(0, 0u64.to_be_bytes().to_vec()).await {
                 Ok(current_block_number_bytes) => {
@@ -673,8 +677,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         hex::encode(&current_block_hash)
     );
 
-    let mut sys_config = SystemConfigFile::new(&opts.config_path).to_system_config();
-    info!("local_file_sys_config: {:?}", sys_config);
+    let mut sys_config = utxo_set::SystemConfig::new(&opts.config_path);
     if current_block_number == 0 {
         for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             match lock_id {
@@ -781,14 +784,15 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             }
         }
     }
-    info!("sys_config: {:?}", sys_config);
+    info!("load sys_config complete");
 
     // send configuration to consensus
     let sys_config_clone = sys_config.clone();
-    let mut interval = time::interval(Duration::from_secs(config.server_retry_interval));
+    let mut server_retry_interval =
+        time::interval(Duration::from_secs(config.server_retry_interval));
     tokio::spawn(async move {
         loop {
-            interval.tick().await;
+            server_retry_interval.tick().await;
             // reconfigure consensus
             {
                 info!("time to first reconfigure consensus!");
