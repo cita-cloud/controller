@@ -165,7 +165,7 @@ impl SystemConfig {
                 true
             }
             _ => {
-                warn!("Invalid lock_id");
+                warn!("Invalid lock_id:{}", lock_id);
                 false
             }
         };

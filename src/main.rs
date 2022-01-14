@@ -39,8 +39,8 @@ use crate::{
         storage_client,
     },
     utxo_set::{
-        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON, LOCK_ID_CHAIN_ID,
-        LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
+        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
+        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
     },
 };
 use cita_cloud_proto::{
@@ -678,120 +678,115 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     );
 
     let mut sys_config = utxo_set::SystemConfig::new(&opts.config_path);
-    if current_block_number == 0 {
-        for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
-            match lock_id {
-                LOCK_ID_VERSION => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        sys_config.version.to_be_bytes().to_vec(),
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_CHAIN_ID => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        sys_config.chain_id.clone(),
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_ADMIN => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        sys_config.admin.clone(),
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_BLOCK_INTERVAL => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        sys_config.block_interval.to_be_bytes().to_vec(),
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_VALIDATORS => {
-                    let mut validators = Vec::new();
-                    for validator in sys_config.validators.iter() {
-                        validators.append(&mut validator.clone());
-                    }
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        validators,
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_EMERGENCY_BRAKE => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        if sys_config.emergency_brake {
-                            vec![0]
-                        } else {
-                            vec![]
-                        },
-                    )
-                    .await
-                    .is_success()?;
-                }
-                LOCK_ID_BLOCK_LIMIT => {
-                    store_data(
-                        storage_client(),
-                        0,
-                        lock_id.to_be_bytes().to_vec(),
-                        sys_config.block_limit.to_be_bytes().to_vec(),
-                    )
-                    .await
-                    .is_success()?;
-                }
-                _ => {
-                    warn!("Invalid lock_id");
-                }
-            };
-        }
-        info!("sys_config is initialized and persisted");
-    } else {
-        for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
-            let key = id.to_be_bytes().to_vec();
-            // region 0 global
-            let data_or_tx_hash = load_data(storage_client(), 0, key).await.unwrap();
-
-            if data_or_tx_hash.len() == config.hash_len as usize {
+    for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
+        // region 0 global
+        match load_data(storage_client(), 0, lock_id.to_be_bytes().to_vec()).await {
+            Ok(data_or_tx_hash) => {
+                //data or tx_hash stored at this lock_id, read to update sys_config
                 // region 1: tx_hash - tx
-                match load_data(storage_client(), 1, data_or_tx_hash.clone()).await {
-                    Ok(raw_tx_bytes) => {
-                        let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
-                        let tx = raw_tx.tx.unwrap();
-                        if let UtxoTx(utxo_tx) = tx {
-                            sys_config.update(&utxo_tx, true);
-                        } else {
-                            panic!("sys_config[{}] tx is not utxo_tx", id);
+                if data_or_tx_hash.len() == config.hash_len as usize && lock_id != LOCK_ID_CHAIN_ID
+                {
+                    match load_data(storage_client(), 1, data_or_tx_hash.clone()).await {
+                        Ok(raw_tx_bytes) => {
+                            info!("lock_id: {} stored tx_hash", lock_id);
+                            let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
+                            let tx = raw_tx.tx.unwrap();
+                            if let UtxoTx(utxo_tx) = tx {
+                                sys_config.update(&utxo_tx, true);
+                            } else {
+                                panic!("tx_hash lock_id: {} stored is not utxo_tx", lock_id);
+                            }
+                        }
+                        Err(e) => {
+                            panic!("load tx stored at lock_id: {} failed: {}", lock_id, e)
                         }
                     }
-                    Err(e) => {
-                        if !sys_config.match_data(id, data_or_tx_hash) {
-                            panic!("sys_config[{}] get tx error: {}", id, e);
-                        }
+                } else {
+                    info!("lock_id: {} stored data", lock_id);
+                    if !sys_config.match_data(lock_id, data_or_tx_hash) {
+                        panic!("match data lock_id: {} stored failed", lock_id);
                     }
                 }
-            } else if !sys_config.match_data(id, data_or_tx_hash) {
-                panic!("sys_config[{}] match data error", id);
             }
+            Err(StatusCode::NotFound) => {
+                //this lock_id is empty in local, store data from sys_config to local
+                info!("lock_id: {} empty, store from config to local", lock_id);
+                match lock_id {
+                    LOCK_ID_VERSION => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.version.to_be_bytes().to_vec(),
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    LOCK_ID_CHAIN_ID => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.chain_id.clone(),
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    LOCK_ID_ADMIN => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.admin.clone(),
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    LOCK_ID_BLOCK_INTERVAL => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.block_interval.to_be_bytes().to_vec(),
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    LOCK_ID_VALIDATORS => {
+                        let mut validators = Vec::new();
+                        for validator in sys_config.validators.iter() {
+                            validators.append(&mut validator.clone());
+                        }
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            validators,
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    LOCK_ID_EMERGENCY_BRAKE => {
+                        store_data(storage_client(), 0, lock_id.to_be_bytes().to_vec(), vec![])
+                            .await
+                            .is_success()?;
+                    }
+                    LOCK_ID_BLOCK_LIMIT => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.block_limit.to_be_bytes().to_vec(),
+                        )
+                        .await
+                        .is_success()?;
+                    }
+                    _ => {
+                        warn!("Invalid lock_id: {}", lock_id);
+                    }
+                };
+            }
+            Err(e) => panic!("load_data lock_id: {} failed: {}", lock_id, e),
         }
     }
     info!("load sys_config complete");
