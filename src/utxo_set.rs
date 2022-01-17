@@ -51,7 +51,8 @@ pub const LOCK_ID_ADMIN: u64 = 1_002;
 pub const LOCK_ID_BLOCK_INTERVAL: u64 = 1_003;
 pub const LOCK_ID_VALIDATORS: u64 = 1_004;
 pub const LOCK_ID_EMERGENCY_BRAKE: u64 = 1_005;
-pub const LOCK_ID_BUTTON: u64 = 1_006;
+pub const LOCK_ID_BLOCK_LIMIT: u64 = 1_006;
+pub const LOCK_ID_BUTTON: u64 = 1_007;
 
 impl SystemConfig {
     pub fn new(config_path: &str) -> Self {
@@ -159,8 +160,12 @@ impl SystemConfig {
                 self.emergency_brake = !data.is_empty();
                 true
             }
+            LOCK_ID_BLOCK_LIMIT => {
+                self.block_limit = u64_decode(data);
+                true
+            }
             _ => {
-                warn!("Invalid lock_id");
+                warn!("Invalid lock_id:{}", lock_id);
                 false
             }
         };
@@ -173,6 +178,12 @@ fn u32_decode(data: Vec<u8>) -> u32 {
     let mut bytes: [u8; 4] = [0; 4];
     bytes[..4].clone_from_slice(&data[..4]);
     u32::from_be_bytes(bytes)
+}
+
+fn u64_decode(data: Vec<u8>) -> u64 {
+    let mut bytes: [u8; 8] = [0; 8];
+    bytes[..8].clone_from_slice(&data[..8]);
+    u64::from_be_bytes(bytes)
 }
 
 #[cfg(test)]
