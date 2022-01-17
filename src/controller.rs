@@ -228,10 +228,13 @@ impl Controller {
     ) -> Result<Vec<u8>, StatusCode> {
         let tx_hash = get_tx_hash(&raw_tx)?.to_vec();
 
-        let res = {
+        {
             let auth = self.auth.read().await;
-            let mut pool = self.pool.write().await;
             auth.check_raw_tx(&raw_tx).await?;
+        }
+
+        let res = {
+            let mut pool = self.pool.write().await;
             pool.enqueue(raw_tx.clone())
         };
         if res {
