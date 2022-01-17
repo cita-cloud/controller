@@ -472,7 +472,6 @@ impl Controller {
                     wr.clear_candidate();
                 }
                 self.try_sync_block().await;
-                // self.task_sender.send(EventTask::SyncBlock).unwrap();
             }
             _ => {}
         }
@@ -518,7 +517,6 @@ impl Controller {
                     wr.clear_candidate();
                 }
                 self.try_sync_block().await;
-                // self.task_sender.send(EventTask::SyncBlock).unwrap();
                 Err(StatusCode::ProposalTooHigh)
             }
             Err(e) => Err(e),
@@ -556,9 +554,9 @@ impl Controller {
                                 let node = chain_status_init
                                     .chain_status
                                     .clone()
-                                    .unwrap()
+                                    .ok_or(StatusCode::NoneChainStatus)?
                                     .address
-                                    .unwrap();
+                                    .ok_or(StatusCode::NoProvideAddress)?;
                                 self.delete_global_status(&node).await;
                                 self.node_manager.set_ban_node(&node).await?;
                             }
@@ -568,55 +566,46 @@ impl Controller {
                     }
                 }
 
-                let status = chain_status_init.chain_status.unwrap();
-                let node = status.address.clone().unwrap();
+                let status = chain_status_init
+                    .chain_status
+                    .ok_or(StatusCode::NoneChainStatus)?;
+                let node = status.address.clone().ok_or(StatusCode::NoProvideAddress)?;
                 self.node_manager.set_origin(&node, msg.origin).await;
-                if self
-                    .node_manager
-                    .set_node(&node, status.clone())
-                    .await?
-                    .is_none()
-                {
-                    let mut chain_status_bytes = Vec::new();
-                    own_status.encode(&mut chain_status_bytes).map_err(|_| {
-                        log::warn!("process_network_msg: encode ChainStatus failed");
-                        StatusCode::EncodeError
-                    })?;
-                    let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
-                    let signature =
-                        sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
 
-                    self.unicast_chain_status_init(
-                        msg.origin,
-                        ChainStatusInit {
-                            chain_status: Some(own_status),
-                            signature,
-                        },
-                    )
-                    .await;
-                } else {
-                    self.unicast_chain_status(msg.origin, own_status).await;
+                match self.node_manager.set_node(&node, status.clone()).await {
+                    Ok(None) => {
+                        let chain_status_init = self.make_csi(own_status).await?;
+                        self.unicast_chain_status_init(msg.origin, chain_status_init)
+                            .await;
+                    }
+                    Ok(Some(_)) => {
+                        if own_status.height > status.height {
+                            self.unicast_chain_status(msg.origin, own_status).await;
+                        }
+                    }
+                    Err(status_code) => {
+                        if status_code == StatusCode::EarlyStatus
+                            && own_status.height < status.height
+                        {
+                            let mut chain = self.chain.write().await;
+                            chain.clear_candidate();
+
+                            let chain_status_init = self.make_csi(own_status).await?;
+                            self.unicast_chain_status_init(msg.origin, chain_status_init)
+                                .await;
+
+                            self.try_update_global_status(&node, status).await?;
+                        }
+                        return Err(status_code);
+                    }
                 }
                 self.try_update_global_status(&node, status).await?;
             }
             ControllerMsgType::ChainStatusInitRequestType => {
-                let own_status = self.get_status().await;
-                let mut chain_status_bytes = Vec::new();
-                own_status.encode(&mut chain_status_bytes).map_err(|_| {
-                    log::warn!("process_network_msg: encode ChainStatus failed");
-                    StatusCode::EncodeError
-                })?;
-                let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
-                let signature = sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
+                let chain_status_init = self.make_csi(self.get_status().await).await?;
 
-                self.unicast_chain_status_init(
-                    msg.origin,
-                    ChainStatusInit {
-                        chain_status: Some(own_status),
-                        signature,
-                    },
-                )
-                .await;
+                self.unicast_chain_status_init(msg.origin, chain_status_init)
+                    .await;
             }
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
@@ -1108,6 +1097,21 @@ impl Controller {
             }
         }
         Ok(())
+    }
+
+    pub async fn make_csi(&self, own_status: ChainStatus) -> Result<ChainStatusInit, StatusCode> {
+        let mut chain_status_bytes = Vec::new();
+        own_status.encode(&mut chain_status_bytes).map_err(|_| {
+            log::warn!("process_network_msg: encode ChainStatus failed");
+            StatusCode::EncodeError
+        })?;
+        let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
+        let signature = sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
+
+        Ok(ChainStatusInit {
+            chain_status: Some(own_status),
+            signature,
+        })
     }
 
     pub async fn get_sync_state(&self) -> bool {

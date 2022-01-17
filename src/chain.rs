@@ -44,7 +44,6 @@ pub struct Chain {
     block_number: u64,
 
     block_hash: Vec<u8>,
-
     // key of hashmap is block_hash
     candidates: HashMap<Vec<u8>, Block>,
 

@@ -29,24 +29,6 @@ pub struct SystemConfigFile {
     pub block_limit: u64,
 }
 
-impl SystemConfigFile {
-    pub fn new(config_path: &str) -> Self {
-        read_toml(config_path, "system_config")
-    }
-
-    pub fn to_system_config(&self) -> SystemConfig {
-        let chain_id = hex::decode(clean_0x(&self.chain_id)).expect("parsing chain_id failed!");
-        let admin = hex::decode(clean_0x(&self.admin)).expect("parsing admin failed!");
-        let mut validators = Vec::new();
-        for validator_str in self.validators.iter() {
-            let validator =
-                hex::decode(clean_0x(validator_str)).expect("parsing validator failed!");
-            validators.push(validator)
-        }
-        SystemConfig::new(self.clone(), chain_id, admin, validators)
-    }
-}
-
 // store related utxo tx hash into global region
 // begin from id 1000
 // lockid in utxo tx is also from 1000
@@ -69,29 +51,41 @@ pub const LOCK_ID_ADMIN: u64 = 1_002;
 pub const LOCK_ID_BLOCK_INTERVAL: u64 = 1_003;
 pub const LOCK_ID_VALIDATORS: u64 = 1_004;
 pub const LOCK_ID_EMERGENCY_BRAKE: u64 = 1_005;
-pub const LOCK_ID_BUTTON: u64 = 1_006;
+pub const LOCK_ID_BLOCK_LIMIT: u64 = 1_006;
+pub const LOCK_ID_BUTTON: u64 = 1_007;
 
 impl SystemConfig {
-    pub fn new(
-        sf: SystemConfigFile,
-        chain_id: Vec<u8>,
-        admin: Vec<u8>,
-        validators: Vec<Vec<u8>>,
-    ) -> Self {
+    pub fn new(config_path: &str) -> Self {
+        //generate SystemConfigFile from config.toml
+        let sys_config_file: SystemConfigFile = read_toml(config_path, "system_config");
+
+        //convert String to Vec<u8>
+        let chain_id =
+            hex::decode(clean_0x(&sys_config_file.chain_id)).expect("parsing chain_id failed!");
+        let admin = hex::decode(clean_0x(&sys_config_file.admin)).expect("parsing admin failed!");
+        let mut validators = Vec::new();
+        for validator_str in sys_config_file.validators.iter() {
+            let validator =
+                hex::decode(clean_0x(validator_str)).expect("parsing validator failed!");
+            validators.push(validator)
+        }
+
+        //init utxo_tx_hashes
         let mut map = HashMap::new();
         for id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
             map.insert(id, vec![0u8; 33]);
         }
 
+        //return SystemConfig
         SystemConfig {
-            version: sf.version,
+            version: sys_config_file.version,
             chain_id,
             admin,
-            block_interval: sf.block_interval,
+            block_interval: sys_config_file.block_interval,
             validators,
             emergency_brake: false,
             utxo_tx_hashes: map,
-            block_limit: sf.block_limit,
+            block_limit: sys_config_file.block_limit,
         }
     }
 
@@ -166,8 +160,12 @@ impl SystemConfig {
                 self.emergency_brake = !data.is_empty();
                 true
             }
+            LOCK_ID_BLOCK_LIMIT => {
+                self.block_limit = u64_decode(data);
+                true
+            }
             _ => {
-                warn!("Invalid lock_id");
+                warn!("Invalid lock_id:{}", lock_id);
                 false
             }
         };
@@ -182,14 +180,19 @@ fn u32_decode(data: Vec<u8>) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
+fn u64_decode(data: Vec<u8>) -> u64 {
+    let mut bytes: [u8; 8] = [0; 8];
+    bytes[..8].clone_from_slice(&data[..8]);
+    u64::from_be_bytes(bytes)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SystemConfigFile;
+    use super::SystemConfig;
 
     #[test]
     fn basic_test() {
-        let config = SystemConfigFile::new("example/config.toml");
-        let sys_config = config.to_system_config();
+        let sys_config = SystemConfig::new("example/config.toml");
 
         assert_eq!(sys_config.version, 0);
         assert_eq!(sys_config.chain_id, vec![1, 2, 3, 4, 5, 6]);
