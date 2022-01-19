@@ -220,6 +220,7 @@ pub async fn exec_block(block: Block) -> Result<(StatusCode, Vec<u8>), StatusCod
                 hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash,
             ))
         }
+        StatusCode::InvalidKey => Err(StatusCode::InvalidKey),
         _ => Err(StatusCode::ExecuteServerNotReady),
     }
 }
