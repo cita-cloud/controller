@@ -94,7 +94,7 @@ impl Default for ControllerConfig {
             sync_interval: 10,
             sync_req: 5,
             force_sync_epoch: 100,
-            wal_path: "./data/wal/chain".to_string(),
+            wal_path: "./data/wal_chain".to_string(),
         }
     }
 }

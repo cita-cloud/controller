@@ -43,13 +43,12 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
 };
-use log::{info, warn};
 use prost::Message;
 use status_code::StatusCode;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, RwLock},
-    time::{self, sleep},
+    time,
 };
 use tonic::{Request, Response};
 
@@ -219,7 +218,7 @@ impl Controller {
         }
         if let Some((new_consensus_config, status)) = status {
             self.set_status(status.clone()).await;
-            consensus_config = new_consensus_config.clone();
+            consensus_config = new_consensus_config;
             log::info!("wal redo status_height: {}", status.height);
         } else {
             let status = self
@@ -240,10 +239,10 @@ impl Controller {
                     .is_success()
                     .is_ok()
                 {
-                    info!("reconfigure consensus success! {:?}", &consensus_config);
+                    log::info!("reconfigure consensus success! {:?}", &consensus_config);
                     break;
                 } else {
-                    warn!("reconfigure consensus failed! Retrying")
+                    log::warn!("reconfigure consensus failed! Retrying")
                 }
             }
         }
@@ -277,7 +276,7 @@ impl Controller {
             }
             Ok(tx_hash)
         } else {
-            warn!(
+            log::warn!(
                 "rpc_send_raw_transaction: found dup tx(0x{}) in pool",
                 hex::encode(&tx_hash)
             );
@@ -293,7 +292,7 @@ impl Controller {
         match kms_client().check_transactions(raw_txs.clone()).await {
             Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
             Err(e) => {
-                warn!(
+                log::warn!(
                     "batch_transactions: check_transactions failed: {}",
                     e.to_string()
                 );
@@ -323,7 +322,7 @@ impl Controller {
         let block_number = load_data(storage_client(), 8, hash.clone())
             .await
             .map_err(|e| {
-                warn!(
+                log::warn!(
                     "load block(0x{})'s height failed, error: {}",
                     hex::encode(&hash),
                     e.to_string()
@@ -342,7 +341,7 @@ impl Controller {
         load_data(storage_client(), 4, block_number.to_be_bytes().to_vec())
             .await
             .map_err(|e| {
-                warn!(
+                log::warn!(
                     "load block({})'s hash failed, error: {}",
                     block_number,
                     e.to_string()
@@ -398,7 +397,7 @@ impl Controller {
         let controller_for_add = self.clone();
         if StatusCode::from(res.get_ref().code).is_success().is_ok() {
             tokio::spawn(async move {
-                sleep(Duration::from_secs(
+                time::sleep(Duration::from_secs(
                     controller_for_add.config.server_retry_interval,
                 ))
                 .await;
@@ -421,7 +420,7 @@ impl Controller {
             .get_peers_net_info(request)
             .await
             .map_err(|e| {
-                warn!("rpc_get_peers_info failed: {}", e.to_string());
+                log::warn!("rpc_get_peers_info failed: {}", e.to_string());
                 StatusCode::NetworkServerNotReady
             })?
             .into_inner();
@@ -457,7 +456,7 @@ impl Controller {
 
     pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<(), StatusCode> {
         let proposal_enum = ProposalEnum::decode(data).map_err(|_| {
-            warn!("chain_check_proposal: decode ProposalEnum failed");
+            log::warn!("chain_check_proposal: decode ProposalEnum failed");
             StatusCode::DecodeError
         })?;
 
@@ -563,7 +562,7 @@ impl Controller {
             ControllerMsgType::ChainStatusInitType => {
                 let chain_status_init =
                     ChainStatusInit::decode(msg.msg.as_slice()).map_err(|_| {
-                        warn!(
+                        log::warn!(
                             "process_network_msg: decode {} msg failed",
                             ControllerMsgType::ChainStatusInitType
                         );
@@ -643,7 +642,7 @@ impl Controller {
             }
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
-                    warn!("decode {} msg failed", ControllerMsgType::ChainStatusType);
+                    log::warn!("decode {} msg failed", ControllerMsgType::ChainStatusType);
                     StatusCode::DecodeError
                 })?;
 
@@ -696,7 +695,7 @@ impl Controller {
             ControllerMsgType::ChainStatusRespondType => {
                 let chain_status_respond =
                     ChainStatusRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        warn!(
+                        log::warn!(
                             "decode {} msg failed",
                             ControllerMsgType::ChainStatusRespondType
                         );
@@ -717,7 +716,7 @@ impl Controller {
             ControllerMsgType::SyncBlockType => {
                 let sync_block_request =
                     SyncBlockRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                        warn!("decode {} msg failed", ControllerMsgType::SyncBlockType);
+                        log::warn!("decode {} msg failed", ControllerMsgType::SyncBlockType);
                         StatusCode::DecodeError
                     })?;
 
@@ -735,7 +734,7 @@ impl Controller {
             ControllerMsgType::SyncBlockRespondType => {
                 let sync_block_respond =
                     SyncBlockRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        warn!(
+                        log::warn!(
                             "decode {} msg failed",
                             ControllerMsgType::SyncBlockRespondType
                         );
@@ -780,13 +779,13 @@ impl Controller {
                                 }
                                 Err(StatusCode::ProvideAddressError)
                                 | Err(StatusCode::NoProvideAddress) => {
-                                    warn!(
+                                    log::warn!(
                                         "sync_block_respond error, origin: {}, message: given address error",
                                         msg.origin,
                                     );
                                 }
                                 Err(e) => {
-                                    warn!(
+                                    log::warn!(
                                         "sync_block_respond error, origin: {}, message: {}",
                                         msg.origin,
                                         e.to_string()
@@ -810,7 +809,7 @@ impl Controller {
 
             ControllerMsgType::SyncTxType => {
                 let sync_tx = SyncTxRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                    warn!("decode {} msg failed", ControllerMsgType::SyncTxType);
+                    log::warn!("decode {} msg failed", ControllerMsgType::SyncTxType);
                     StatusCode::DecodeError
                 })?;
 
@@ -836,7 +835,7 @@ impl Controller {
 
             ControllerMsgType::SyncTxRespondType => {
                 let sync_tx_respond = SyncTxRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                    warn!("decode {} msg failed", ControllerMsgType::SyncTxRespondType);
+                    log::warn!("decode {} msg failed", ControllerMsgType::SyncTxRespondType);
                     StatusCode::DecodeError
                 })?;
 
@@ -855,7 +854,7 @@ impl Controller {
 
             ControllerMsgType::SendTxType => {
                 let send_tx = RawTransaction::decode(msg.msg.as_slice()).map_err(|_| {
-                    warn!("decode {} msg failed", ControllerMsgType::SendTxType);
+                    log::warn!("decode {} msg failed", ControllerMsgType::SendTxType);
                     StatusCode::DecodeError
                 })?;
 
@@ -864,7 +863,7 @@ impl Controller {
 
             ControllerMsgType::SendTxsType => {
                 let body = RawTransactions::decode(msg.msg.as_slice()).map_err(|_| {
-                    warn!("decode {} msg failed", ControllerMsgType::SendTxsType);
+                    log::warn!("decode {} msg failed", ControllerMsgType::SendTxsType);
                     StatusCode::DecodeError
                 })?;
 
