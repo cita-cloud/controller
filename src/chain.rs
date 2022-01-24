@@ -688,7 +688,7 @@ impl Chain {
             .await
             .save(height, ltype, msg)
             .map_err(|e| {
-                panic!("save wal failed: {}", e.to_string());
+                panic!("save wal failed: {}", e);
             })
             .unwrap()
     }
