@@ -396,7 +396,7 @@ impl Chain {
                 LogType::FinalizeBlock,
                 &store_data_block.value,
             )
-            .await?;
+            .await;
         }
 
         // exec block
@@ -682,19 +682,15 @@ impl Chain {
         self.own_proposal = None;
     }
 
-    async fn wal_save_message(
-        &self,
-        height: u64,
-        ltype: LogType,
-        msg: &[u8],
-    ) -> Result<u64, StatusCode> {
-        match self.wal_log.write().await.save(height, ltype, msg) {
-            Ok(hlen) => Ok(hlen),
-            Err(e) => {
-                log::error!("wal failed: {}", e.to_string());
-                Err(StatusCode::NoneStatusCode)
-            }
-        }
+    async fn wal_save_message(&self, height: u64, ltype: LogType, msg: &[u8]) -> u64 {
+        self.wal_log
+            .write()
+            .await
+            .save(height, ltype, msg)
+            .map_err(|e| {
+                panic!("save wal failed: {}", e.to_string());
+            })
+            .unwrap()
     }
 
     pub async fn load_wal_log(&mut self) -> Option<(ConsensusConfiguration, ChainStatus)> {
