@@ -587,13 +587,13 @@ impl Controller {
                         if status_code == StatusCode::EarlyStatus
                             && own_status.height < status.height
                         {
-                            let mut chain = self.chain.write().await;
-                            chain.clear_candidate();
-
+                            {
+                                let mut chain = self.chain.write().await;
+                                chain.clear_candidate();
+                            }
                             let chain_status_init = self.make_csi(own_status).await?;
                             self.unicast_chain_status_init(msg.origin, chain_status_init)
                                 .await;
-
                             self.try_update_global_status(&node, status).await?;
                         }
                         return Err(status_code);

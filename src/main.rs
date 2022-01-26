@@ -799,8 +799,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         loop {
             server_retry_interval.tick().await;
             // reconfigure consensus
+            info!("time to first reconfigure consensus!");
             {
-                info!("time to first reconfigure consensus!");
                 if reconfigure(ConsensusConfiguration {
                     height: current_block_number,
                     block_interval: sys_config_clone.clone().block_interval,
@@ -810,6 +810,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                 .is_success()
                 .is_ok()
                 {
+                    info!("consensus is ready");
                     break;
                 } else {
                     warn!("reconfigure failed! Retrying")
