@@ -198,30 +198,28 @@ pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
     })
 }
 
-pub async fn exec_block(block: Block) -> Result<(StatusCode, Vec<u8>), StatusCode> {
+pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
     let mut client = executor_client();
     let request = Request::new(block);
-    let response = client.exec(request).await.map_err(|e| {
-        warn!("exec_block failed: {}", e.to_string());
-        StatusCode::ExecuteServerNotReady
-    })?;
-
-    let hash_respond = response.into_inner();
-
-    match StatusCode::from(hash_respond.status.ok_or(StatusCode::NoneStatusCode)?) {
-        StatusCode::Success => Ok((
-            StatusCode::Success,
-            hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash,
-        )),
-        StatusCode::ReenterBlock => {
-            warn!("exec_block error: ReenterBlock");
-            Ok((
-                StatusCode::ReenterBlock,
-                hash_respond.hash.ok_or(StatusCode::NoneHashResult)?.hash,
-            ))
+    match client.exec(request).await {
+        Ok(response) => {
+            let hash_respond = response.into_inner();
+            (
+                StatusCode::from(
+                    hash_respond
+                        .status
+                        .unwrap_or(StatusCode::NoneStatusCode.into()),
+                ),
+                hash_respond
+                    .hash
+                    .unwrap_or(cita_cloud_proto::common::Hash { hash: vec![] })
+                    .hash,
+            )
         }
-        StatusCode::InvalidKey => Err(StatusCode::InvalidKey),
-        _ => Err(StatusCode::ExecuteServerNotReady),
+        Err(e) => {
+            warn!("exec_block failed: {}", e.to_string());
+            (StatusCode::ExecuteServerNotReady, vec![])
+        }
     }
 }
 

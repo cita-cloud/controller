@@ -201,22 +201,20 @@ impl Controller {
     }
 
     pub async fn init(&self, init_block_number: u64, sys_config: SystemConfig) {
-        let status;
         let sys_config_clone = sys_config.clone();
         let mut consensus_config = ConsensusConfiguration {
             height: init_block_number,
             block_interval: sys_config_clone.block_interval,
             validators: sys_config_clone.validators,
         };
-        {
+        if let Some((new_consensus_config, status)) = {
             let mut chain = self.chain.write().await;
             chain
                 .init(init_block_number, self.config.server_retry_interval)
                 .await;
             chain.init_auth(init_block_number).await;
-            status = chain.load_wal_log().await;
-        }
-        if let Some((new_consensus_config, status)) = status {
+            chain.load_wal_log().await
+        } {
             self.set_status(status.clone()).await;
             consensus_config = new_consensus_config;
             log::info!("wal redo status_height: {}", status.height);
@@ -239,7 +237,7 @@ impl Controller {
                     .is_success()
                     .is_ok()
                 {
-                    log::info!("reconfigure consensus success! {:?}", &consensus_config);
+                    log::info!("reconfigure consensus success!");
                     break;
                 } else {
                     log::warn!("reconfigure consensus failed! Retrying")
