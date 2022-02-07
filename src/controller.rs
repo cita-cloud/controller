@@ -970,6 +970,11 @@ impl Controller {
             return Ok(true);
         }
 
+        // request block if own height behind remote's
+        if status.height > own_status.height {
+            self.try_sync_block().await;
+        }
+
         Ok(false)
     }
 
