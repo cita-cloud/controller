@@ -46,7 +46,7 @@ impl From<u8> for LogType {
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
-pub struct StoreData {
+pub struct WalStoreData {
     pub region: u32,
     pub key: Vec<u8>,
     pub value: Vec<u8>,
@@ -215,6 +215,7 @@ impl Wal {
         Ok(hlen as u64)
     }
 
+    #[allow(dead_code)]
     pub fn get_cur_height(&self) -> u64 {
         self.current_height
     }
