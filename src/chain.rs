@@ -18,7 +18,7 @@ use crate::{
     pool::Pool,
     util::*,
     utxo_set::SystemConfig,
-    wal::{LogType, StoreData, Wal},
+    wal::{LogType, Wal, WalStoreData},
     GenesisBlock,
 };
 use cita_cloud_proto::{
@@ -104,7 +104,12 @@ impl Chain {
                     log::info!("executor is ready!");
                     break;
                 }
-                Err(code) => log::warn!("chain init failed with: {:?}! Retrying.", &code),
+                Err(StatusCode::ExecuteServerNotReady) => {
+                    log::warn!("executor server not ready! Retrying.")
+                }
+                Err(e) => {
+                    panic!("init executor panic: {:?}", e);
+                }
             }
         }
     }
@@ -348,7 +353,7 @@ impl Chain {
         };
 
         // region 1: tx_hash - tx
-        let mut store_data_sys_config_utxo: Option<StoreData> = None;
+        let mut store_data_sys_config_utxo = None;
         if let Some(raw_txs) = block.body.clone() {
             for raw_tx in raw_txs.body {
                 if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
@@ -359,7 +364,7 @@ impl Chain {
                     if res {
                         // if sys_config changed, store utxo tx hash into global region
                         let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
-                        store_data_sys_config_utxo = Some(StoreData {
+                        store_data_sys_config_utxo = Some(WalStoreData {
                             region: 0,
                             key: lock_id.to_be_bytes().to_vec(),
                             value: utxo_tx.transaction_hash.clone(),
@@ -371,20 +376,20 @@ impl Chain {
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
 
-        let store_data_block = StoreData {
+        let store_data_block = WalStoreData {
             region: 11,
             key: block_height_bytes.clone(),
             value: block_bytes,
         };
 
         // region 0: 0 - current height; 1 - current hash
-        let store_data_current_height = StoreData {
+        let store_data_current_height = WalStoreData {
             region: 0,
             key: 0u64.to_be_bytes().to_vec(),
             value: block_height_bytes.clone(),
         };
 
-        let store_data_current_hash = StoreData {
+        let store_data_current_hash = WalStoreData {
             region: 0,
             key: 1u64.to_be_bytes().to_vec(),
             value: block_hash.clone(),
@@ -396,22 +401,22 @@ impl Chain {
                 LogType::FinalizeBlock,
                 &store_data_block.value,
             )
-            .await;
+            .await?;
         }
 
         // exec block
-        let (executed_block_status, executed_block_hash) =
-            exec_block(block).await.map_err(|e| {
-                log::warn!("exec_block({}) error: {}", block_height, e.to_string());
-                e
-            })?;
-        if !wal_redo {
-            executed_block_status.is_success().map_err(|e| {
-                log::warn!("exec_block({}) error: {}", block_height, e.to_string());
-                e
-            })?;
+        let (executed_block_status, executed_block_hash) = exec_block(block).await;
+        match executed_block_status {
+            StatusCode::Success | StatusCode::ReenterBlock if wal_redo => {}
+            status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
         }
-        log::info!("executed_block_hash: {:?}", &executed_block_hash);
+
+        log::info!(
+            "exec_block({}): status: {}, executed_block_hash: {:?}",
+            block_height,
+            executed_block_status,
+            &executed_block_hash
+        );
 
         // update auth and pool
         {
@@ -464,13 +469,24 @@ impl Chain {
         .await
         .is_success()?;
 
+        self.wal_log
+            .write()
+            .await
+            .clear_file()
+            .map_err(|e| {
+                panic!(
+                    "exec_block({}) wal clear_file error: {}",
+                    block_height,
+                    e.to_string()
+                );
+            })
+            .unwrap();
+
         log::info!(
             "finalize_block: {}, block_hash: 0x{}",
             block_height,
             hex::encode(&block_hash)
         );
-
-        self.wal_log.write().await.clear_file().unwrap();
         Ok(())
     }
 
@@ -531,7 +547,7 @@ impl Chain {
             self.finalize_block(full_block, block_hash.clone(), false)
                 .await?;
 
-            self.block_number += 1;
+            self.block_number = height;
             self.block_hash = block_hash;
 
             // candidate_block need update
@@ -682,15 +698,19 @@ impl Chain {
         self.own_proposal = None;
     }
 
-    async fn wal_save_message(&self, height: u64, ltype: LogType, msg: &[u8]) -> u64 {
+    async fn wal_save_message(
+        &self,
+        height: u64,
+        ltype: LogType,
+        msg: &[u8],
+    ) -> Result<u64, StatusCode> {
         self.wal_log
             .write()
             .await
             .save(height, ltype, msg)
             .map_err(|e| {
-                panic!("save wal failed: {}", e);
+                panic!("wal_save_message: failed: {}", e);
             })
-            .unwrap()
     }
 
     pub async fn load_wal_log(&mut self) -> Option<(ConsensusConfiguration, ChainStatus)> {
@@ -698,62 +718,24 @@ impl Chain {
         if vec_buf.is_empty() {
             return None;
         }
-        let height = self.wal_log.read().await.get_cur_height();
-        let config = self.get_system_config().await;
-        let mut consensus_config = ConsensusConfiguration {
-            height,
-            block_interval: config.block_interval,
-            validators: config.validators.clone(),
-        };
-        let mut chain_status = ChainStatus {
-            version: config.version,
-            chain_id: config.chain_id.clone(),
-            height,
-            hash: Some(Hash {
-                hash: self.block_hash.clone(),
-            }),
-            address: None,
-        };
         for (mtype, block_bytes) in vec_buf {
             let log_type: LogType = mtype.into();
-            log::info!("load_wal_log chain type {:?}({})", log_type, mtype);
-            if let LogType::FinalizeBlock = log_type {
-                let block: Block = Block::decode(block_bytes.as_slice())
-                    .map_err(|e| panic!("load_wal_log: decode({:?}) error {}", log_type, e))
-                    .unwrap();
-                let header = block.header.as_ref().unwrap();
-                let block_hash = get_block_hash(kms_client(), Some(header)).await.unwrap();
-
-                self.finalize_block(block.clone(), block_hash.clone(), true)
-                    .await
-                    .map_err(|e| {
-                        panic!("load_wal_log in finalize_block error {}", e);
-                    })
-                    .unwrap();
-
-                self.block_number = header.height;
-                self.block_hash = block_hash;
-
-                consensus_config = ConsensusConfiguration {
-                    height: self.block_number,
-                    block_interval: config.block_interval,
-                    validators: config.validators.clone(),
-                };
-                chain_status = ChainStatus {
-                    version: config.version,
-                    chain_id: config.chain_id.clone(),
-                    height: self.block_number,
-                    hash: Some(Hash {
-                        hash: self.block_hash.clone(),
-                    }),
-                    address: None,
-                };
+            log::info!("load_wal_log chain type {:?}", log_type);
+            match log_type {
+                LogType::FinalizeBlock => {
+                    let block = Block::decode(block_bytes.as_slice())
+                        .map_err(|e| {
+                            log::warn!("load_wal_log: decode({:?}) error {}", log_type, e);
+                            StatusCode::DecodeError
+                        })
+                        .unwrap();
+                    return Some(self.process_block(block).await.unwrap());
+                }
+                tp => {
+                    panic!("only LogType::FinalizeBlock for controller, get {:?}", tp);
+                }
             }
         }
-        // candidate_block need update
-        self.clear_candidate();
-
-        log::info!("load_wal_log ends");
-        Some((consensus_config, chain_status))
+        return None;
     }
 }
