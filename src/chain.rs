@@ -407,7 +407,12 @@ impl Chain {
         // exec block
         let (executed_block_status, executed_block_hash) = exec_block(block).await;
         match executed_block_status {
-            StatusCode::Success | StatusCode::ReenterBlock if wal_redo => {}
+            StatusCode::Success => {}
+            StatusCode::ReenterBlock => {
+                if !wal_redo {
+                    return Err(StatusCode::ReenterBlock);
+                }
+            }
             status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
         }
 
@@ -474,11 +479,7 @@ impl Chain {
             .await
             .clear_file()
             .map_err(|e| {
-                panic!(
-                    "exec_block({}) wal clear_file error: {}",
-                    block_height,
-                    e.to_string()
-                );
+                panic!("exec_block({}) wal clear_file error: {}", block_height, e);
             })
             .unwrap();
 
@@ -579,6 +580,7 @@ impl Chain {
     pub async fn process_block(
         &mut self,
         block: Block,
+        wal_redo: bool,
     ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
         let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
         let header = block.header.clone().unwrap();
@@ -640,7 +642,7 @@ impl Chain {
         self.finalize_block(
             block,
             get_block_hash(kms_client(), Some(&header)).await?,
-            false,
+            wal_redo,
         )
         .await?;
 
@@ -729,13 +731,13 @@ impl Chain {
                             StatusCode::DecodeError
                         })
                         .unwrap();
-                    return Some(self.process_block(block).await.unwrap());
+                    return Some(self.process_block(block, true).await.unwrap());
                 }
                 tp => {
                     panic!("only LogType::FinalizeBlock for controller, get {:?}", tp);
                 }
             }
         }
-        return None;
+        None
     }
 }
