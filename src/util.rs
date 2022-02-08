@@ -208,7 +208,7 @@ pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
                 StatusCode::from(
                     hash_respond
                         .status
-                        .unwrap_or(StatusCode::NoneStatusCode.into()),
+                        .unwrap_or_else(|| StatusCode::NoneStatusCode.into()),
                 ),
                 hash_respond
                     .hash

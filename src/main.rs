@@ -887,7 +887,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                     .await
                                 {
                                     chain.clear_candidate();
-                                    match chain.process_block(block).await {
+                                    match chain.process_block(block, false).await {
                                         Ok((consensus_config, mut status)) => {
                                             // todo reconfigure failed
                                             reconfigure(consensus_config)
