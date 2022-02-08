@@ -57,7 +57,7 @@ use cita_cloud_proto::{
     },
     network::RegisterInfo,
 };
-use clap::Clap;
+use clap::Parser;
 use cloud_util::{
     crypto::{hash_data, sign_message},
     network::register_network_msg_handler,
@@ -81,14 +81,14 @@ const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version = "6.3.0", author = "Rivtower Technologies.")]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 enum SubCommand {
     /// print information from git
     #[clap(name = "git")]
@@ -99,7 +99,7 @@ enum SubCommand {
 }
 
 /// A subcommand for run
-#[derive(Clap)]
+#[derive(Parser)]
 struct RunOpts {
     /// Sets grpc port of this service.
     #[clap(short = 'p', long = "port", default_value = "50004")]
