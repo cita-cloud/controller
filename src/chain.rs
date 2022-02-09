@@ -29,6 +29,7 @@ use cloud_util::{
 };
 use prost::Message;
 use status_code::StatusCode;
+use std::path::Path;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
 
@@ -67,6 +68,11 @@ impl Chain {
         genesis: GenesisBlock,
         wal_path: &str,
     ) -> Self {
+        // wal_path must be relative path
+        assert!(
+            !Path::new(wal_path).is_absolute(),
+            "wal_path must be relative path"
+        );
         Chain {
             block_number: current_block_number,
             block_hash: current_block_hash,
