@@ -18,7 +18,7 @@ use crate::{
     pool::Pool,
     util::*,
     utxo_set::SystemConfig,
-    wal::{LogType, Wal, WalStoreData},
+    wal::{LogType, Wal},
     GenesisBlock,
 };
 use cita_cloud_proto::{
@@ -60,9 +60,6 @@ pub struct Chain {
     genesis: GenesisBlock,
 
     wal_log: Arc<RwLock<Wal>>,
-
-    /// executor service port
-    executor_port: u16,
 }
 
 impl Chain {
@@ -83,7 +80,6 @@ impl Chain {
             auth,
             genesis,
             wal_log: Arc::new(RwLock::new(Wal::create(wal_path).unwrap())),
-            executor_port: 50002,
         }
     }
 
@@ -329,6 +325,18 @@ impl Chain {
         }
     }
 
+    /// ### ReenterBlock needs to be handled and can only be ignored if wal_redo is true
+    /// ```
+    /// match executed_block_status {
+    ///     StatusCode::Success => {}
+    ///     StatusCode::ReenterBlock => {
+    ///        if !wal_redo {
+    ///            return Err(StatusCode::ReenterBlock);
+    ///        }
+    ///    }
+    ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
+    /// }
+    /// ```
     async fn finalize_block(
         &self,
         block: Block,
@@ -352,8 +360,12 @@ impl Chain {
             buf
         };
 
+        if block_height > 0 && !wal_redo {
+            self.wal_save_message(block_height, LogType::FinalizeBlock, &block_bytes)
+                .await?;
+        }
+
         // region 1: tx_hash - tx
-        let mut store_data_sys_config_utxo = None;
         if let Some(raw_txs) = block.body.clone() {
             for raw_tx in raw_txs.body {
                 if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
@@ -364,45 +376,20 @@ impl Chain {
                     if res {
                         // if sys_config changed, store utxo tx hash into global region
                         let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
-                        store_data_sys_config_utxo = Some(WalStoreData {
-                            region: 0,
-                            key: lock_id.to_be_bytes().to_vec(),
-                            value: utxo_tx.transaction_hash.clone(),
-                        });
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            utxo_tx.transaction_hash,
+                        )
+                        .await
+                        .is_success()?;
                     }
                 };
             }
         }
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
-
-        let store_data_block = WalStoreData {
-            region: 11,
-            key: block_height_bytes.clone(),
-            value: block_bytes,
-        };
-
-        // region 0: 0 - current height; 1 - current hash
-        let store_data_current_height = WalStoreData {
-            region: 0,
-            key: 0u64.to_be_bytes().to_vec(),
-            value: block_height_bytes.clone(),
-        };
-
-        let store_data_current_hash = WalStoreData {
-            region: 0,
-            key: 1u64.to_be_bytes().to_vec(),
-            value: block_hash.clone(),
-        };
-
-        if block_height > 0 && !wal_redo {
-            self.wal_save_message(
-                block_height,
-                LogType::FinalizeBlock,
-                &store_data_block.value,
-            )
-            .await?;
-        }
 
         // exec block
         let (executed_block_status, executed_block_hash) = exec_block(block).await;
@@ -431,24 +418,15 @@ impl Chain {
             pool.update(&tx_hash_list);
         }
 
-        if let Some(store_data_sys_config_utxo) = store_data_sys_config_utxo {
-            store_data(
-                storage_client(),
-                store_data_sys_config_utxo.region,
-                store_data_sys_config_utxo.key,
-                store_data_sys_config_utxo.value,
-            )
-            .await
-            .is_success()?;
-        }
         store_data(
             storage_client(),
-            store_data_block.region,
-            store_data_block.key,
-            store_data_block.value,
+            11,
+            block_height_bytes.clone(),
+            block_bytes,
         )
         .await
         .is_success()?;
+
         store_data(
             storage_client(),
             6,
@@ -457,19 +435,22 @@ impl Chain {
         )
         .await
         .is_success()?;
+
+        // region 0: 0 - current height; 1 - current hash
         store_data(
             storage_client(),
-            store_data_current_height.region,
-            store_data_current_height.key,
-            store_data_current_height.value,
+            0,
+            0u64.to_be_bytes().to_vec(),
+            block_height_bytes,
         )
         .await
         .is_success()?;
+
         store_data(
             storage_client(),
-            store_data_current_hash.region,
-            store_data_current_hash.key,
-            store_data_current_hash.value,
+            0,
+            1u64.to_be_bytes().to_vec(),
+            block_hash.clone(),
         )
         .await
         .is_success()?;

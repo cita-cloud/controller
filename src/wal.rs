@@ -14,7 +14,6 @@
 
 use crc32fast::Hasher as CrcHasher;
 use log::warn;
-use serde::{Deserialize, Serialize};
 use std::fs::{read_dir, DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::str;
@@ -43,13 +42,6 @@ impl From<u8> for LogType {
             _ => LogType::Skip,
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
-pub struct WalStoreData {
-    pub region: u32,
-    pub key: Vec<u8>,
-    pub value: Vec<u8>,
 }
 
 pub struct Wal {
