@@ -67,6 +67,8 @@ pub struct ControllerConfig {
     pub sync_req: u64,
     /// the height epoch to force send sync
     pub force_sync_epoch: u64,
+    /// WAL log path
+    pub wal_path: String,
 }
 
 impl Default for ControllerConfig {
@@ -92,6 +94,7 @@ impl Default for ControllerConfig {
             sync_interval: 10,
             sync_req: 5,
             force_sync_epoch: 100,
+            wal_path: "./data/wal_chain".to_string(),
         }
     }
 }

@@ -25,6 +25,7 @@ mod protocol;
 mod util;
 mod event;
 mod utxo_set;
+mod wal;
 
 use crate::{
     chain::ChainStep,
@@ -56,7 +57,7 @@ use cita_cloud_proto::{
     },
     network::RegisterInfo,
 };
-use clap::Clap;
+use clap::Parser;
 use cloud_util::{
     crypto::{hash_data, sign_message},
     network::register_network_msg_handler,
@@ -80,14 +81,14 @@ const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version = "6.3.0", author = "Rivtower Technologies.")]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 enum SubCommand {
     /// print information from git
     #[clap(name = "git")]
@@ -98,7 +99,7 @@ enum SubCommand {
 }
 
 /// A subcommand for run
-#[derive(Clap)]
+#[derive(Parser)]
 struct RunOpts {
     /// Sets grpc port of this service.
     #[clap(short = 'p', long = "port", default_value = "50004")]
@@ -791,34 +792,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     }
     info!("load sys_config complete");
 
-    // send configuration to consensus
-    let sys_config_clone = sys_config.clone();
-    let mut server_retry_interval =
-        time::interval(Duration::from_secs(config.server_retry_interval));
-    tokio::spawn(async move {
-        loop {
-            server_retry_interval.tick().await;
-            // reconfigure consensus
-            info!("time to first reconfigure consensus!");
-            {
-                if reconfigure(ConsensusConfiguration {
-                    height: current_block_number,
-                    block_interval: sys_config_clone.clone().block_interval,
-                    validators: sys_config_clone.clone().validators,
-                })
-                .await
-                .is_success()
-                .is_ok()
-                {
-                    info!("consensus is ready");
-                    break;
-                } else {
-                    warn!("reconfigure failed! Retrying")
-                }
-            }
-        }
-    });
-
     // todo config
     let (task_sender, mut task_receiver) = mpsc::channel(64);
 
@@ -914,7 +887,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                     .await
                                 {
                                     chain.clear_candidate();
-                                    match chain.process_block(block).await {
+                                    match chain.process_block(block, false).await {
                                         Ok((consensus_config, mut status)) => {
                                             // todo reconfigure failed
                                             reconfigure(consensus_config)

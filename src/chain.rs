@@ -13,7 +13,12 @@
 // limitations under the License.
 
 use crate::{
-    auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
+    auth::Authentication,
+    node_manager::ChainStatus,
+    pool::Pool,
+    util::*,
+    utxo_set::SystemConfig,
+    wal::{LogType, Wal},
     GenesisBlock,
 };
 use cita_cloud_proto::{
@@ -26,7 +31,6 @@ use cloud_util::{
     storage::{load_data, store_data},
     unix_now,
 };
-use log::{info, warn};
 use prost::Message;
 use status_code::StatusCode;
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -54,6 +58,8 @@ pub struct Chain {
     auth: Arc<RwLock<Authentication>>,
 
     genesis: GenesisBlock,
+
+    wal_log: Arc<RwLock<Wal>>,
 }
 
 impl Chain {
@@ -63,6 +69,7 @@ impl Chain {
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
+        wal_path: &str,
     ) -> Self {
         Chain {
             block_number: current_block_number,
@@ -72,27 +79,33 @@ impl Chain {
             pool,
             auth,
             genesis,
+            wal_log: Arc::new(RwLock::new(Wal::create(wal_path).unwrap())),
         }
     }
 
     pub async fn init(&self, init_block_number: u64, server_retry_interval: u64) {
         if init_block_number == 0 {
-            info!("finalize genesis block");
+            log::info!("finalize genesis block");
         } else {
-            info!("confirm executor status");
+            log::info!("confirm executor status");
         }
         let mut interval = time::interval(Duration::from_secs(server_retry_interval));
         loop {
             interval.tick().await;
             match self
-                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
+                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone(), false)
                 .await
             {
                 Ok(()) | Err(StatusCode::ReenterBlock) => {
-                    info!("executor is ready!");
+                    log::info!("executor is ready!");
                     break;
                 }
-                Err(code) => warn!("chain init failed with: {:?}! Retrying.", &code),
+                Err(StatusCode::ExecuteServerNotReady) => {
+                    log::warn!("executor server not ready! Retrying.")
+                }
+                Err(e) => {
+                    panic!("init executor panic: {:?}", e);
+                }
             }
         }
     }
@@ -124,7 +137,7 @@ impl Chain {
                 let auth = self.auth.read().await;
                 auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)
                     .map_err(|e| {
-                        warn!("get_proposal: check_transactions failed: {:?}", e);
+                        log::warn!("get_proposal: check_transactions failed: {:?}", e);
                         e
                     })?;
             }
@@ -167,7 +180,7 @@ impl Chain {
 
         let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
         proposal.encode(&mut proposal_bytes).map_err(|_| {
-            warn!("encode proposal error");
+            log::warn!("encode proposal error");
             StatusCode::EncodeError
         })?;
 
@@ -182,13 +195,13 @@ impl Chain {
         let header = block.header.clone().unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
-            warn!("add_remote_proposal: ProposalTooLow, self block number: {}, remote block number: {}",
+            log::warn!("add_remote_proposal: ProposalTooLow, self block number: {}, remote block number: {}",
             self.block_number, block_height);
             return Err(StatusCode::ProposalTooLow);
         }
 
         if block_height > self.block_number + 1 {
-            warn!("add_remote_proposal: ProposalTooHigh, self block number: {}, remote block number: {}",
+            log::warn!("add_remote_proposal: ProposalTooHigh, self block number: {}, remote block number: {}",
                   self.block_number, block_height);
             return Err(StatusCode::ProposalTooHigh);
         }
@@ -219,7 +232,7 @@ impl Chain {
         } else {
             let tx_list = {
                 let mut pool = self.pool.write().await;
-                info!("add_proposal: tx poll len {}", pool.len());
+                log::info!("add_proposal: tx poll len {}", pool.len());
                 pool.package(self.block_number + 1)
             };
 
@@ -257,7 +270,7 @@ impl Chain {
             self.own_proposal = Some((height, block_hash.clone(), full_block.clone()));
             self.candidates.insert(block_hash.clone(), full_block);
 
-            info!(
+            log::info!(
                 "proposal {} block_hash 0x{} prevhash 0x{}",
                 height,
                 hex::encode(&block_hash),
@@ -270,17 +283,19 @@ impl Chain {
 
     pub async fn check_proposal(&self, h: u64, proposal: ProposalEnum) -> Result<(), StatusCode> {
         if h <= self.block_number {
-            warn!(
+            log::warn!(
                 "check_proposal: ProposalTooLow, self block number: {}, remote block number: {}",
-                self.block_number, h
+                self.block_number,
+                h
             );
             return Err(StatusCode::ProposalTooLow);
         }
 
         if h > self.block_number + 1 {
-            warn!(
+            log::warn!(
                 "check_proposal: ProposalTooHigh, self block number: {}, remote block number: {}",
-                self.block_number, h
+                self.block_number,
+                h
             );
             return Err(StatusCode::ProposalTooHigh);
         }
@@ -297,7 +312,7 @@ impl Chain {
                 if bft_proposal.pre_state_root == state_root && bft_proposal.pre_proof == proof {
                     Ok(())
                 } else {
-                    warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
+                    log::warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
                           hex::encode(&bft_proposal.pre_state_root),
                           hex::encode(&state_root),
                           hex::encode(&bft_proposal.pre_proof),
@@ -310,7 +325,46 @@ impl Chain {
         }
     }
 
-    async fn finalize_block(&self, block: Block, block_hash: Vec<u8>) -> Result<(), StatusCode> {
+    /// ### ReenterBlock needs to be handled and can only be ignored if wal_redo is true
+    /// ```
+    /// match executed_block_status {
+    ///     StatusCode::Success => {}
+    ///     StatusCode::ReenterBlock => {
+    ///        if !wal_redo {
+    ///            return Err(StatusCode::ReenterBlock);
+    ///        }
+    ///    }
+    ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
+    /// }
+    /// ```
+    async fn finalize_block(
+        &self,
+        block: Block,
+        block_hash: Vec<u8>,
+        wal_redo: bool,
+    ) -> Result<(), StatusCode> {
+        let block_height = block
+            .header
+            .as_ref()
+            .ok_or(StatusCode::NoneBlockHeader)?
+            .height;
+
+        let block_height_bytes = block_height.to_be_bytes().to_vec();
+
+        let block_bytes = {
+            let mut buf = Vec::with_capacity(block.encoded_len());
+            block.encode(&mut buf).map_err(|_| {
+                log::warn!("encode Block failed");
+                StatusCode::EncodeError
+            })?;
+            buf
+        };
+
+        if block_height > 0 && !wal_redo {
+            self.wal_save_message(block_height, LogType::FinalizeBlock, &block_bytes)
+                .await?;
+        }
+
         // region 1: tx_hash - tx
         if let Some(raw_txs) = block.body.clone() {
             for raw_tx in raw_txs.body {
@@ -326,7 +380,7 @@ impl Chain {
                             storage_client(),
                             0,
                             lock_id.to_be_bytes().to_vec(),
-                            utxo_tx.transaction_hash.clone(),
+                            utxo_tx.transaction_hash,
                         )
                         .await
                         .is_success()?;
@@ -335,21 +389,34 @@ impl Chain {
             }
         }
 
-        let block_bytes = {
-            let mut buf = Vec::with_capacity(block.encoded_len());
-            block.encode(&mut buf).map_err(|_| {
-                warn!("encode Block failed");
-                StatusCode::EncodeError
-            })?;
-            buf
-        };
+        let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
 
-        let block_height = block
-            .header
-            .as_ref()
-            .ok_or(StatusCode::NoneBlockHeader)?
-            .height;
-        let block_height_bytes = block_height.to_be_bytes().to_vec();
+        // exec block
+        let (executed_block_status, executed_block_hash) = exec_block(block).await;
+        match executed_block_status {
+            StatusCode::Success => {}
+            StatusCode::ReenterBlock => {
+                if !wal_redo {
+                    return Err(StatusCode::ReenterBlock);
+                }
+            }
+            status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
+        }
+
+        log::info!(
+            "exec_block({}): status: {}, executed_block_hash: {:?}",
+            block_height,
+            executed_block_status,
+            &executed_block_hash
+        );
+
+        // update auth and pool
+        {
+            let mut auth = self.auth.write().await;
+            let mut pool = self.pool.write().await;
+            auth.insert_tx_hash(block_height, tx_hash_list.clone());
+            pool.update(&tx_hash_list);
+        }
 
         store_data(
             storage_client(),
@@ -360,30 +427,14 @@ impl Chain {
         .await
         .is_success()?;
 
-        let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
-
-        // exec block
-        let executed_block_hash = exec_block(block).await.map_err(|e| {
-            warn!("exec_block({}) error: {}", block_height, e.to_string());
-            e
-        })?;
-        // region 6 : block_height - executed_block_hash
         store_data(
             storage_client(),
             6,
             block_height_bytes.clone(),
-            executed_block_hash.clone(),
+            executed_block_hash,
         )
         .await
         .is_success()?;
-
-        // update auth and pool
-        {
-            let mut auth = self.auth.write().await;
-            let mut pool = self.pool.write().await;
-            auth.insert_tx_hash(block_height, tx_hash_list.clone());
-            pool.update(&tx_hash_list);
-        }
 
         // region 0: 0 - current height; 1 - current hash
         store_data(
@@ -394,6 +445,7 @@ impl Chain {
         )
         .await
         .is_success()?;
+
         store_data(
             storage_client(),
             0,
@@ -403,12 +455,20 @@ impl Chain {
         .await
         .is_success()?;
 
-        info!(
+        self.wal_log
+            .write()
+            .await
+            .clear_file()
+            .map_err(|e| {
+                panic!("exec_block({}) wal clear_file error: {}", block_height, e);
+            })
+            .unwrap();
+
+        log::info!(
             "finalize_block: {}, block_hash: 0x{}",
             block_height,
             hex::encode(&block_hash)
         );
-
         Ok(())
     }
 
@@ -419,31 +479,33 @@ impl Chain {
         proof: &[u8],
     ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
         if height <= self.block_number {
-            warn!(
+            log::warn!(
                 "commit_block: ProposalTooLow, self block number: {}, remote block number: {}",
-                self.block_number, height
+                self.block_number,
+                height
             );
             return Err(StatusCode::ProposalTooLow);
         }
 
         if height > self.block_number + 1 {
-            warn!(
+            log::warn!(
                 "commit_block: ProposalTooHigh, self block number: {}, remote block number: {}",
-                self.block_number, height
+                self.block_number,
+                height
             );
             return Err(StatusCode::ProposalTooHigh);
         }
 
         let bft_proposal = match ProposalEnum::decode(proposal)
             .map_err(|_| {
-                warn!("decode ProposalEnum failed");
+                log::warn!("decode ProposalEnum failed");
                 StatusCode::DecodeError
             })?
             .proposal
         {
             Some(Proposal::BftProposal(bft_proposal)) => Ok(bft_proposal),
             None => {
-                warn!("commit_block: proposal({}) is none", height);
+                log::warn!("commit_block: proposal({}) is none", height);
                 Err(StatusCode::NoneProposal)
             }
         }?;
@@ -456,17 +518,18 @@ impl Chain {
             let prev_hash = full_block.header.clone().unwrap().prevhash;
 
             if prev_hash != self.block_hash {
-                warn!(
+                log::warn!(
                     "commit_block: proposal(0x{})'s prev-hash is not equal with chain's block_hash",
                     hex::encode(&block_hash)
                 );
                 return Err(StatusCode::ProposalCheckError);
             }
 
-            info!("height: {} hash 0x{}", height, hex::encode(&block_hash));
-            self.finalize_block(full_block, block_hash.clone()).await?;
+            log::info!("height: {} hash 0x{}", height, hex::encode(&block_hash));
+            self.finalize_block(full_block, block_hash.clone(), false)
+                .await?;
 
-            self.block_number += 1;
+            self.block_number = height;
             self.block_hash = block_hash;
 
             // candidate_block need update
@@ -498,29 +561,32 @@ impl Chain {
     pub async fn process_block(
         &mut self,
         block: Block,
+        wal_redo: bool,
     ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
         let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
         let header = block.header.clone().unwrap();
         let height = header.height;
 
         if height <= self.block_number {
-            warn!(
+            log::warn!(
                 "process_block: ProposalTooLow, self block number: {}, remote block number: {}",
-                self.block_number, height
+                self.block_number,
+                height
             );
             return Err(StatusCode::ProposalTooLow);
         }
 
         if height > self.block_number + 1 {
-            warn!(
+            log::warn!(
                 "process_block: ProposalTooHigh, self block number: {}, remote block number: {}",
-                self.block_number, height
+                self.block_number,
+                height
             );
             return Err(StatusCode::ProposalTooHigh);
         }
 
         if header.prevhash != self.block_hash {
-            warn!(
+            log::warn!(
                 "prev_hash of block({}) is not equal with self block hash",
                 height
             );
@@ -545,7 +611,7 @@ impl Chain {
         {
             Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
             Err(e) => {
-                warn!(
+                log::warn!(
                     "check_transactions check block(0x{})'s txs failed: {}",
                     hex::encode(&block_hash),
                     e.to_string()
@@ -554,8 +620,12 @@ impl Chain {
             }
         }
 
-        self.finalize_block(block, get_block_hash(kms_client(), Some(&header)).await?)
-            .await?;
+        self.finalize_block(
+            block,
+            get_block_hash(kms_client(), Some(&header)).await?,
+            wal_redo,
+        )
+        .await?;
 
         self.block_number = height;
         self.block_hash = block_hash;
@@ -609,5 +679,46 @@ impl Chain {
     pub fn clear_candidate(&mut self) {
         self.candidates.clear();
         self.own_proposal = None;
+    }
+
+    async fn wal_save_message(
+        &self,
+        height: u64,
+        ltype: LogType,
+        msg: &[u8],
+    ) -> Result<u64, StatusCode> {
+        self.wal_log
+            .write()
+            .await
+            .save(height, ltype, msg)
+            .map_err(|e| {
+                panic!("wal_save_message: failed: {}", e);
+            })
+    }
+
+    pub async fn load_wal_log(&mut self) -> Option<(ConsensusConfiguration, ChainStatus)> {
+        let vec_buf = self.wal_log.read().await.load();
+        if vec_buf.is_empty() {
+            return None;
+        }
+        for (mtype, block_bytes) in vec_buf {
+            let log_type: LogType = mtype.into();
+            log::info!("load_wal_log chain type {:?}", log_type);
+            match log_type {
+                LogType::FinalizeBlock => {
+                    let block = Block::decode(block_bytes.as_slice())
+                        .map_err(|e| {
+                            log::warn!("load_wal_log: decode({:?}) error {}", log_type, e);
+                            StatusCode::DecodeError
+                        })
+                        .unwrap();
+                    return Some(self.process_block(block, true).await.unwrap());
+                }
+                tp => {
+                    panic!("only LogType::FinalizeBlock for controller, get {:?}", tp);
+                }
+            }
+        }
+        None
     }
 }
