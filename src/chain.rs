@@ -395,7 +395,7 @@ impl Chain {
         let (executed_block_status, executed_block_hash) = exec_block(block).await;
 
         log::info!(
-            "exec_block({}): status: {}, executed_block_hash: 0x{:?}",
+            "exec_block({}): status: {}, executed_block_hash: 0x{}",
             block_height,
             executed_block_status,
             hex::encode(&executed_block_hash)
