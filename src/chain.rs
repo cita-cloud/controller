@@ -393,6 +393,14 @@ impl Chain {
 
         // exec block
         let (executed_block_status, executed_block_hash) = exec_block(block).await;
+
+        log::info!(
+            "exec_block({}): status: {}, executed_block_hash: 0x{:?}",
+            block_height,
+            executed_block_status,
+            hex::encode(&executed_block_hash)
+        );
+
         match executed_block_status {
             StatusCode::Success => {}
             StatusCode::ReenterBlock => {
@@ -402,13 +410,6 @@ impl Chain {
             }
             status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
         }
-
-        log::info!(
-            "exec_block({}): status: {}, executed_block_hash: {:?}",
-            block_height,
-            executed_block_status,
-            &executed_block_hash
-        );
 
         // update auth and pool
         {
