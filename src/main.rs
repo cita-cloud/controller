@@ -82,7 +82,7 @@ const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
 #[derive(Parser)]
-#[clap(version = "6.3.0", author = "Rivtower Technologies.")]
+#[clap(version = env!("CARGO_PKG_VERSION"), author = "Rivtower Technologies.")]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
