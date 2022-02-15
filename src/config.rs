@@ -18,6 +18,7 @@ use tokio::sync::OnceCell;
 
 pub static CONFIG: OnceCell<ControllerConfig> = OnceCell::const_new();
 
+#[allow(dead_code)]
 pub fn controller_config() -> &'static ControllerConfig {
     CONFIG.get().unwrap()
 }
