@@ -403,12 +403,11 @@ impl Chain {
 
         match executed_block_status {
             StatusCode::Success => {}
-            StatusCode::ReenterBlock => {
-                if !wal_redo {
-                    return Err(StatusCode::ReenterBlock);
+            status_code => {
+                if status_code != StatusCode::ReenterBlock || !wal_redo {
+                    return Err(status_code);
                 }
             }
-            status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
         }
 
         // update auth and pool
