@@ -30,9 +30,9 @@ libsm = "0.4"
 efficient-sm2 = "0.1"
 crc32fast = "1.2"
 
-cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
-status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
+cloud-util = "0.1"
+cita_cloud_proto = "=6.3.0"
+status_code = { package = "cloud-code", version = "0.1" }
 
 [build-dependencies]
 tonic-build = "0.5"
