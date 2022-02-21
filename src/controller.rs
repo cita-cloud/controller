@@ -393,7 +393,8 @@ impl Controller {
             });
 
         let controller_for_add = self.clone();
-        if StatusCode::from(res.get_ref().code).is_success().is_ok() {
+        let code = StatusCode::from(res.get_ref().code);
+        if code == StatusCode::Success || code == StatusCode::AddExistedPeer {
             tokio::spawn(async move {
                 time::sleep(Duration::from_secs(
                     controller_for_add.config.server_retry_interval,
