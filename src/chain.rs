@@ -13,12 +13,7 @@
 // limitations under the License.
 
 use crate::{
-    auth::Authentication,
-    node_manager::ChainStatus,
-    pool::Pool,
-    util::*,
-    utxo_set::SystemConfig,
-    wal::{LogType, Wal},
+    auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
     GenesisBlock,
 };
 use cita_cloud_proto::{
@@ -30,6 +25,7 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data},
     storage::{load_data, store_data},
     unix_now,
+    wal::{LogType, Wal},
 };
 use prost::Message;
 use status_code::StatusCode;
