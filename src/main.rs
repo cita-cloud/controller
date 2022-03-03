@@ -25,7 +25,6 @@ mod protocol;
 mod util;
 mod event;
 mod utxo_set;
-mod wal;
 
 use crate::{
     chain::ChainStep,

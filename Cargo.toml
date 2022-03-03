@@ -28,7 +28,6 @@ backtrace = "0.3.60"
 bincode = "1.3.3"
 libsm = "0.4"
 efficient-sm2 = "0.1"
-crc32fast = "1.2"
 
 cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
