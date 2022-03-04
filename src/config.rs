@@ -57,8 +57,6 @@ pub struct ControllerConfig {
     pub server_retry_interval: u64,
     /// discovery other nodes interval
     pub origin_node_reconnect_interval: u64,
-    /// controller log4rs config file name
-    pub log_file: String,
     /// switch of tx forward
     pub enable_forward: bool,
     /// sync block height interval
@@ -89,7 +87,6 @@ impl Default for ControllerConfig {
             key_id: 1,
             server_retry_interval: 3,
             origin_node_reconnect_interval: 3600,
-            log_file: "controller-log4rs.yaml".to_string(),
             enable_forward: true,
             sync_interval: 10,
             sync_req: 5,
