@@ -100,12 +100,12 @@ enum SubCommand {
 /// A subcommand for run
 #[derive(Parser)]
 struct RunOpts {
-    /// Sets grpc port of this service.
-    #[clap(short = 'p', long = "port", default_value = "50004")]
-    grpc_port: String,
     /// Chain config path
     #[clap(short = 'c', long = "config", default_value = "config.toml")]
     config_path: String,
+    /// log config path
+    #[clap(short = 'l', long = "log", default_value = "controller-log4rs.yaml")]
+    log_file: String,
 }
 
 fn main() {
@@ -573,19 +573,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let mut config = ControllerConfig::new(&opts.config_path);
 
     // init log4rs
-    log4rs::init_file(&config.log_file, Default::default()).unwrap();
+    log4rs::init_file(&opts.log_file, Default::default())
+        .map_err(|e| println!("log init err: {}", e))
+        .unwrap();
 
     init_grpc_client(&config);
 
-    let grpc_port = {
-        if "50004" != opts.grpc_port {
-            opts.grpc_port.clone()
-        } else if config.controller_port != 50004 {
-            config.controller_port.to_string()
-        } else {
-            "50004".to_string()
-        }
-    };
+    let grpc_port = config.controller_port.to_string();
+
     info!("grpc port of this service: {}", grpc_port);
 
     let mut server_retry_interval =
