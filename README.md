@@ -159,12 +159,75 @@ $ controller run -c example/config.toml -l controller-log4rs.yaml
 
 ## 设计
 
+### 概述
+
 `Controller`微服务在整个区块链中处于核心的位置，主导所有主要的流程，并给上层用户提供RPC接口。
 
-接口除了前述的针对`Consensus`微服务的接口，就是针对上层用户的RPC接口。其中最重要的是`SendRawTransaction`发送交易接口，剩下的都是一些信息查询接口。
+接口除了针对`Consensus`微服务的接口，就是针对上层用户的RPC接口。其中最重要的是`SendRawTransaction`发送交易接口，剩下的都是一些信息查询接口。
 
 单独就这个微服务来说，可以认为是一个提案管理系统。用户通过发送交易接口，提交原始交易数据，`Controller`管理这些原始交易数据。通过计算原始交易数据的哈希，组装`CompactBlock`，以及再次哈希，形成`Consensus`需要的提案，管理这些提案。这里所说的管理，包括持久化，同步，以及验证其合法性。
 
-`Blockchain.proto`文件中定义了一套交易和块的数据结构，但是前面所述的从原始交易数据如何产生最终`Consensus`需要的提案，并且这个过程还是要可验证的，这些都由具体实现决定。未来我们会提供一个框架，方便用户自定义整个流程，甚至是自定义交易和块等核心数据结构。
+### 主要模块介绍
 
-参见[项目wiki](https://github.com/cita-cloud/controller/wiki)
+#### genesis
+创世块本质是一个配置文件，里面配置了高度为0的创世块的内容。创世块里只有timestamp和prevhash两项内容，其它配置有另外单独的配置文件。
+
+初始化的时候会读取配置文件，然后生成相应的块结构。
+
+#### utxo_set
+本实现的区块链系统同时支持account和utxo两种类型的交易。但是utxo类型的交易只用于系统配置管理。
+
+初始化时需要一个单独的初始系统配置，给系统配置项赋予初值。
+
+在一个块确认之后，如果发现有utxo类型的交易，会调用本模块的update函数更新系统配置。
+
+#### pool
+
+交易池负责维护尚未确认的交易。本实现就简单的使用HashSet来保存这些交易的hash，另外有一个HashMap给每笔交易赋予一个序号。
+
+交易池直到块最终确认（后面累计block_delay_number个后续块），才会将交易从交易池中删除。
+
+为了尽量避免打包重复的交易，打包交易的时候是随机选择交易的。具体做法是随机选择一个开始的序号，然后往后顺序扫描，直到没有交易，或者交易数量达到打包上限。
+
+#### auth
+
+auth主要负责检查交易的合法性，包括交易中每个字段的合法性，以及与历史交易是否重复。auth会保存最近100个历史块中的交易hash。
+
+对于utxo类型的交易的交易，还要校验prevhash是否正确。
+
+#### chain
+
+chain主要是维护了一个管理未最终确认块的fork_tree。因为链的未确认部分长度是确定的（block_delay_number），因此fork_tree是一个HashMap，以index（块高-已经确认的最高块高）为key。其总长度为block_delay_number * 2 + 2，主要是考虑节点落后的情况下，可以尽量多的同步未来的候选块，加快同步的速度。
+
+本实现比较简单，并没有分叉链之间切换的逻辑。而是在一个块得到确认之后，按照prevhash临时找出对应的分叉链。如果该分叉链比之前的主链要长，则进行替换，并更新一些相关的状态。
+
+如果新的主链长度大于block_delay_number，则多出的部分最老的块得到最终确认，会将相关信息写入storage，并更新当前块高/块hash等信息。
+
+新确认的块有两个来源：一个是共识微服务通过commit_block提交的块，另外一个是同步过来的块。只不过共识提交的确认块在未最终确认的区域，而同步过来的块是已经最终确认的。同步块的处理基本与上述相同，额外的会清理掉当前的主链，因为最新的当前块变化之后，原来的主链肯定跟它连不上了。
+
+候选块除了刚启动初始化时会主动增加，后续是每次有新的块最终确认才会增加新的候选块。同步块的处理没有这个操作，因为处于同步状态意味着本节点落后了，那么主链和候选块很可能是没有意义的。
+
+### 出块实现过程
+
+```mermaid
+sequenceDiagram
+participant Consensue(leader)
+participant Consensue
+participant Controller
+participant NetWork
+Consensue ->> Controller: get_proposal()
+Controller -->> Consensue: prepared_proposal
+Consensue(leader) ->> Consensue(leader): pending_proposal()
+Consensue ->> NetWork: sendMsg(ready)
+Consensue ->> Controller: check_proposal(prepared_proposal)
+Controller -->> Consensue: sussess
+Consensue ->> Controller: commit_block
+Controller ->> Controller: finalize_block
+Controller ->> storage: store_data()
+Controller -->> Consensue: reconfigure(status)
+Consensue ->> Consensue: store()
+```
+
+> 其中还实现了 WAl(Write Ahead Log 预写日志) 来保障出块过程的原子性：
+> 每次进行最终化区块(chain-finalize_block)的操作时会先将相关信息写入wal(chain-wal_save_message)，在完成最终化之后再将相关信息清除(wal-clean_file)，这样如果在操作过程中发生异常情况导致操作中断，操作的相关信息仍然保留在wal中，再次启动controller时(controller-init)会读取wal中的内容(chain-load_wal_log)，若读到其中有finalize_block操作证明上次程序在最终化区块过程中发生异常导致操作中断，则根据wal中的相关信息继续完成操作，若未读到则正常启动。
+
