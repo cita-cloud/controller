@@ -442,8 +442,8 @@ impl Chain {
         store_data(
             storage_client(),
             0,
-            0u64.to_be_bytes().to_vec(),
-            block_height_bytes,
+            1u64.to_be_bytes().to_vec(),
+            block_hash.clone(),
         )
         .await
         .is_success()?;
@@ -451,8 +451,8 @@ impl Chain {
         store_data(
             storage_client(),
             0,
-            1u64.to_be_bytes().to_vec(),
-            block_hash.clone(),
+            0u64.to_be_bytes().to_vec(),
+            block_height_bytes,
         )
         .await
         .is_success()?;
