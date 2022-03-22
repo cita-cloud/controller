@@ -707,20 +707,43 @@ impl Chain {
             let log_type: LogType = mtype.into();
             log::info!("load_wal_log chain type {:?}", log_type);
             match log_type {
-                LogType::FinalizeBlock => {
-                    let block = Block::decode(block_bytes.as_slice())
-                        .map_err(|e| {
-                            log::warn!("load_wal_log: decode({:?}) error {}", log_type, e);
-                            StatusCode::DecodeError
-                        })
-                        .unwrap();
-                    return Some(self.process_block(block, true).await.unwrap());
-                }
+                LogType::FinalizeBlock => match Block::decode(block_bytes.as_slice()) {
+                    Ok(block) => match get_block_hash(kms_client(), block.header.as_ref()).await {
+                        Ok(block_hash) => {
+                            let header = block.header.clone().unwrap();
+                            let height = header.height;
+                            if height == self.block_number && block_hash == self.block_hash {
+                                log::info!("wal exists, but doesn't need to be redone");
+                            } else {
+                                match self.process_block(block, true).await {
+                                    Ok(config) => return Some(config),
+                                    Err(e) => {
+                                        log::warn!("wal process_block error {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("load_wal_log: get_block_hash({:?}) error {}", log_type, e);
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("load_wal_log: decode({:?}) error {}", log_type, e);
+                    }
+                },
                 tp => {
                     panic!("only LogType::FinalizeBlock for controller, get {:?}", tp);
                 }
             }
         }
+        self.wal_log
+            .write()
+            .await
+            .clear_file()
+            .map_err(|e| {
+                panic!("wal clear_file error: {}", e);
+            })
+            .unwrap();
         None
     }
 }
