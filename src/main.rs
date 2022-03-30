@@ -40,7 +40,7 @@ use crate::{
     },
     utxo_set::{
         LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
-        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION,
+        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION, LOCK_ID_PACKAGE_LIMIT,
     },
 };
 use cita_cloud_proto::{
@@ -276,6 +276,8 @@ impl RpcService for RPCServer {
                     block_interval: sys_config.block_interval,
                     validators: sys_config.validators,
                     emergency_brake: sys_config.emergency_brake,
+                    package_limit: sys_config.package_limit as u32,
+                    block_limit: sys_config.block_limit as u32,
                     version_pre_hash: sys_config
                         .utxo_tx_hashes
                         .get(&LOCK_ID_VERSION)
@@ -306,6 +308,17 @@ impl RpcService for RPCServer {
                         .get(&LOCK_ID_EMERGENCY_BRAKE)
                         .unwrap()
                         .to_owned(),
+                    package_limit_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_PACKAGE_LIMIT)
+                        .unwrap()
+                        .to_owned(),
+                    block_limit_pre_hash: sys_config
+                        .utxo_tx_hashes
+                        .get(&LOCK_ID_BLOCK_LIMIT)
+                        .unwrap()
+                        .to_owned(),
+
                 });
                 Ok(reply)
             },
@@ -775,6 +788,16 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         )
                         .await
                         .is_success()?;
+                    }
+                    LOCK_ID_PACKAGE_LIMIT => {
+                        store_data(
+                            storage_client(),
+                            0,
+                            lock_id.to_be_bytes().to_vec(),
+                            sys_config.package_limit.to_be_bytes().to_vec(),
+                        )
+                            .await
+                            .is_success()?;
                     }
                     _ => {
                         warn!("Invalid lock_id: {}", lock_id);
