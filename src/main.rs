@@ -40,7 +40,8 @@ use crate::{
     },
     utxo_set::{
         LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
-        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_VALIDATORS, LOCK_ID_VERSION, LOCK_ID_PACKAGE_LIMIT,
+        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_PACKAGE_LIMIT, LOCK_ID_VALIDATORS,
+        LOCK_ID_VERSION,
     },
 };
 use cita_cloud_proto::{
@@ -318,7 +319,6 @@ impl RpcService for RPCServer {
                         .get(&LOCK_ID_BLOCK_LIMIT)
                         .unwrap()
                         .to_owned(),
-
                 });
                 Ok(reply)
             },
@@ -796,8 +796,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.package_limit.to_be_bytes().to_vec(),
                         )
-                            .await
-                            .is_success()?;
+                        .await
+                        .is_success()?;
                     }
                     _ => {
                         warn!("Invalid lock_id: {}", lock_id);

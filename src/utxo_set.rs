@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::ControllerConfig;
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use cloud_util::{clean_0x, common::read_toml};
 use log::warn;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
-use crate::config::ControllerConfig;
-
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemConfigFile {
@@ -63,7 +62,6 @@ impl SystemConfig {
         //generate SystemConfigFile from config.toml
         let sys_config_file: SystemConfigFile = read_toml(config_path, "system_config");
         let config: ControllerConfig = read_toml(config_path, "controller");
-
 
         //convert String to Vec<u8>
         let chain_id =
