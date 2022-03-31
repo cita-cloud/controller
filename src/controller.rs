@@ -467,8 +467,18 @@ impl Controller {
         match ret {
             Ok(_) => match proposal_enum.proposal {
                 Some(Proposal::BftProposal(bft_proposal)) => {
+                    let config = self.config.clone();
                     let block = bft_proposal.proposal.ok_or(StatusCode::NoneProposal)?;
-
+                    if block
+                        .body
+                        .as_ref()
+                        .ok_or(StatusCode::NoneBlockBody)?
+                        .body
+                        .len()
+                        > config.package_limit as usize
+                    {
+                        return Err(StatusCode::TransactionsExceed);
+                    }
                     let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
 
                     // todo re-enter check

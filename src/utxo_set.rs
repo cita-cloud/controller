@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::ControllerConfig;
 use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
 use cloud_util::{clean_0x, common::read_toml};
 use log::warn;
@@ -43,6 +44,7 @@ pub struct SystemConfig {
     pub emergency_brake: bool,
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
     pub block_limit: u64,
+    pub package_limit: u64,
 }
 
 pub const LOCK_ID_VERSION: u64 = 1_000;
@@ -52,12 +54,14 @@ pub const LOCK_ID_BLOCK_INTERVAL: u64 = 1_003;
 pub const LOCK_ID_VALIDATORS: u64 = 1_004;
 pub const LOCK_ID_EMERGENCY_BRAKE: u64 = 1_005;
 pub const LOCK_ID_BLOCK_LIMIT: u64 = 1_006;
-pub const LOCK_ID_BUTTON: u64 = 1_007;
+pub const LOCK_ID_PACKAGE_LIMIT: u64 = 1_007;
+pub const LOCK_ID_BUTTON: u64 = 1_008;
 
 impl SystemConfig {
     pub fn new(config_path: &str) -> Self {
         //generate SystemConfigFile from config.toml
         let sys_config_file: SystemConfigFile = read_toml(config_path, "system_config");
+        let config: ControllerConfig = read_toml(config_path, "controller");
 
         //convert String to Vec<u8>
         let chain_id =
@@ -86,6 +90,7 @@ impl SystemConfig {
             emergency_brake: false,
             utxo_tx_hashes: map,
             block_limit: sys_config_file.block_limit,
+            package_limit: config.package_limit,
         }
     }
 
@@ -162,6 +167,10 @@ impl SystemConfig {
             }
             LOCK_ID_BLOCK_LIMIT => {
                 self.block_limit = u64_decode(data);
+                true
+            }
+            LOCK_ID_PACKAGE_LIMIT => {
+                self.package_limit = u64_decode(data);
                 true
             }
             _ => {
