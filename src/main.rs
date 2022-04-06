@@ -826,19 +826,64 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     let controller_for_reconnect = controller.clone();
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(
+        let mut long_interval = time::interval(Duration::from_secs(
             controller_for_reconnect
                 .config
                 .origin_node_reconnect_interval,
         ));
         loop {
-            interval.tick().await;
+            long_interval.tick().await;
             {
                 controller_for_reconnect
                     .task_sender
                     .send(EventTask::BroadCastCSI)
                     .await
                     .unwrap();
+            }
+        }
+    });
+
+    let controller_for_healthy = controller.clone();
+    tokio::spawn(async move {
+        let mut current_height = u64::MAX;
+        // only above retry_limit allow broadcast retry, retry timing is 1, 1, 2, 4, 8...2^n
+        let mut retry_limit: u64 = 0;
+        // tick count interval times
+        let mut tick: u64 = 0;
+        let mut short_interval = time::interval(Duration::from_secs(
+            controller_for_healthy
+                .config
+                .inner_block_growth_check_interval,
+        ));
+        loop {
+            short_interval.tick().await;
+            {
+                tick += 1;
+                if current_height == u64::MAX {
+                    current_height = controller_for_healthy.get_status().await.height;
+                    tick = 0;
+                } else if controller_for_healthy.get_status().await.height == current_height
+                    && tick >= retry_limit
+                {
+                    info!(
+                        "inner healthy check: broadcast csi h: {} the {}th time",
+                        current_height, tick
+                    );
+                    controller_for_healthy
+                        .task_sender
+                        .send(EventTask::BroadCastCSI)
+                        .await
+                        .unwrap();
+                    retry_limit += tick;
+                    tick = 0;
+                } else if controller_for_healthy.get_status().await.height < current_height {
+                    unreachable!()
+                } else if controller_for_healthy.get_status().await.height > current_height {
+                    // update current height
+                    current_height = controller_for_healthy.get_status().await.height;
+                    tick = 0;
+                    retry_limit = 0;
+                }
             }
         }
     });
@@ -895,74 +940,85 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     // get chain lock means syncing
                     controller_for_task.set_sync_state(true).await;
                     {
-                        let mut chain = controller_for_task.chain.write().await;
-                        match chain.next_step(&global_status).await {
+                        match {
+                            let chain = controller_for_task.chain.read().await;
+                            chain.next_step(&global_status).await
+                        } {
                             ChainStep::SyncStep => {
-                                while let Some((addr, block)) = controller_for_task
-                                    .sync_manager
-                                    .pop_block(own_status.height + 1)
-                                    .await
+                                let mut syncing = false;
                                 {
-                                    chain.clear_candidate();
-                                    match chain.process_block(block, false).await {
-                                        Ok((consensus_config, mut status)) => {
-                                            // todo reconfigure failed
-                                            reconfigure(consensus_config)
-                                                .await
-                                                .is_success()
-                                                .unwrap();
-                                            status.address =
-                                                Some(controller_for_task.local_address.clone());
-                                            controller_for_task.set_status(status.clone()).await;
-                                            own_status = status;
-                                        }
-                                        Err(e) => {
-                                            warn!(
+                                    let mut chain = controller_for_task.chain.write().await;
+                                    while let Some((addr, block)) = controller_for_task
+                                        .sync_manager
+                                        .pop_block(own_status.height + 1)
+                                        .await
+                                    {
+                                        chain.clear_candidate();
+                                        match chain.process_block(block, false).await {
+                                            Ok((consensus_config, mut status)) => {
+                                                // todo reconfigure failed
+                                                reconfigure(consensus_config)
+                                                    .await
+                                                    .is_success()
+                                                    .unwrap();
+                                                status.address =
+                                                    Some(controller_for_task.local_address.clone());
+                                                controller_for_task
+                                                    .set_status(status.clone())
+                                                    .await;
+                                                own_status = status;
+                                                syncing = true;
+                                            }
+                                            Err(e) => {
+                                                warn!(
                                                 "sync block error: {}, node: 0x{} been misbehavior_node",
                                                 e.to_string(),
                                                 hex::encode(&addr.address)
                                             );
-                                            let _ = controller_for_task
-                                                .node_manager
-                                                .set_misbehavior_node(&addr)
-                                                .await;
-                                            if global_address == addr {
-                                                let (ex_addr, ex_status) = controller_for_task
+                                                let _ = controller_for_task
                                                     .node_manager
-                                                    .pick_node()
+                                                    .set_misbehavior_node(&addr)
                                                     .await;
-                                                controller_for_task
-                                                    .update_global_status(ex_addr, ex_status)
-                                                    .await;
-                                            }
-                                            if let Some(range_heights) = controller_for_task
-                                                .sync_manager
-                                                .clear_node_block(&addr, &own_status)
-                                                .await
-                                            {
-                                                let (global_address, global_status) =
-                                                    controller_for_task.get_global_status().await;
-                                                if !global_address.address.is_empty() {
-                                                    let global_origin = controller_for_task
+                                                if global_address == addr {
+                                                    let (ex_addr, ex_status) = controller_for_task
                                                         .node_manager
-                                                        .get_origin(&global_address)
-                                                        .await
-                                                        .unwrap();
-                                                    for range_height in range_heights {
-                                                        if let Some(reqs) = controller_for_task
-                                                            .sync_manager
-                                                            .re_sync_block_req(
-                                                                range_height,
-                                                                &global_status,
-                                                            )
-                                                        {
-                                                            for req in reqs {
-                                                                controller_for_task
-                                                                    .unicast_sync_block(
-                                                                        global_origin,
-                                                                        req,
-                                                                    )
-                                                                    .await;
+                                                        .pick_node()
+                                                        .await;
+                                                    controller_for_task
+                                                        .update_global_status(ex_addr, ex_status)
+                                                        .await;
+                                                }
+                                                if let Some(range_heights) = controller_for_task
+                                                    .sync_manager
+                                                    .clear_node_block(&addr, &own_status)
+                                                    .await
+                                                {
+                                                    let (global_address, global_status) =
+                                                        controller_for_task
+                                                            .get_global_status()
+                                                            .await;
+                                                    if !global_address.address.is_empty() {
+                                                        let global_origin = controller_for_task
+                                                            .node_manager
+                                                            .get_origin(&global_address)
+                                                            .await
+                                                            .unwrap();
+                                                        for range_height in range_heights {
+                                                            if let Some(reqs) = controller_for_task
+                                                                .sync_manager
+                                                                .re_sync_block_req(
+                                                                    range_height,
+                                                                    &global_status,
+                                                                )
+                                                            {
+                                                                for req in reqs {
+                                                                    controller_for_task
+                                                                        .unicast_sync_block(
+                                                                            global_origin,
+                                                                            req,
+                                                                        )
+                                                                        .await;
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -970,6 +1026,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                             }
                                         }
                                     }
+                                }
+                                if syncing {
+                                    controller_for_task.sync_block().await.unwrap();
                                 }
                             }
                             ChainStep::OnlineStep => {
@@ -979,7 +1038,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             ChainStep::BusyState => unreachable!(),
                         }
                     }
-                    controller_for_task.sync_block().await.unwrap();
                 }
                 EventTask::BroadCastCSI => {
                     log::info!("receive BroadCastCSI event task");

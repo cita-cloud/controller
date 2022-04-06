@@ -58,6 +58,8 @@ pub struct ControllerConfig {
     pub server_retry_interval: u64,
     /// discovery other nodes interval
     pub origin_node_reconnect_interval: u64,
+    /// inner healthy check through block height growth normally
+    pub inner_block_growth_check_interval: u64,
     /// switch of tx forward
     pub enable_forward: bool,
     /// sync block height interval
@@ -87,7 +89,8 @@ impl Default for ControllerConfig {
             signature_len: 128,
             key_id: 1,
             server_retry_interval: 3,
-            origin_node_reconnect_interval: 3600,
+            inner_block_growth_check_interval: 60,
+            origin_node_reconnect_interval: 86400,
             enable_forward: true,
             sync_interval: 10,
             sync_req: 5,
