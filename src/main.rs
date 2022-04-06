@@ -846,6 +846,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let controller_for_healthy = controller.clone();
     tokio::spawn(async move {
         let mut current_height = u64::MAX;
+        // only above retry_limit allow broadcast retry, retry timing is 1, 1, 2, 4, 8...2^n
+        let mut retry_limit: u64 = 0;
+        // tick count interval times
+        let mut tick: u64 = 0;
         let mut short_interval = time::interval(Duration::from_secs(
             controller_for_healthy
                 .config
@@ -854,16 +858,31 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         loop {
             short_interval.tick().await;
             {
+                tick += 1;
                 if current_height == u64::MAX {
                     current_height = controller_for_healthy.get_status().await.height;
-                } else if controller_for_healthy.get_status().await.height == current_height {
+                    tick = 0;
+                } else if controller_for_healthy.get_status().await.height == current_height
+                    && tick >= retry_limit
+                {
+                    info!(
+                        "inner healthy check: broadcast csi h: {} the {}th time",
+                        current_height, tick
+                    );
                     controller_for_healthy
                         .task_sender
                         .send(EventTask::BroadCastCSI)
                         .await
                         .unwrap();
+                    retry_limit += tick;
+                    tick = 0;
                 } else if controller_for_healthy.get_status().await.height < current_height {
                     unreachable!()
+                } else if controller_for_healthy.get_status().await.height > current_height {
+                    // update current height
+                    current_height = controller_for_healthy.get_status().await.height;
+                    tick = 0;
+                    retry_limit = 0;
                 }
             }
         }
