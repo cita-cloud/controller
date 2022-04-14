@@ -223,11 +223,17 @@ pub struct NodeManager {
 impl NodeManager {
     pub async fn set_origin(&self, node: &Address, origin: u64) -> Option<u64> {
         let na: NodeAddress = node.into();
-        // delete repeat origin link
         if let Some(addr) = self.get_address(origin).await {
-            log::warn!("set origin: exist repeat origin: {}", origin);
-            self.delete_origin(&addr).await;
-            self.delete_node(&addr).await;
+            if &addr == node {
+                // same node set again, do nothing
+                log::info!("set origin: same node({}) set again", origin);
+                return None;
+            } else {
+                // delete repeat origin link
+                log::warn!("set origin: exist repeat origin: {}", origin);
+                self.delete_origin(&addr).await;
+                self.delete_node(&addr).await;
+            }
         }
         log::info!("set origin[{}] to node: 0x{}", origin, hex::encode(&na.0));
         let mut wr = self.node_origin.write().await;
