@@ -30,7 +30,7 @@ use crate::{
     GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
 };
 use cita_cloud_proto::{
-    blockchain::{CompactBlock, RawTransaction, RawTransactions},
+    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     common::{
         proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
         NodeNetInfo, ProposalEnum, TotalNodeInfo,
@@ -365,6 +365,13 @@ impl Controller {
         block_number: u64,
     ) -> Result<CompactBlock, StatusCode> {
         get_compact_block(block_number).await.map(|t| t.0)
+    }
+
+    pub async fn rpc_get_block_detail_by_number(
+        &self,
+        block_number: u64,
+    ) -> Result<Block, StatusCode> {
+        get_full_block(block_number).await
     }
 
     pub async fn rpc_get_transaction(
