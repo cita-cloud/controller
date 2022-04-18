@@ -33,6 +33,9 @@ cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
 status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
 
+[patch."https://github.com/cita-cloud/cita_cloud_proto"]
+cita_cloud_proto = { git = "https://github.com/rink1969/cita_cloud_proto.git", branch = "health_check" }
+
 [build-dependencies]
 tonic-build = "0.5"
 
