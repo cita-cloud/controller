@@ -70,6 +70,7 @@ use git_version::git_version;
 use log::{debug, error, info, warn};
 use prost::Message;
 use status_code::StatusCode;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::AddrParseError;
 use std::time::Duration;
@@ -1110,35 +1111,39 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     let nodes = controller_for_task.node_manager.nodes.read().await.clone();
                     for (na, current_cs) in nodes.iter() {
                         if let Some(old_cs) = old_status.get(na) {
-                            if old_cs.height == current_cs.height {
-                                warn!(
-                                    "node(0x{}) is stale node, height: {}",
-                                    hex::encode(&na.to_vec()),
-                                    old_cs.height
-                                );
-                                let addr = na.to_addr();
-                                controller_for_task.node_manager.delete_origin(&addr).await;
-                                if controller_for_task.node_manager.in_node(&addr).await {
-                                    controller_for_task.node_manager.delete_node(&addr).await;
+                            match old_cs.height.cmp(&current_cs.height) {
+                                Ordering::Greater => {
+                                    error!(
+                                        "node(0x{}) is a misbehave node, old height: {}, current height: {}",
+                                        hex::encode(&na.to_vec()),
+                                        old_cs.height,
+                                        current_cs.height
+                                    );
+                                    let addr = na.to_addr();
+                                    let _ = controller_for_task
+                                        .node_manager
+                                        .set_misbehavior_node(&addr)
+                                        .await;
                                 }
-                            } else if old_cs.height < current_cs.height {
-                                // update node in old status
-                                old_status.insert(na.clone(), current_cs.clone());
-                            } else {
-                                error!(
-                                    "node(0x{}) is a misbehave node, old height: {}, current height: {}",
-                                    hex::encode(&na.to_vec()),
-                                    old_cs.height,
-                                    current_cs.height
-                                );
-                                let addr = na.to_addr();
-                                let _ = controller_for_task
-                                    .node_manager
-                                    .set_misbehavior_node(&addr)
-                                    .await;
+                                Ordering::Equal => {
+                                    warn!(
+                                        "node(0x{}) is stale node, height: {}",
+                                        hex::encode(&na.to_vec()),
+                                        old_cs.height
+                                    );
+                                    let addr = na.to_addr();
+                                    controller_for_task.node_manager.delete_origin(&addr).await;
+                                    if controller_for_task.node_manager.in_node(&addr).await {
+                                        controller_for_task.node_manager.delete_node(&addr).await;
+                                    }
+                                }
+                                Ordering::Less => {
+                                    // update node in old status
+                                    old_status.insert(*na, current_cs.clone());
+                                }
                             }
                         } else {
-                            old_status.insert(na.clone(), current_cs.clone());
+                            old_status.insert(*na, current_cs.clone());
                         }
                     }
                 }

@@ -196,7 +196,7 @@ impl From<&Address> for NodeAddress {
 }
 
 impl NodeAddress {
-    pub(crate) fn to_addr(&self) -> Address {
+    pub(crate) fn to_addr(self) -> Address {
         Address {
             address: self.to_vec(),
         }
