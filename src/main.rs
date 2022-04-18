@@ -45,7 +45,9 @@ use crate::{
     },
 };
 use cita_cloud_proto::{
-    blockchain::{raw_transaction::Tx::UtxoTx, CompactBlock, RawTransaction, RawTransactions},
+    blockchain::{
+        raw_transaction::Tx::UtxoTx, Block, CompactBlock, RawTransaction, RawTransactions,
+    },
     common::{
         ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
         Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
@@ -231,6 +233,26 @@ impl RpcService for RPCServer {
 
         self.controller
             .rpc_get_block_by_number(block_number.block_number)
+            .await
+            .map_or_else(
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |block| {
+                    let reply = Response::new(block);
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_block_detail_by_number(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<tonic::Response<Block>, Status> {
+        debug!("get_block_detail_by_number request: {:?}", request);
+
+        let block_number = request.into_inner();
+
+        self.controller
+            .rpc_get_block_detail_by_number(block_number.block_number)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
