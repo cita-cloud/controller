@@ -70,6 +70,9 @@ pub struct ControllerConfig {
     pub force_sync_epoch: u64,
     /// WAL log path
     pub wal_path: String,
+    /// multi-send chain status interval, counted by block number
+    /// recommend: n < origin_node_reconnect_interval / block_interval
+    pub send_chain_status_interval_sync: u64,
 }
 
 impl Default for ControllerConfig {
@@ -96,6 +99,7 @@ impl Default for ControllerConfig {
             sync_req: 5,
             force_sync_epoch: 100,
             wal_path: "./data/wal_chain".to_string(),
+            send_chain_status_interval_sync: 1000,
         }
     }
 }

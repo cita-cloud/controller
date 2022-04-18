@@ -67,9 +67,10 @@ use cloud_util::{
 };
 use genesis::GenesisBlock;
 use git_version::git_version;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use prost::Message;
 use status_code::StatusCode;
+use std::collections::HashMap;
 use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::{sync::mpsc, time};
@@ -558,6 +559,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     }
 }
 
+use crate::node_manager::{ChainStatus, NodeAddress};
 use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
     network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
@@ -861,6 +863,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     .send(EventTask::BroadCastCSI)
                     .await
                     .unwrap();
+                controller_for_reconnect
+                    .task_sender
+                    .send(EventTask::RecordAllNode)
+                    .await
+                    .unwrap();
             }
         }
     });
@@ -912,6 +919,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     let controller_for_task = controller.clone();
     tokio::spawn(async move {
+        let mut old_status: HashMap<NodeAddress, ChainStatus> = HashMap::new();
         while let Some(event_task) = task_receiver.recv().await {
             match event_task {
                 EventTask::SyncBlockReq(req, origin) => {
@@ -988,7 +996,17 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                 controller_for_task
                                                     .set_status(status.clone())
                                                     .await;
-                                                own_status = status;
+                                                own_status = status.clone();
+                                                if status.height
+                                                    % controller_for_task
+                                                        .config
+                                                        .send_chain_status_interval_sync
+                                                    == 0
+                                                {
+                                                    controller_for_task
+                                                        .multicast_chain_status(status)
+                                                        .await;
+                                                }
                                                 syncing = true;
                                             }
                                             Err(e) => {
@@ -1087,6 +1105,42 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         .await
                         .await
                         .unwrap();
+                }
+                EventTask::RecordAllNode => {
+                    let nodes = controller_for_task.node_manager.nodes.read().await.clone();
+                    for (na, current_cs) in nodes.iter() {
+                        if let Some(old_cs) = old_status.get(na) {
+                            if old_cs.height == current_cs.height {
+                                warn!(
+                                    "node(0x{}) is stale node, height: {}",
+                                    hex::encode(&na.to_vec()),
+                                    old_cs.height
+                                );
+                                let addr = na.to_addr();
+                                controller_for_task.node_manager.delete_origin(&addr).await;
+                                if controller_for_task.node_manager.in_node(&addr).await {
+                                    controller_for_task.node_manager.delete_node(&addr).await;
+                                }
+                            } else if old_cs.height < current_cs.height {
+                                // update node in old status
+                                old_status.insert(na.clone(), current_cs.clone());
+                            } else {
+                                error!(
+                                    "node(0x{}) is a misbehave node, old height: {}, current height: {}",
+                                    hex::encode(&na.to_vec()),
+                                    old_cs.height,
+                                    current_cs.height
+                                );
+                                let addr = na.to_addr();
+                                let _ = controller_for_task
+                                    .node_manager
+                                    .set_misbehavior_node(&addr)
+                                    .await;
+                            }
+                        } else {
+                            old_status.insert(na.clone(), current_cs.clone());
+                        }
+                    }
                 }
             }
         }

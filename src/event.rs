@@ -22,4 +22,6 @@ pub enum EventTask {
     SyncBlock,
     // broadcast chain status init
     BroadCastCSI,
+    // record all node chain status
+    RecordAllNode,
 }
