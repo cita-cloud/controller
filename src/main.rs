@@ -24,6 +24,7 @@ mod protocol;
 #[macro_use]
 mod util;
 mod event;
+mod health_check;
 mod utxo_set;
 
 use crate::{
@@ -57,6 +58,7 @@ use cita_cloud_proto::{
         rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
         PeerCount, SoftwareVersion, TransactionIndex,
     },
+    health_check::health_server::HealthServer,
     network::RegisterInfo,
 };
 use clap::Parser;
@@ -67,6 +69,7 @@ use cloud_util::{
 };
 use genesis::GenesisBlock;
 use git_version::git_version;
+use health_check::HealthCheckServer;
 use log::{debug, error, info, warn};
 use prost::Message;
 use status_code::StatusCode;
@@ -1164,8 +1167,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             Consensus2ControllerServer::new(controller.clone()),
         ))
         .add_service(NetworkMsgHandlerServiceServer::new(
-            ControllerNetworkMsgHandlerServer::new(controller),
+            ControllerNetworkMsgHandlerServer::new(controller.clone()),
         ))
+        .add_service(HealthServer::new(HealthCheckServer::new(controller)))
         .serve(addr)
         .await
         .map_err(|e| {
