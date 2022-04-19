@@ -196,7 +196,7 @@ impl From<&Address> for NodeAddress {
 }
 
 impl NodeAddress {
-    fn to_addr(self) -> Address {
+    pub(crate) fn to_addr(self) -> Address {
         Address {
             address: self.to_vec(),
         }
@@ -232,7 +232,9 @@ impl NodeManager {
                 // delete repeat origin link
                 log::warn!("set origin: exist repeat origin: {}", origin);
                 self.delete_origin(&addr).await;
-                self.delete_node(&addr).await;
+                if self.in_node(&addr).await {
+                    self.delete_node(&addr).await;
+                }
             }
         }
         log::info!("set origin[{}] to node: 0x{}", origin, hex::encode(&na.0));
@@ -392,6 +394,7 @@ impl NodeManager {
         }
 
         if self.in_ban_node(node).await {
+            log::warn!("set misbehavior node: the node have been banned");
             return Err(StatusCode::BannedNode);
         }
 
