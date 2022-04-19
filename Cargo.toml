@@ -1,6 +1,6 @@
 [package]
 name = "controller"
-version = "6.3.2"
+version = "6.4.0"
 authors = ["Rivtower Technologies <contact@rivtower.com>"]
 license = "Apache-2.0"
 edition = "2021"
@@ -32,9 +32,6 @@ efficient-sm2 = "0.1"
 cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
 status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
-
-[patch."https://github.com/cita-cloud/cita_cloud_proto"]
-cita_cloud_proto = { git = "https://github.com/rink1969/cita_cloud_proto.git", branch = "health_check" }
 
 [build-dependencies]
 tonic-build = "0.5"
