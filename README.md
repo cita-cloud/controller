@@ -62,7 +62,7 @@ cargo install --path ./
 
 ```shell
 $ controller -h
-controller 6.3.2
+controller 6.4.0
 Rivtower Technologies.
 This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
 
@@ -74,19 +74,8 @@ OPTIONS:
     -V, --version    Print version information
 
 SUBCOMMANDS:
-    git     print information from git
     help    Print this message or the help of the given subcommand(s)
     run     run this service
-```
-
-### controller git
-
-打印`git`相关的信息
-
-```shell
-$ controller git
-git version: 8fedf45-modified
-homepage: https://github.com/cita-cloud/controller
 ```
 
 ### controller run

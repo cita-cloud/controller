@@ -60,6 +60,7 @@ use cita_cloud_proto::{
     },
     health_check::health_server::HealthServer,
     network::RegisterInfo,
+    storage::Regions,
 };
 use clap::Parser;
 use cloud_util::{
@@ -68,7 +69,6 @@ use cloud_util::{
     storage::{load_data, store_data},
 };
 use genesis::GenesisBlock;
-use git_version::git_version;
 use health_check::HealthCheckServer;
 use log::{debug, error, info, warn};
 use prost::Message;
@@ -79,12 +79,6 @@ use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::{sync::mpsc, time};
 use tonic::{transport::Server, Request, Response, Status};
-
-const GIT_VERSION: &str = git_version!(
-    args = ["--tags", "--always", "--dirty=-modified"],
-    fallback = "unknown"
-);
-const GIT_HOMEPAGE: &str = "https://github.com/cita-cloud/controller";
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -97,9 +91,6 @@ struct Opts {
 
 #[derive(Parser)]
 enum SubCommand {
-    /// print information from git
-    #[clap(name = "git")]
-    GitInfo,
     /// run this service
     #[clap(name = "run")]
     Run(RunOpts),
@@ -125,10 +116,6 @@ fn main() {
     // You can handle information about subcommands by requesting their matches by name
     // (as below), requesting just the name used, or both at the same time
     match opts.subcmd {
-        SubCommand::GitInfo => {
-            println!("git version: {}", GIT_VERSION);
-            println!("homepage: {}", GIT_HOMEPAGE);
-        }
         SubCommand::Run(opts) => {
             let fin = run(opts);
             warn!("Should not reach here {:?}", fin);
@@ -751,7 +738,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     LOCK_ID_VERSION => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.version.to_be_bytes().to_vec(),
                         )
@@ -761,7 +748,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     LOCK_ID_CHAIN_ID => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.chain_id.clone(),
                         )
@@ -771,7 +758,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     LOCK_ID_ADMIN => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.admin.clone(),
                         )
@@ -781,7 +768,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     LOCK_ID_BLOCK_INTERVAL => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.block_interval.to_be_bytes().to_vec(),
                         )
@@ -795,7 +782,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         }
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             validators,
                         )
@@ -803,14 +790,19 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         .is_success()?;
                     }
                     LOCK_ID_EMERGENCY_BRAKE => {
-                        store_data(storage_client(), 0, lock_id.to_be_bytes().to_vec(), vec![])
-                            .await
-                            .is_success()?;
+                        store_data(
+                            storage_client(),
+                            i32::from(Regions::Global) as u32,
+                            lock_id.to_be_bytes().to_vec(),
+                            vec![],
+                        )
+                        .await
+                        .is_success()?;
                     }
                     LOCK_ID_BLOCK_LIMIT => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.block_limit.to_be_bytes().to_vec(),
                         )
@@ -820,7 +812,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     LOCK_ID_PACKAGE_LIMIT => {
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             sys_config.package_limit.to_be_bytes().to_vec(),
                         )

@@ -19,6 +19,7 @@ use crate::{
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
     common::{proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum},
+    storage::Regions,
 };
 use cloud_util::{
     common::get_tx_hash,
@@ -380,7 +381,7 @@ impl Chain {
                         let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
                         store_data(
                             storage_client(),
-                            0,
+                            i32::from(Regions::Global) as u32,
                             lock_id.to_be_bytes().to_vec(),
                             utxo_tx.transaction_hash,
                         )
@@ -422,7 +423,7 @@ impl Chain {
 
         store_data(
             storage_client(),
-            11,
+            i32::from(Regions::FullBlock) as u32,
             block_height_bytes.clone(),
             block_bytes,
         )
@@ -431,7 +432,7 @@ impl Chain {
 
         store_data(
             storage_client(),
-            6,
+            i32::from(Regions::Result) as u32,
             block_height_bytes.clone(),
             executed_block_hash,
         )
@@ -441,7 +442,7 @@ impl Chain {
         // region 0: 0 - current height; 1 - current hash
         store_data(
             storage_client(),
-            0,
+            i32::from(Regions::Global) as u32,
             1u64.to_be_bytes().to_vec(),
             block_hash.clone(),
         )
@@ -450,7 +451,7 @@ impl Chain {
 
         store_data(
             storage_client(),
-            0,
+            i32::from(Regions::Global) as u32,
             0u64.to_be_bytes().to_vec(),
             block_height_bytes,
         )
