@@ -73,6 +73,8 @@ pub struct ControllerConfig {
     /// multi-send chain status interval, counted by block number
     /// recommend: n < origin_node_reconnect_interval / block_interval
     pub send_chain_status_interval_sync: u64,
+    /// validator address length
+    pub validator_address_len: u32,
 }
 
 impl Default for ControllerConfig {
@@ -100,6 +102,7 @@ impl Default for ControllerConfig {
             force_sync_epoch: 100,
             wal_path: "./data/wal_chain".to_string(),
             send_chain_status_interval_sync: 1000,
+            validator_address_len: 20,
         }
     }
 }

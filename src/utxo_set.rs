@@ -45,6 +45,7 @@ pub struct SystemConfig {
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
     pub block_limit: u64,
     pub package_limit: u64,
+    pub validator_address_len: u32,
 }
 
 pub const LOCK_ID_VERSION: u64 = 1_000;
@@ -91,6 +92,7 @@ impl SystemConfig {
             utxo_tx_hashes: map,
             block_limit: sys_config_file.block_limit,
             package_limit: config.package_limit,
+            validator_address_len: config.validator_address_len,
         }
     }
 
@@ -149,10 +151,11 @@ impl SystemConfig {
                 true
             }
             LOCK_ID_VALIDATORS => {
+                let l = self.validator_address_len as usize;
                 let mut validators = Vec::new();
-                if data.len() % 20 == 0 {
-                    for i in 0..(data.len() / 20) {
-                        validators.push(data[i * 20..(i + 1) * 20].to_vec())
+                if data.len() % l == 0 {
+                    for i in 0..(data.len() / l) {
+                        validators.push(data[i * l..(i + 1) * l].to_vec())
                     }
                     self.validators = validators;
                     true

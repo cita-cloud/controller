@@ -87,7 +87,7 @@ impl From<&str> for ControllerMsgType {
 
 impl ::std::fmt::Display for ControllerMsgType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{:?}", self)
     }
 }
 
@@ -1056,7 +1056,7 @@ impl Controller {
                 let (global_address, global_status) = controller_clone.get_global_status().await;
 
                 if let Err(e) = h160_address_check(Some(&global_address)) {
-                    log::debug!("try_sync_block: global_address error: {:?}", e);
+                    log::warn!("try_sync_block: global_address error: {:?}", e);
                     return;
                 }
 
