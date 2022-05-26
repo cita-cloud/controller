@@ -1,68 +1,17 @@
 # controller
 
-## build
+`CITA-Cloud`中[controller微服务](https://github.com/cita-cloud/cita_cloud_proto/blob/master/protos/controller.proto)的实现。
 
-```
-cargo build --release
-```
-
-## build docker image
-
+## 编译docker镜像
 ```
 docker build -t citacloud/controller .
 ```
-
-## install
-
-```
-cargo install --path ./
-```
-
-## related config in config.toml
-
-1. `config.toml`-`[controller]`配置其他微服务的端口以及`key_id`和`node_address`。示例如下：
-
-   ```toml
-   [controller]
-   consensus_port = 50001
-   controller_port = 50004
-   executor_port = 50002
-   key_id = 1
-   kms_port = 50005
-   network_port = 50000
-   node_address = '262a554f4a34884aa1c2ec04786349ee9c62fb98'
-   package_limit = 30000
-   storage_port = 50003
-   ```
-
-2. `config.toml`-`[genesis_block]`配置创世块相关的信息。示例如下：
-
-   ```toml
-   [genesis_block]
-   prevhash = '0x0000000000000000000000000000000000000000000000000000000000000000'
-   timestamp = 1642573944688
-   ```
-
-3. `config.toml`-`[system_config]`配置初始的系统配置信息。示例如下：
-
-   ```toml
-   [system_config]
-   admin = '5b0618082d6ac17fb755463f9e509bf515d93ae2'
-   block_interval = 3
-   block_limit = 100
-   chain_id = '63586a3c0255f337c77a777ff54f0040b8c388da04f23ecee6bfd4953a6512b4'
-   validators = [
-      '262a554f4a34884aa1c2ec04786349ee9c62fb98',
-      'c377f99f31d42f0709587a13381c8a5c134ecb4c',
-   ]
-   version = 0
-   ```
 
 ## 使用方法
 
 ```shell
 $ controller -h
-controller 6.4.0
+controller 6.4.1
 Rivtower Technologies.
 This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
 
@@ -101,13 +50,26 @@ OPTIONS:
 
     参见示例`example/config.toml`。
 
-    其中：
-    * `consensus_port` 是共识微服务的gRPC端口
-    * `controller_port` 是控制器微服务的gRPC端口
-    * `executor_port` 是执行器微服务的gRPC端口
-    * `kms_port` 是kms微服务的gRPC端口
-    * `network_port` 是网络微服务的gRPC端口
-    * `storage_port` 是存储微服务的gRPC端口
+    其中`[controller]`段为微服务本身的配置：
+    * `consensus_port` 共识微服务的gRPC端口
+    * `controller_port` 控制器微服务的gRPC端口
+    * `executor_port` 执行器微服务的gRPC端口
+    * `kms_port` kms微服务的gRPC端口
+    * `network_port` 网络微服务的gRPC端口
+    * `storage_port` 存储微服务的gRPC端口
+    * `validator_address_len` 是共识使用的地址的长度
+  
+    其中`[genesis_block]`段配置创世块相关的信息：
+    * `prevhash` 默认全0
+    * `timestamp` 创世块的时间戳
+
+    其中`[system_config]`配置初始的系统配置信息：
+    * `admin` 管理员账户地址
+    * `block_interval` 出块间隔
+    * `chain_id` 链的唯一标识
+    * `validators` 验证者账户地址列表
+    * `version` 协议版本号
+  
 
 2. 日志配置文件。
 
