@@ -164,8 +164,8 @@ impl Controller {
         };
 
         let pool = Arc::new(RwLock::new(Pool::new(
-            config.package_limit as usize,
             sys_config.block_limit,
+            sys_config.quota_limit,
         )));
         let auth = Arc::new(RwLock::new(Authentication::new(sys_config)));
         let chain = Arc::new(RwLock::new(Chain::new(
@@ -476,15 +476,13 @@ impl Controller {
                 Some(Proposal::BftProposal(bft_proposal)) => {
                     let config = self.config.clone();
                     let block = bft_proposal.proposal.ok_or(StatusCode::NoneProposal)?;
-                    if block
-                        .body
-                        .as_ref()
-                        .ok_or(StatusCode::NoneBlockBody)?
-                        .body
-                        .len()
-                        > config.package_limit as usize
-                    {
-                        return Err(StatusCode::TransactionsExceed);
+
+                    let mut total_quota = 0;
+                    for tx in &block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?.body {
+                        total_quota += tx_quota(tx);
+                        if total_quota > config.quota_limit {
+                            return Err(StatusCode::QuotaUsedExceed);
+                        }
                     }
                     let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
 

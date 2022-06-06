@@ -44,7 +44,7 @@ pub struct SystemConfig {
     pub emergency_brake: bool,
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
     pub block_limit: u64,
-    pub package_limit: u64,
+    pub quota_limit: u64,
     pub validator_address_len: u32,
 }
 
@@ -55,7 +55,7 @@ pub const LOCK_ID_BLOCK_INTERVAL: u64 = 1_003;
 pub const LOCK_ID_VALIDATORS: u64 = 1_004;
 pub const LOCK_ID_EMERGENCY_BRAKE: u64 = 1_005;
 pub const LOCK_ID_BLOCK_LIMIT: u64 = 1_006;
-pub const LOCK_ID_PACKAGE_LIMIT: u64 = 1_007;
+pub const LOCK_ID_QUOTA_LIMIT: u64 = 1_007;
 pub const LOCK_ID_BUTTON: u64 = 1_008;
 
 impl SystemConfig {
@@ -91,7 +91,7 @@ impl SystemConfig {
             emergency_brake: false,
             utxo_tx_hashes: map,
             block_limit: sys_config_file.block_limit,
-            package_limit: config.package_limit,
+            quota_limit: config.quota_limit,
             validator_address_len: config.validator_address_len,
         }
     }
@@ -172,8 +172,8 @@ impl SystemConfig {
                 self.block_limit = u64_decode(data);
                 true
             }
-            LOCK_ID_PACKAGE_LIMIT => {
-                self.package_limit = u64_decode(data);
+            LOCK_ID_QUOTA_LIMIT => {
+                self.quota_limit = u64_decode(data);
                 true
             }
             _ => {

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util::tx_quota;
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use std::{
     borrow::Borrow,
@@ -53,17 +54,17 @@ fn get_raw_tx_hash(raw_tx: &RawTransaction) -> &[u8] {
 }
 
 pub struct Pool {
-    package_limit: usize,
     txns: HashSet<Txn>,
     block_limit: u64,
+    quota_limit: u64,
 }
 
 impl Pool {
-    pub fn new(package_limit: usize, block_limit: u64) -> Self {
+    pub fn new(block_limit: u64, quota_limit: u64) -> Self {
         Pool {
-            package_limit,
             txns: HashSet::new(),
             block_limit,
+            quota_limit,
         }
     }
 
@@ -81,12 +82,27 @@ impl Pool {
         let block_limit = self.block_limit;
         self.txns
             .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
-        self.txns
+        let mut quota_limit = self.quota_limit as i64;
+        let result = self
+            .txns
             .iter()
-            .take(self.package_limit)
             .cloned()
-            .map(|txn| txn.0)
-            .collect()
+            .filter(|item| {
+                let quota = tx_quota(&item.0);
+                let flag = quota_limit >= quota as i64;
+                quota_limit -= quota as i64;
+                flag
+            })
+            .map(|item| item.0)
+            .collect();
+        let mut quota_limit = self.quota_limit as i64;
+        self.txns.retain(|item| {
+            let quota = tx_quota(&item.0);
+            let flag = quota_limit >= quota as i64;
+            quota_limit -= quota as i64;
+            !flag
+        });
+        result
     }
 
     pub fn len(&self) -> usize {
