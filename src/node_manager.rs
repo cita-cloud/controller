@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{check_sig, get_compact_block, kms_client};
+use crate::util::{check_sig, crypto_client, get_compact_block};
 use cita_cloud_proto::common::{Address, Hash};
 use cloud_util::{
     common::h160_address_check,
@@ -67,7 +67,7 @@ impl ChainStatus {
     pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await.map(|t| t.0)?;
-            if get_block_hash(kms_client(), compact_block.header.as_ref()).await?
+            if get_block_hash(crypto_client(), compact_block.header.as_ref()).await?
                 != self.hash.clone().unwrap().hash
             {
                 log::warn!(
@@ -105,7 +105,7 @@ impl ChainStatusInit {
             StatusCode::EncodeError
         })?;
 
-        let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
+        let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;
         check_sig(
             &self.signature,
             &msg_hash,
