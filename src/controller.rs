@@ -163,7 +163,10 @@ impl Controller {
             }),
         };
 
-        let pool = Arc::new(RwLock::new(Pool::new()));
+        let pool = Arc::new(RwLock::new(Pool::new(
+            sys_config.block_limit,
+            sys_config.quota_limit,
+        )));
         let auth = Arc::new(RwLock::new(Authentication::new(sys_config)));
         let chain = Arc::new(RwLock::new(Chain::new(
             current_block_number,

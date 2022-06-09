@@ -233,15 +233,10 @@ impl Chain {
         if self.next_step(global_status).await == ChainStep::SyncStep {
             Err(StatusCode::NodeInSyncMode)
         } else {
-            let auth = self.auth.read().await;
             let tx_list = {
                 let mut pool = self.pool.write().await;
                 log::info!("add_proposal: tx poll len {}", pool.len());
-                pool.package(
-                    self.block_number + 1,
-                    auth.get_system_config().block_limit,
-                    auth.get_system_config().quota_limit,
-                )
+                pool.package(self.block_number + 1)
             };
 
             let mut data = Vec::new();
@@ -422,8 +417,11 @@ impl Chain {
         {
             let mut auth = self.auth.write().await;
             let mut pool = self.pool.write().await;
+            let sys_config = auth.get_system_config();
             auth.insert_tx_hash(block_height, tx_hash_list.clone());
             pool.update(&tx_hash_list);
+            pool.set_block_limit(sys_config.block_limit);
+            pool.set_quota_limit(sys_config.quota_limit);
         }
 
         store_data(

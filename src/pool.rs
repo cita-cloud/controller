@@ -55,12 +55,16 @@ fn get_raw_tx_hash(raw_tx: &RawTransaction) -> &[u8] {
 
 pub struct Pool {
     txns: HashSet<Txn>,
+    block_limit: u64,
+    quota_limit: u64,
 }
 
 impl Pool {
-    pub fn new() -> Self {
+    pub fn new(block_limit: u64, quota_limit: u64) -> Self {
         Pool {
             txns: HashSet::new(),
+            block_limit,
+            quota_limit,
         }
     }
 
@@ -74,15 +78,10 @@ impl Pool {
         }
     }
 
-    pub fn package(
-        &mut self,
-        height: u64,
-        block_limit: u64,
-        quota_limit: u64,
-    ) -> Vec<RawTransaction> {
+    pub fn package(&mut self, height: u64) -> Vec<RawTransaction> {
         self.txns
-            .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
-        let mut quota_limit = quota_limit as i64;
+            .retain(|txn| tx_is_valid(&txn.0, height, self.block_limit));
+        let mut quota_limit = self.quota_limit as i64;
         let result = self
             .txns
             .iter()
@@ -95,7 +94,7 @@ impl Pool {
             })
             .map(|item| item.0)
             .collect();
-        let mut quota_limit = quota_limit as i64;
+        let mut quota_limit = self.quota_limit as i64;
         self.txns.retain(|item| {
             let quota = tx_quota(&item.0);
             let flag = quota_limit >= quota as i64;
@@ -111,6 +110,14 @@ impl Pool {
 
     pub fn pool_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {
         self.txns.get(tx_hash).cloned().map(|txn| txn.0)
+    }
+
+    pub fn set_block_limit(&mut self, block_limit: u64) {
+        self.block_limit = block_limit;
+    }
+
+    pub fn set_quota_limit(&mut self, quota_limit: u64) {
+        self.quota_limit = quota_limit;
     }
 }
 
