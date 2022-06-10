@@ -14,7 +14,7 @@
 
 use crate::config::{controller_config, ControllerConfig};
 use cita_cloud_proto::{
-    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
+    blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
     common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
     consensus::consensus_service_client::ConsensusServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
@@ -462,5 +462,16 @@ pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), Sta
         Err(StatusCode::SigCheckError)
     } else {
         Ok(())
+    }
+}
+
+pub fn tx_quota(raw_tx: &RawTransaction) -> u64 {
+    match raw_tx.tx {
+        Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
+            Some(ref tx) => tx.quota as u64,
+            None => 0,
+        },
+        Some(Tx::UtxoTx(_)) => 0,
+        None => 0,
     }
 }

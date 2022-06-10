@@ -108,6 +108,9 @@ impl Authentication {
         if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
             return Err(StatusCode::InvalidChainId);
         }
+        if tx.quota > self.sys_config.quota_limit {
+            return Err(StatusCode::QuotaUsedExceed);
+        }
         Ok(())
     }
 
