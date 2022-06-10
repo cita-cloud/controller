@@ -287,14 +287,14 @@ impl Controller {
         raw_txs: RawTransactions,
         broadcast: bool,
     ) -> Result<Hashes, StatusCode> {
-        match kms_client().check_transactions(raw_txs.clone()).await {
+        match crypto_client().check_transactions(raw_txs.clone()).await {
             Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
             Err(e) => {
                 log::warn!(
                     "batch_transactions: check_transactions failed: {}",
                     e.to_string()
                 );
-                return Err(StatusCode::KmsServerNotReady);
+                return Err(StatusCode::CryptoServerNotReady);
             }
         }
 
@@ -484,7 +484,7 @@ impl Controller {
                             return Err(StatusCode::QuotaUsedExceed);
                         }
                     }
-                    let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
+                    let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
 
                     // todo re-enter check
                     let res = {
@@ -1006,7 +1006,7 @@ impl Controller {
             chain_id: config.chain_id,
             height,
             hash: Some(Hash {
-                hash: get_block_hash(kms_client(), compact_block.header.as_ref()).await?,
+                hash: get_block_hash(crypto_client(), compact_block.header.as_ref()).await?,
             }),
             address: Some(self.local_address.clone()),
         })
@@ -1157,8 +1157,8 @@ impl Controller {
             log::warn!("process_network_msg: encode ChainStatus failed");
             StatusCode::EncodeError
         })?;
-        let msg_hash = hash_data(kms_client(), &chain_status_bytes).await?;
-        let signature = sign_message(kms_client(), self.config.key_id, &msg_hash).await?;
+        let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;
+        let signature = sign_message(crypto_client(), &msg_hash).await?;
 
         Ok(ChainStatusInit {
             chain_status: Some(own_status),

@@ -244,7 +244,7 @@ impl Chain {
             for raw_tx in tx_list.iter() {
                 data.extend_from_slice(get_tx_hash(raw_tx)?);
             }
-            let transactions_root = hash_data(kms_client(), &data).await?;
+            let transactions_root = hash_data(crypto_client(), &data).await?;
 
             let prevhash = self.block_hash.clone();
             let height = self.block_number + 1;
@@ -269,7 +269,7 @@ impl Chain {
                 .encode(&mut block_header_bytes)
                 .expect("encode block header failed");
 
-            let block_hash = hash_data(kms_client(), &block_header_bytes).await?;
+            let block_hash = hash_data(crypto_client(), &block_header_bytes).await?;
 
             self.own_proposal = Some((height, block_hash.clone(), full_block.clone()));
             self.candidates.insert(block_hash.clone(), full_block);
@@ -527,7 +527,7 @@ impl Chain {
         if let Some(mut full_block) = bft_proposal.proposal {
             full_block.proof = proof.to_vec();
 
-            let block_hash = get_block_hash(kms_client(), full_block.header.as_ref()).await?;
+            let block_hash = get_block_hash(crypto_client(), full_block.header.as_ref()).await?;
 
             let prev_hash = full_block.header.clone().unwrap().prevhash;
 
@@ -577,7 +577,7 @@ impl Chain {
         block: Block,
         wal_redo: bool,
     ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
-        let block_hash = get_block_hash(kms_client(), block.header.as_ref()).await?;
+        let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
         let header = block.header.clone().unwrap();
         let height = header.height;
 
@@ -619,7 +619,7 @@ impl Chain {
             auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?
         }
 
-        match kms_client()
+        match crypto_client()
             .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
             .await
         {
@@ -630,13 +630,13 @@ impl Chain {
                     hex::encode(&block_hash),
                     e.to_string()
                 );
-                return Err(StatusCode::KmsServerNotReady);
+                return Err(StatusCode::CryptoServerNotReady);
             }
         }
 
         self.finalize_block(
             block,
-            get_block_hash(kms_client(), Some(&header)).await?,
+            get_block_hash(crypto_client(), Some(&header)).await?,
             wal_redo,
         )
         .await?;
@@ -720,7 +720,8 @@ impl Chain {
             log::info!("load_wal_log chain type {:?}", log_type);
             match log_type {
                 LogType::FinalizeBlock => match Block::decode(block_bytes.as_slice()) {
-                    Ok(block) => match get_block_hash(kms_client(), block.header.as_ref()).await {
+                    Ok(block) => match get_block_hash(crypto_client(), block.header.as_ref()).await
+                    {
                         Ok(block_hash) => {
                             let header = block.header.clone().unwrap();
                             let height = header.height;

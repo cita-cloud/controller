@@ -24,7 +24,7 @@ pub fn controller_config() -> &'static ControllerConfig {
 }
 
 /// ControllerConfig define majority of controller conduction: micro-server port, reconnect,
-/// discovery other node, sync, log config, kms related
+/// discovery other node, sync, log config, crypto related
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ControllerConfig {
@@ -36,8 +36,8 @@ pub struct ControllerConfig {
     pub consensus_port: u16,
     /// storage service port
     pub storage_port: u16,
-    /// kms service port
-    pub kms_port: u16,
+    /// crypto service port
+    pub crypto_port: u16,
     /// executor service port
     pub executor_port: u16,
     /// self node address
@@ -46,14 +46,12 @@ pub struct ControllerConfig {
     pub block_limit: u64,
     /// block contains txs upper-limit
     pub quota_limit: u64,
-    /// address length from kms
+    /// address length from crypto
     pub address_len: u32,
-    /// hash length from kms
+    /// hash length from crypto
     pub hash_len: u32,
-    /// signature length from kms
+    /// signature length from crypto
     pub signature_len: u32,
-    /// account index in kmsdb
-    pub key_id: u64,
     /// other micro-serv reconnect interval
     pub server_retry_interval: u64,
     /// discovery other nodes interval
@@ -84,7 +82,7 @@ impl Default for ControllerConfig {
             network_port: 50000,
             consensus_port: 50001,
             storage_port: 50003,
-            kms_port: 50005,
+            crypto_port: 50005,
             executor_port: 50002,
             node_address: "".to_string(),
             block_limit: 0,
@@ -92,7 +90,6 @@ impl Default for ControllerConfig {
             address_len: 20,
             hash_len: 32,
             signature_len: 128,
-            key_id: 1,
             server_retry_interval: 3,
             inner_block_growth_check_interval: 60,
             origin_node_reconnect_interval: 86400,
@@ -128,7 +125,7 @@ mod tests {
         assert_eq!(config.network_port, 50000);
         assert_eq!(config.consensus_port, 50001);
         assert_eq!(config.storage_port, 50003);
-        assert_eq!(config.kms_port, 50005);
+        assert_eq!(config.crypto_port, 50005);
         assert_eq!(config.executor_port, 50002);
         assert_eq!(config.controller_port, 50004);
         assert_eq!(

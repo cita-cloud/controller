@@ -17,8 +17,8 @@ use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
     common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
     consensus::consensus_service_client::ConsensusServiceClient,
+    crypto::crypto_service_client::CryptoServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
-    kms::kms_service_client::KmsServiceClient,
     network::{network_service_client::NetworkServiceClient, NetworkStatusResponse},
     storage::{storage_service_client::StorageServiceClient, ExtKey},
 };
@@ -40,7 +40,7 @@ pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCel
 pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();
 pub static EXECUTOR_CLIENT: OnceCell<ExecutorServiceClient<Channel>> = OnceCell::const_new();
 pub static NETWORK_CLIENT: OnceCell<NetworkServiceClient<Channel>> = OnceCell::const_new();
-pub static KMS_CLIENT: OnceCell<KmsServiceClient<Channel>> = OnceCell::const_new();
+pub static CRYPTO_CLIENT: OnceCell<CryptoServiceClient<Channel>> = OnceCell::const_new();
 
 // This must be called before access to clients.
 pub fn init_grpc_client(config: &ControllerConfig) {
@@ -72,11 +72,11 @@ pub fn init_grpc_client(config: &ControllerConfig) {
             NetworkServiceClient::new(channel)
         })
         .unwrap();
-    KMS_CLIENT
+    CRYPTO_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.kms_port);
+            let addr = format!("http://127.0.0.1:{}", config.crypto_port);
             let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
-            KmsServiceClient::new(channel)
+            CryptoServiceClient::new(channel)
         })
         .unwrap();
 }
@@ -97,8 +97,8 @@ pub fn network_client() -> NetworkServiceClient<Channel> {
     NETWORK_CLIENT.get().cloned().unwrap()
 }
 
-pub fn kms_client() -> KmsServiceClient<Channel> {
-    KMS_CLIENT.get().cloned().unwrap()
+pub fn crypto_client() -> CryptoServiceClient<Channel> {
+    CRYPTO_CLIENT.get().cloned().unwrap()
 }
 
 pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCode {
@@ -138,7 +138,7 @@ pub async fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec
         );
         Err(StatusCode::SigLenError)
     } else {
-        recover_signature(kms_client(), signature, tx_hash).await
+        recover_signature(crypto_client(), signature, tx_hash).await
     }
 }
 
@@ -152,12 +152,12 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
         );
         Err(StatusCode::HashLenError)
     } else {
-        let computed_hash = hash_data(kms_client(), tx_bytes).await?;
+        let computed_hash = hash_data(crypto_client(), tx_bytes).await?;
         if tx_hash != computed_hash {
             warn!(
                 "tx_hash is not consistent, item hash: {}, computed hash: {}",
                 hex::encode(tx_hash),
-                hex::encode(&hash_data(kms_client(), tx_bytes).await?)
+                hex::encode(&hash_data(crypto_client(), tx_bytes).await?)
             );
             Err(StatusCode::HashCheckError)
         } else {
@@ -458,7 +458,7 @@ macro_rules! impl_broadcast {
 }
 
 pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), StatusCode> {
-    if recover_signature(kms_client(), sig, msg).await? != address {
+    if recover_signature(crypto_client(), sig, msg).await? != address {
         Err(StatusCode::SigCheckError)
     } else {
         Ok(())

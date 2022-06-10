@@ -54,7 +54,7 @@ OPTIONS:
     * `consensus_port` 共识微服务的gRPC端口
     * `controller_port` 控制器微服务的gRPC端口
     * `executor_port` 执行器微服务的gRPC端口
-    * `kms_port` kms微服务的gRPC端口
+    * `crypto_port` crypto微服务的gRPC端口
     * `network_port` 网络微服务的gRPC端口
     * `storage_port` 存储微服务的gRPC端口
     * `validator_address_len` 是共识使用的地址的长度
@@ -84,7 +84,7 @@ OPTIONS:
 $ controller run -c example/config.toml -l controller-log4rs.yaml
 2022-03-09T11:53:21.015943+08:00 INFO controller - grpc port of this service: 50004
 2022-03-09T11:53:24.023215+08:00 INFO controller - register network msg handler success!
-2022-03-09T11:53:24.025524+08:00 INFO controller - kms(sm) is ready!
+2022-03-09T11:53:24.025524+08:00 INFO controller - crypto(sm) is ready!
 2022-03-09T11:53:24.025583+08:00 INFO controller - load sys_config
 2022-03-09T11:53:24.028314+08:00 INFO controller - get current block number success!
 2022-03-09T11:53:24.028346+08:00 INFO controller - this is a new chain!

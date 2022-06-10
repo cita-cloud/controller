@@ -36,7 +36,7 @@ use crate::{
     panic_hook::set_panic_handler,
     protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
     util::{
-        get_full_block, init_grpc_client, kms_client, load_data_maybe_empty, reconfigure,
+        crypto_client, get_full_block, init_grpc_client, load_data_maybe_empty, reconfigure,
         storage_client,
     },
     utxo_set::{
@@ -641,7 +641,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         server_retry_interval.tick().await;
         // register endpoint
         {
-            if let Ok(crypto_info) = kms_client().get_crypto_info(Request::new(Empty {})).await {
+            if let Ok(crypto_info) = crypto_client()
+                .get_crypto_info(Request::new(Empty {}))
+                .await
+            {
                 let inner = crypto_info.into_inner();
                 if inner.status.is_some() {
                     match StatusCode::from(inner.status.unwrap()) {
@@ -649,7 +652,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             config.hash_len = inner.hash_len;
                             config.signature_len = inner.signature_len;
                             config.address_len = inner.address_len;
-                            info!("kms({}) is ready!", &inner.name);
+                            info!("crypto({}) is ready!", &inner.name);
                             break;
                         }
                         status => warn!("get get_crypto_info failed: {:?}", status),
@@ -657,7 +660,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                 }
             }
         }
-        warn!("kms not ready! Retrying");
+        warn!("crypto not ready! Retrying");
     }
 
     // load sys_config
@@ -1087,11 +1090,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             StatusCode::EncodeError
                         })
                         .unwrap();
-                    let msg_hash = hash_data(kms_client(), &chain_status_bytes).await.unwrap();
-                    let signature =
-                        sign_message(kms_client(), controller_for_task.config.key_id, &msg_hash)
-                            .await
-                            .unwrap();
+                    let msg_hash = hash_data(crypto_client(), &chain_status_bytes)
+                        .await
+                        .unwrap();
+                    let signature = sign_message(crypto_client(), &msg_hash).await.unwrap();
 
                     controller_for_task
                         .broadcast_chain_status_init(ChainStatusInit {
