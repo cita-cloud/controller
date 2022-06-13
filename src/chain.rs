@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::utxo_set::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT};
 use crate::{
     auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
     GenesisBlock,
@@ -417,10 +416,12 @@ impl Chain {
         // update auth and pool
         {
             let mut auth = self.auth.write().await;
-            let mut pool = self.pool.write().await;
             auth.insert_tx_hash(block_height, tx_hash_list.clone());
+        }
+        let sys_config = self.auth.read().await.get_system_config();
+        {
+            let mut pool = self.pool.write().await;
             pool.update(&tx_hash_list);
-            let sys_config = auth.get_system_config();
             pool.set_block_limit(sys_config.block_limit);
             pool.set_quota_limit(sys_config.quota_limit);
         }
