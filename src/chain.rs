@@ -390,9 +390,8 @@ impl Chain {
                         .is_success()?;
                         match lock_id {
                             LOCK_ID_BLOCK_LIMIT | LOCK_ID_QUOTA_LIMIT => {
+                                let sys_config = self.get_system_config().await;
                                 let mut pool = self.pool.write().await;
-                                let auth = self.auth.write().await;
-                                let sys_config = auth.get_system_config();
                                 pool.set_block_limit(sys_config.block_limit);
                                 pool.set_quota_limit(sys_config.quota_limit);
                             }

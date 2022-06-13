@@ -89,29 +89,24 @@ impl Authentication {
 
     fn check_transaction(&self, tx: &Transaction) -> Result<(), StatusCode> {
         if tx.version != self.sys_config.version {
-            return Err(StatusCode::InvalidVersion);
-        }
-        if tx.to.len() != 20 && !tx.to.is_empty() {
-            return Err(StatusCode::InvalidTo);
-        }
-        if tx.nonce.len() > 128 {
-            return Err(StatusCode::InvalidNonce);
-        }
-        if tx.valid_until_block <= self.current_block_number
+            Err(StatusCode::InvalidVersion)
+        } else if tx.to.len() != 20 && !tx.to.is_empty() {
+            Err(StatusCode::InvalidTo)
+        } else if tx.nonce.len() > 128 {
+            Err(StatusCode::InvalidNonce)
+        } else if tx.valid_until_block <= self.current_block_number
             || tx.valid_until_block > (self.current_block_number + self.sys_config.block_limit)
         {
-            return Err(StatusCode::InvalidValidUntilBlock);
+            Err(StatusCode::InvalidValidUntilBlock)
+        } else if tx.value.len() != 32 {
+            Err(StatusCode::InvalidValue)
+        } else if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
+            Err(StatusCode::InvalidChainId)
+        } else if tx.quota > self.sys_config.quota_limit {
+            Err(StatusCode::QuotaUsedExceed)
+        } else {
+            Ok(())
         }
-        if tx.value.len() != 32 {
-            return Err(StatusCode::InvalidValue);
-        }
-        if tx.chain_id.len() != 32 || tx.chain_id != self.sys_config.chain_id {
-            return Err(StatusCode::InvalidChainId);
-        }
-        if tx.quota > self.sys_config.quota_limit {
-            return Err(StatusCode::QuotaUsedExceed);
-        }
-        Ok(())
     }
 
     fn check_utxo_transaction(&self, utxo_tx: &UtxoTransaction) -> Result<(), StatusCode> {

@@ -1010,10 +1010,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                             }
                                             Err(e) => {
                                                 warn!(
-                                                "sync block error: {}, node: 0x{} been misbehavior_node",
-                                                e.to_string(),
-                                                hex::encode(&addr.address)
-                                            );
+                                                    "sync block error: {}, node: 0x{} been misbehavior_node",
+                                                    e.to_string(),
+                                                    hex::encode(&addr.address)
+                                                );
                                                 let _ = controller_for_task
                                                     .node_manager
                                                     .set_misbehavior_node(&addr)
@@ -1061,6 +1061,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                             }
                                                         }
                                                     }
+                                                } else {
+                                                    syncing = true;
                                                 }
                                             }
                                         }

@@ -474,13 +474,13 @@ impl Controller {
         match ret {
             Ok(_) => match proposal_enum.proposal {
                 Some(Proposal::BftProposal(bft_proposal)) => {
-                    let auth = self.auth.read().await;
+                    let sys_config = self.rpc_get_system_config().await?;
                     let block = bft_proposal.proposal.ok_or(StatusCode::NoneProposal)?;
 
                     let mut total_quota = 0;
                     for tx in &block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?.body {
-                        total_quota += tx_quota(tx);
-                        if total_quota > auth.get_system_config().quota_limit {
+                        total_quota += get_tx_quota(tx)?;
+                        if total_quota > sys_config.quota_limit {
                             return Err(StatusCode::QuotaUsedExceed);
                         }
                     }
@@ -535,8 +535,7 @@ impl Controller {
         let status = self.get_status().await;
 
         if status.height >= height {
-            let rd = self.auth.read().await;
-            let config = rd.get_system_config();
+            let config = self.rpc_get_system_config().await?;
             return Ok(ConsensusConfiguration {
                 height,
                 block_interval: config.block_interval,
