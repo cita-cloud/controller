@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::tx_quota;
+use crate::util::get_tx_quota;
 use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use std::{
     borrow::Borrow,
@@ -79,29 +79,23 @@ impl Pool {
     }
 
     pub fn package(&mut self, height: u64) -> Vec<RawTransaction> {
+        let block_limit = self.block_limit;
         self.txns
-            .retain(|txn| tx_is_valid(&txn.0, height, self.block_limit));
-        let mut quota_limit = self.quota_limit as i64;
-        let result = self
-            .txns
-            .iter()
-            .cloned()
-            .filter(|item| {
-                let quota = tx_quota(&item.0);
-                let flag = quota_limit >= quota as i64;
-                quota_limit -= quota as i64;
-                flag
-            })
-            .map(|item| item.0)
-            .collect();
-        let mut quota_limit = self.quota_limit as i64;
-        self.txns.retain(|item| {
-            let quota = tx_quota(&item.0);
-            let flag = quota_limit >= quota as i64;
-            quota_limit -= quota as i64;
-            !flag
-        });
-        result
+            .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
+        let mut quota_limit = self.quota_limit;
+        let mut pack_tx = vec![];
+        for txn in self.txns.iter().cloned() {
+            let tx_quota = get_tx_quota(&txn.0).unwrap();
+            if quota_limit >= tx_quota {
+                pack_tx.push(txn.0);
+                quota_limit -= tx_quota;
+                // 21000 is a basic tx quota, but the utxo's quota spend is 0
+                if quota_limit < 21000 {
+                    break;
+                }
+            }
+        }
+        pack_tx
     }
 
     pub fn len(&self) -> usize {
@@ -122,18 +116,14 @@ impl Pool {
 }
 
 fn tx_is_valid(raw_tx: &RawTransaction, height: u64, block_limit: u64) -> bool {
-    let valid_until_block = {
-        match raw_tx.tx {
-            Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
-                Some(ref tx) => tx.valid_until_block,
-                None => return false,
-            },
-            Some(Tx::UtxoTx(_)) => {
-                return true;
+    match raw_tx.tx {
+        Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
+            Some(ref tx) => {
+                height < tx.valid_until_block && tx.valid_until_block <= height + block_limit
             }
-            None => return false,
-        }
-    };
-
-    height < valid_until_block && valid_until_block <= (height + block_limit)
+            None => false,
+        },
+        Some(Tx::UtxoTx(_)) => true,
+        None => false,
+    }
 }

@@ -30,6 +30,7 @@ use cloud_util::{
 use log::warn;
 use prost::Message;
 use status_code::StatusCode;
+use status_code::StatusCode::{NoneRawTx, NoneTransaction};
 use tokio::sync::OnceCell;
 use tonic::{
     transport::{Channel, Endpoint},
@@ -465,13 +466,19 @@ pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), Sta
     }
 }
 
-pub fn tx_quota(raw_tx: &RawTransaction) -> u64 {
-    match raw_tx.tx {
-        Some(Tx::NormalTx(ref normal_tx)) => match normal_tx.transaction {
-            Some(ref tx) => tx.quota as u64,
-            None => 0,
+pub fn get_tx_quota(raw_tx: &RawTransaction) -> Result<u64, StatusCode> {
+    match &raw_tx.tx {
+        Some(Tx::NormalTx(normal_tx)) => match normal_tx.transaction {
+            Some(ref tx) => Ok(tx.quota),
+            None => {
+                warn!("tx_quota: found NoneTransaction");
+                Err(NoneTransaction)
+            }
         },
-        Some(Tx::UtxoTx(_)) => 0,
-        None => 0,
+        Some(Tx::UtxoTx(_)) => Ok(0),
+        None => {
+            warn!("tx_quota: found NoneRawTx");
+            Err(NoneRawTx)
+        }
     }
 }
