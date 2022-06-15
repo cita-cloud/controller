@@ -378,7 +378,16 @@ impl Controller {
         &self,
         tx_hash: Vec<u8>,
     ) -> Result<RawTransaction, StatusCode> {
-        db_get_tx(&tx_hash).await
+        match db_get_tx(&tx_hash).await {
+            Ok(tx) => Ok(tx),
+            Err(e) => {
+                let pool = self.pool.read().await;
+                match pool.pool_get_tx(&tx_hash) {
+                    Some(tx) => Ok(tx),
+                    None => Err(e),
+                }
+            }
+        }
     }
 
     pub async fn rpc_get_system_config(&self) -> Result<SystemConfig, StatusCode> {
