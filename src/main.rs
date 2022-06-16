@@ -611,6 +611,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     info!("grpc port of this service: {}", grpc_port);
 
+    let health_check_timeout = config.health_check_timeout;
+
+    info!("health check timeout: {}", health_check_timeout);
+
     let mut server_retry_interval =
         time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
@@ -1165,7 +1169,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         .add_service(NetworkMsgHandlerServiceServer::new(
             ControllerNetworkMsgHandlerServer::new(controller.clone()),
         ))
-        .add_service(HealthServer::new(HealthCheckServer::new(controller)))
+        .add_service(HealthServer::new(HealthCheckServer::new(
+            controller,
+            health_check_timeout,
+        )))
         .serve(addr)
         .await
         .map_err(|e| {
