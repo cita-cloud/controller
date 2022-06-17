@@ -23,6 +23,7 @@ mod pool;
 mod protocol;
 #[macro_use]
 mod util;
+mod constant;
 mod event;
 mod health_check;
 mod utxo_set;
@@ -550,6 +551,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     }
 }
 
+use crate::constant::{GLOBAL, TRANSACTIONS};
 use crate::node_manager::{ChainStatus, NodeAddress};
 use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
@@ -673,7 +675,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     loop {
         server_retry_interval.tick().await;
         {
-            match load_data_maybe_empty(0, 0u64.to_be_bytes().to_vec()).await {
+            match load_data_maybe_empty(GLOBAL, 0u64.to_be_bytes().to_vec()).await {
                 Ok(current_block_number_bytes) => {
                     info!("get current block number success!");
                     if current_block_number_bytes.is_empty() {
@@ -686,7 +688,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
                         current_block_number = u64::from_be_bytes(bytes);
                         current_block_hash =
-                            load_data(storage_client(), 0, 1u64.to_be_bytes().to_vec())
+                            load_data(storage_client(), GLOBAL, 1u64.to_be_bytes().to_vec())
                                 .await
                                 .unwrap();
                     }
@@ -706,13 +708,13 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let mut sys_config = utxo_set::SystemConfig::new(&opts.config_path);
     for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
         // region 0 global
-        match load_data(storage_client(), 0, lock_id.to_be_bytes().to_vec()).await {
+        match load_data(storage_client(), GLOBAL, lock_id.to_be_bytes().to_vec()).await {
             Ok(data_or_tx_hash) => {
                 //data or tx_hash stored at this lock_id, read to update sys_config
                 // region 1: tx_hash - tx
                 if data_or_tx_hash.len() == config.hash_len as usize && lock_id != LOCK_ID_CHAIN_ID
                 {
-                    match load_data(storage_client(), 1, data_or_tx_hash.clone()).await {
+                    match load_data(storage_client(), TRANSACTIONS, data_or_tx_hash.clone()).await {
                         Ok(raw_tx_bytes) => {
                             info!("lock_id: {} stored tx_hash", lock_id);
                             let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();

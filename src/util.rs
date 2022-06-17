@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use crate::config::{controller_config, ControllerConfig};
+use crate::constant::{
+    COMPAT_BLOCK, FULL_BLOCK, PROOF, TRANSACTIONS, TRANSACTION_HASH2BLOCK_HEIGHT, TRANSACTION_INDEX,
+};
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
     common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
@@ -191,7 +194,7 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
 pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
-    let block_bytes = load_data(storage_client(), 11, height_bytes).await?;
+    let block_bytes = load_data(storage_client(), FULL_BLOCK, height_bytes).await?;
 
     Block::decode(block_bytes.as_slice()).map_err(|_| {
         warn!("get_full_block: decode Block failed");
@@ -237,7 +240,7 @@ pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
     let tx_hash_bytes = tx_hash.to_vec();
 
-    let tx_bytes = load_data(storage_client(), 1, tx_hash_bytes)
+    let tx_bytes = load_data(storage_client(), TRANSACTIONS, tx_hash_bytes)
         .await
         .map_err(|e| {
             warn!(
@@ -267,18 +270,22 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Statu
 pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
     let tx_hash_bytes = tx_hash.to_vec();
 
-    let height_bytes = load_data(storage_client(), 7, tx_hash_bytes.clone())
-        .await
-        .map_err(|e| {
-            warn!(
-                "load tx(0x{}) block height failed, error: {}",
-                hex::encode(tx_hash),
-                e.to_string()
-            );
-            StatusCode::NoTxHeight
-        })?;
+    let height_bytes = load_data(
+        storage_client(),
+        TRANSACTION_HASH2BLOCK_HEIGHT,
+        tx_hash_bytes.clone(),
+    )
+    .await
+    .map_err(|e| {
+        warn!(
+            "load tx(0x{}) block height failed, error: {}",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
+        StatusCode::NoTxHeight
+    })?;
 
-    let tx_index_bytes = load_data(storage_client(), 9, tx_hash_bytes)
+    let tx_index_bytes = load_data(storage_client(), TRANSACTION_INDEX, tx_hash_bytes)
         .await
         .map_err(|e| {
             warn!(
@@ -303,7 +310,7 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
 pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
-    let compact_block_bytes = load_data(storage_client(), 10, height_bytes.clone())
+    let compact_block_bytes = load_data(storage_client(), COMPAT_BLOCK, height_bytes.clone())
         .await
         .map_err(|e| {
             warn!("get compact_block({}) error: {}", height, e.to_string());
@@ -315,7 +322,7 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), S
         StatusCode::DecodeError
     })?;
 
-    let proof = load_data(storage_client(), 5, height_bytes)
+    let proof = load_data(storage_client(), PROOF, height_bytes)
         .await
         .map_err(|e| {
             warn!("get proof({}) error: {}", height, e.to_string());

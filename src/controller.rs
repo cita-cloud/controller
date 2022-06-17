@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::constant::{BLOCK_HASH, BLOCK_HASH2BLOCK_HEIGHT};
 use crate::{
     auth::Authentication,
     chain::{Chain, ChainStep},
@@ -317,7 +318,7 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, StatusCode> {
-        let block_number = load_data(storage_client(), 8, hash.clone())
+        let block_number = load_data(storage_client(), BLOCK_HASH2BLOCK_HEIGHT, hash.clone())
             .await
             .map_err(|e| {
                 log::warn!(
@@ -336,16 +337,20 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, StatusCode> {
-        load_data(storage_client(), 4, block_number.to_be_bytes().to_vec())
-            .await
-            .map_err(|e| {
-                log::warn!(
-                    "load block({})'s hash failed, error: {}",
-                    block_number,
-                    e.to_string()
-                );
-                StatusCode::NoBlockHeight
-            })
+        load_data(
+            storage_client(),
+            BLOCK_HASH,
+            block_number.to_be_bytes().to_vec(),
+        )
+        .await
+        .map_err(|e| {
+            log::warn!(
+                "load block({})'s hash failed, error: {}",
+                block_number,
+                e.to_string()
+            );
+            StatusCode::NoBlockHeight
+        })
     }
 
     pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, StatusCode> {
