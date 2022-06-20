@@ -17,16 +17,26 @@ use cita_cloud_proto::health_check::{
     health_check_response::ServingStatus, health_server::Health, HealthCheckRequest,
     HealthCheckResponse,
 };
+use cloud_util::unix_now;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tonic::{Request, Response, Status};
 
 // grpc server of Health Check
 pub struct HealthCheckServer {
-    _controller: Controller,
+    controller: Controller,
+    timestamp: AtomicU64,
+    height: AtomicU64,
+    timeout: u64,
 }
 
 impl HealthCheckServer {
-    pub fn new(_controller: Controller) -> Self {
-        HealthCheckServer { _controller }
+    pub fn new(controller: Controller, timeout: u64) -> Self {
+        HealthCheckServer {
+            controller,
+            timestamp: AtomicU64::new(unix_now()),
+            height: AtomicU64::new(0),
+            timeout,
+        }
     }
 }
 
@@ -36,9 +46,25 @@ impl Health for HealthCheckServer {
         &self,
         _request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
-        let reply = Response::new(HealthCheckResponse {
-            status: ServingStatus::Serving.into(),
-        });
+        let height = self.controller.rpc_get_block_number(true).await.unwrap();
+        let timestamp = unix_now();
+        let old_height = self.height.load(Ordering::Relaxed);
+        let old_timestamp = self.timestamp.load(Ordering::Relaxed);
+
+        let status = if height > old_height {
+            self.height.store(height, Ordering::Relaxed);
+            self.timestamp.store(timestamp, Ordering::Relaxed);
+            ServingStatus::Serving.into()
+        } else {
+            // block number not increase for a long time
+            if timestamp - old_timestamp > self.timeout * 1000 {
+                ServingStatus::NotServing.into()
+            } else {
+                ServingStatus::Serving.into()
+            }
+        };
+
+        let reply = Response::new(HealthCheckResponse { status });
         Ok(reply)
     }
 }

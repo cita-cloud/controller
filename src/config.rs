@@ -73,6 +73,9 @@ pub struct ControllerConfig {
     pub send_chain_status_interval_sync: u64,
     /// validator address length
     pub validator_address_len: u32,
+    /// health check timeout
+    /// how many seconds after block number stop increase, will report unhealthy
+    pub health_check_timeout: u64,
 }
 
 impl Default for ControllerConfig {
@@ -100,6 +103,7 @@ impl Default for ControllerConfig {
             wal_path: "./data/wal_chain".to_string(),
             send_chain_status_interval_sync: 1000,
             validator_address_len: 20,
+            health_check_timeout: 300,
         }
     }
 }
