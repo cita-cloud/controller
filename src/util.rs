@@ -13,9 +13,6 @@
 // limitations under the License.
 
 use crate::config::{controller_config, ControllerConfig};
-use crate::constant::{
-    COMPAT_BLOCK, FULL_BLOCK, PROOF, TRANSACTIONS, TRANSACTION_HASH2BLOCK_HEIGHT, TRANSACTION_INDEX,
-};
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
     common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
@@ -23,7 +20,7 @@ use cita_cloud_proto::{
     crypto::crypto_service_client::CryptoServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
     network::{network_service_client::NetworkServiceClient, NetworkStatusResponse},
-    storage::{storage_service_client::StorageServiceClient, ExtKey},
+    storage::{storage_service_client::StorageServiceClient, ExtKey, Regions},
 };
 use cloud_util::{
     common::get_tx_hash,
@@ -194,7 +191,12 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
 pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
-    let block_bytes = load_data(storage_client(), FULL_BLOCK, height_bytes).await?;
+    let block_bytes = load_data(
+        storage_client(),
+        i32::from(Regions::FullBlock) as u32,
+        height_bytes,
+    )
+    .await?;
 
     Block::decode(block_bytes.as_slice()).map_err(|_| {
         warn!("get_full_block: decode Block failed");
@@ -240,16 +242,20 @@ pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
     let tx_hash_bytes = tx_hash.to_vec();
 
-    let tx_bytes = load_data(storage_client(), TRANSACTIONS, tx_hash_bytes)
-        .await
-        .map_err(|e| {
-            warn!(
-                "load tx(0x{} failed, error: {})",
-                hex::encode(tx_hash),
-                e.to_string()
-            );
-            StatusCode::NoTransaction
-        })?;
+    let tx_bytes = load_data(
+        storage_client(),
+        i32::from(Regions::Transactions) as u32,
+        tx_hash_bytes,
+    )
+    .await
+    .map_err(|e| {
+        warn!(
+            "load tx(0x{} failed, error: {})",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
+        StatusCode::NoTransaction
+    })?;
 
     let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(|_| {
         warn!("db_get_tx: decode RawTransaction failed");
@@ -272,7 +278,7 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
 
     let height_bytes = load_data(
         storage_client(),
-        TRANSACTION_HASH2BLOCK_HEIGHT,
+        i32::from(Regions::TransactionHash2blockHeight) as u32,
         tx_hash_bytes.clone(),
     )
     .await
@@ -285,16 +291,20 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
         StatusCode::NoTxHeight
     })?;
 
-    let tx_index_bytes = load_data(storage_client(), TRANSACTION_INDEX, tx_hash_bytes)
-        .await
-        .map_err(|e| {
-            warn!(
-                "load tx(0x{}) index failed, error: {}",
-                hex::encode(tx_hash),
-                e.to_string()
-            );
-            StatusCode::NoTxIndex
-        })?;
+    let tx_index_bytes = load_data(
+        storage_client(),
+        i32::from(Regions::TransactionIndex) as u32,
+        tx_hash_bytes,
+    )
+    .await
+    .map_err(|e| {
+        warn!(
+            "load tx(0x{}) index failed, error: {}",
+            hex::encode(tx_hash),
+            e.to_string()
+        );
+        StatusCode::NoTxIndex
+    })?;
 
     let mut buf: [u8; 8] = [0; 8];
 
@@ -310,24 +320,32 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
 pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
-    let compact_block_bytes = load_data(storage_client(), COMPAT_BLOCK, height_bytes.clone())
-        .await
-        .map_err(|e| {
-            warn!("get compact_block({}) error: {}", height, e.to_string());
-            StatusCode::NoBlock
-        })?;
+    let compact_block_bytes = load_data(
+        storage_client(),
+        i32::from(Regions::CompatBlock) as u32,
+        height_bytes.clone(),
+    )
+    .await
+    .map_err(|e| {
+        warn!("get compact_block({}) error: {}", height, e.to_string());
+        StatusCode::NoBlock
+    })?;
 
     let compact_block = CompactBlock::decode(compact_block_bytes.as_slice()).map_err(|_| {
         warn!("get_compact_block: decode CompactBlock failed");
         StatusCode::DecodeError
     })?;
 
-    let proof = load_data(storage_client(), PROOF, height_bytes)
-        .await
-        .map_err(|e| {
-            warn!("get proof({}) error: {}", height, e.to_string());
-            StatusCode::NoProof
-        })?;
+    let proof = load_data(
+        storage_client(),
+        i32::from(Regions::Proof) as u32,
+        height_bytes,
+    )
+    .await
+    .map_err(|e| {
+        warn!("get proof({}) error: {}", height, e.to_string());
+        StatusCode::NoProof
+    })?;
 
     Ok((compact_block, proof))
 }

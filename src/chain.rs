@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::constant::RESULT;
 use crate::utxo_set::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT};
 use crate::{
     auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
@@ -128,7 +127,12 @@ impl Chain {
         let pre_h = h - 1;
         let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
-        let state_root = load_data(storage_client(), RESULT, pre_height_bytes.clone()).await?;
+        let state_root = load_data(
+            storage_client(),
+            i32::from(Regions::Result) as u32,
+            pre_height_bytes.clone(),
+        )
+        .await?;
 
         let proof = get_compact_block(pre_h).await?.1;
 
@@ -310,7 +314,8 @@ impl Chain {
                 let pre_h = h - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
-                let state_root = load_data(storage_client(), RESULT, key).await?;
+                let state_root =
+                    load_data(storage_client(), i32::from(Regions::Result) as u32, key).await?;
 
                 let proof = get_compact_block(pre_h).await?.1;
 
