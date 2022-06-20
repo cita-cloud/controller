@@ -127,7 +127,12 @@ impl Chain {
         let pre_h = h - 1;
         let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
-        let state_root = load_data(storage_client(), 6, pre_height_bytes.clone()).await?;
+        let state_root = load_data(
+            storage_client(),
+            i32::from(Regions::Result) as u32,
+            pre_height_bytes.clone(),
+        )
+        .await?;
 
         let proof = get_compact_block(pre_h).await?.1;
 
@@ -309,7 +314,8 @@ impl Chain {
                 let pre_h = h - 1;
                 let key = pre_h.to_be_bytes().to_vec();
 
-                let state_root = load_data(storage_client(), 6, key).await?;
+                let state_root =
+                    load_data(storage_client(), i32::from(Regions::Result) as u32, key).await?;
 
                 let proof = get_compact_block(pre_h).await?.1;
 

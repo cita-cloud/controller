@@ -36,6 +36,7 @@ use cita_cloud_proto::{
         NodeNetInfo, ProposalEnum, TotalNodeInfo,
     },
     network::NetworkMsg,
+    storage::Regions,
 };
 use cloud_util::{
     clean_0x,
@@ -317,35 +318,43 @@ impl Controller {
     }
 
     pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, StatusCode> {
-        let block_number = load_data(storage_client(), 8, hash.clone())
-            .await
-            .map_err(|e| {
-                log::warn!(
-                    "load block(0x{})'s height failed, error: {}",
-                    hex::encode(&hash),
-                    e.to_string()
-                );
-                StatusCode::NoBlockHeight
-            })
-            .map(|v| {
-                let mut bytes: [u8; 8] = [0; 8];
-                bytes.clone_from_slice(&v[..8]);
-                u64::from_be_bytes(bytes)
-            })?;
+        let block_number = load_data(
+            storage_client(),
+            i32::from(Regions::BlockHash2blockHeight) as u32,
+            hash.clone(),
+        )
+        .await
+        .map_err(|e| {
+            log::warn!(
+                "load block(0x{})'s height failed, error: {}",
+                hex::encode(&hash),
+                e.to_string()
+            );
+            StatusCode::NoBlockHeight
+        })
+        .map(|v| {
+            let mut bytes: [u8; 8] = [0; 8];
+            bytes.clone_from_slice(&v[..8]);
+            u64::from_be_bytes(bytes)
+        })?;
         self.rpc_get_block_by_number(block_number).await
     }
 
     pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, StatusCode> {
-        load_data(storage_client(), 4, block_number.to_be_bytes().to_vec())
-            .await
-            .map_err(|e| {
-                log::warn!(
-                    "load block({})'s hash failed, error: {}",
-                    block_number,
-                    e.to_string()
-                );
-                StatusCode::NoBlockHeight
-            })
+        load_data(
+            storage_client(),
+            i32::from(Regions::BlockHash) as u32,
+            block_number.to_be_bytes().to_vec(),
+        )
+        .await
+        .map_err(|e| {
+            log::warn!(
+                "load block({})'s hash failed, error: {}",
+                block_number,
+                e.to_string()
+            );
+            StatusCode::NoBlockHeight
+        })
     }
 
     pub async fn rpc_get_tx_block_number(&self, tx_hash: Vec<u8>) -> Result<u64, StatusCode> {
