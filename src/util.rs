@@ -322,7 +322,7 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), S
 
     let compact_block_bytes = load_data(
         storage_client(),
-        i32::from(Regions::CompatBlock) as u32,
+        i32::from(Regions::CompactBlock) as u32,
         height_bytes.clone(),
     )
     .await
