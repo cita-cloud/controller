@@ -21,9 +21,9 @@ serde_derive = "1.0"
 hex = "0.4"
 backtrace = "0.3"
 
-cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
-cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
-status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
+cloud-util = "0.3.0"
+cita_cloud_proto = "6.5.0"
+status_code = { package = "cloud-code", version = "0.3.0" }
 
 [build-dependencies]
 tonic-build = "0.5"
