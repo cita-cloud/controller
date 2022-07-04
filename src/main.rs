@@ -615,6 +615,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     info!("health check timeout: {}", health_check_timeout);
 
+    let http2_keepalive_interval = config.http2_keepalive_interval;
+    let http2_keepalive_timeout = config.http2_keepalive_timeout;
+    let tcp_keepalive = config.tcp_keepalive;
+
     let mut server_retry_interval =
         time::interval(Duration::from_secs(config.server_retry_interval));
     loop {
@@ -1182,6 +1186,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     info!("start grpc server!");
     Server::builder()
+        .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
+        .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
+        .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
         .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
         .add_service(Consensus2ControllerServiceServer::new(
             Consensus2ControllerServer::new(controller.clone()),

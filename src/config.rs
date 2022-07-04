@@ -76,6 +76,12 @@ pub struct ControllerConfig {
     /// health check timeout
     /// how many seconds after block number stop increase, will report unhealthy
     pub health_check_timeout: u64,
+    /// interval(seconds) of send HTTP2 Ping frames.
+    pub http2_keepalive_interval: u64,
+    /// if the ping is not acknowledged within the timeout(seconds), the connection will be closed.
+    pub http2_keepalive_timeout: u64,
+    /// the duration(seconds) specified will be the time to remain idle before sending TCP keepalive probes.
+    pub tcp_keepalive: u64,
 }
 
 impl Default for ControllerConfig {
@@ -104,6 +110,9 @@ impl Default for ControllerConfig {
             send_chain_status_interval_sync: 1000,
             validator_address_len: 20,
             health_check_timeout: 300,
+            http2_keepalive_interval: 60,
+            http2_keepalive_timeout: 20,
+            tcp_keepalive: 60,
         }
     }
 }
