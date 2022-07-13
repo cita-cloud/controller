@@ -11,8 +11,8 @@ edition = "2021"
 log = "0.4"
 log4rs = { version = "1.0", features = ["gzip"] }
 clap = { version = "3.1", features = ["derive"] }
-tonic = "0.7.2"
-prost = "0.10.4"
+tonic = "0.7"
+prost = "0.10"
 tokio = { version = "1.17", features = ["full"] }
 rand = "0.8"
 toml = "0.5"
@@ -23,10 +23,10 @@ backtrace = "0.3"
 
 cloud-util = { git = "https://github.com/cita-cloud/cloud-util" }
 cita_cloud_proto = { git = "https://github.com/cita-cloud/cita_cloud_proto" }
-status_code = {  package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
+status_code = { package = "cloud-code", git = "https://github.com/cita-cloud/status_code" }
 
 [build-dependencies]
-tonic-build = "0.7.2"
+tonic-build = "0.7"
 
 [profile.release.package."*"]
 # Set the default for dependencies.
