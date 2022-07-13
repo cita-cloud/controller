@@ -48,35 +48,35 @@ pub fn init_grpc_client(config: &ControllerConfig) {
     CONSENSUS_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.consensus_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
             ConsensusServiceClient::new(channel)
         })
         .unwrap();
     STORAGE_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.storage_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
             StorageServiceClient::new(channel)
         })
         .unwrap();
     EXECUTOR_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.executor_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
             ExecutorServiceClient::new(channel)
         })
         .unwrap();
     NETWORK_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.network_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
             NetworkServiceClient::new(channel)
         })
         .unwrap();
     CRYPTO_CLIENT
         .set({
             let addr = format!("http://127.0.0.1:{}", config.crypto_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy().unwrap();
+            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
             CryptoServiceClient::new(channel)
         })
         .unwrap();

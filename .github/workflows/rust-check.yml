@@ -13,6 +13,7 @@ env:
   #GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
+  PROTOC_NO_VENDOR: 1
 
 jobs:
   fmt:
@@ -20,6 +21,9 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
+      - uses: arduino/setup-protoc@v1.1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -34,6 +38,9 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
+      - uses: arduino/setup-protoc@v1.1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -48,6 +55,9 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
+      - uses: arduino/setup-protoc@v1.1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -60,6 +70,9 @@ jobs:
     runs-on: [ self-hosted, Linux, alibaba-cloud ]
     steps:
       - uses: actions/checkout@v2
+      - uses: arduino/setup-protoc@v1.1.2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
