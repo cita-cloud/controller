@@ -570,7 +570,7 @@ impl Controller {
             Ok((config, mut status)) => {
                 status.address = Some(self.local_address.clone());
                 self.set_status(status.clone()).await;
-                self.multicast_chain_status(status).await;
+                self.broadcast_chain_status(status).await;
                 self.try_sync_block().await;
                 Ok(config)
             }
@@ -917,6 +917,7 @@ impl Controller {
         ChainStatusInit,
         "chain_status_init"
     );
+    impl_multicast!(broadcast_chain_status, ChainStatus, "chain_status");
 
     impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
