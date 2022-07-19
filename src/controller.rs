@@ -31,6 +31,7 @@ use crate::{
 };
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
+    client::{CryptoClientTrait, NetworkClientTrait},
     common::{
         proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
         NodeNetInfo, ProposalEnum, TotalNodeInfo,
@@ -289,7 +290,7 @@ impl Controller {
         broadcast: bool,
     ) -> Result<Hashes, StatusCode> {
         match crypto_client().check_transactions(raw_txs.clone()).await {
-            Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
+            Ok(code) => StatusCode::from(code).is_success()?,
             Err(e) => {
                 log::warn!(
                     "batch_transactions: check_transactions failed: {}",
@@ -410,15 +411,15 @@ impl Controller {
         request: Request<NodeNetInfo>,
     ) -> Response<cita_cloud_proto::common::StatusCode> {
         let res = network_client()
-            .add_node(request)
+            .add_node(request.into_inner())
             .await
             .unwrap_or_else(|e| {
                 log::warn!("rpc_add_node failed: {}", e.to_string());
-                Response::new(StatusCode::NetworkServerNotReady.into())
+                StatusCode::NetworkServerNotReady.into()
             });
 
         let controller_for_add = self.clone();
-        let code = StatusCode::from(res.get_ref().code);
+        let code = StatusCode::from(res.clone());
         if code == StatusCode::Success || code == StatusCode::AddExistedPeer {
             tokio::spawn(async move {
                 time::sleep(Duration::from_secs(
@@ -432,7 +433,7 @@ impl Controller {
                     .unwrap();
             });
         }
-        res
+        Response::new(res)
     }
 
     pub async fn rpc_get_peers_info(
@@ -441,13 +442,12 @@ impl Controller {
     ) -> Result<TotalNodeInfo, StatusCode> {
         let mut tnis = Vec::new();
         let tnni = network_client()
-            .get_peers_net_info(request)
+            .get_peers_net_info(request.into_inner())
             .await
             .map_err(|e| {
                 log::warn!("rpc_get_peers_info failed: {}", e.to_string());
                 StatusCode::NetworkServerNotReady
-            })?
-            .into_inner();
+            })?;
 
         for record_node in self.node_manager.node_origin.read().await.iter() {
             for node_info in tnni.nodes.iter() {

@@ -1,6 +1,6 @@
 // Copyright Rivtower Technologies LLC.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
+// Licensed under th&e Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -15,11 +15,16 @@
 use crate::config::{controller_config, ControllerConfig};
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
+    client::{
+        ClientOptions, ConsensusClientTrait, ExecutorClientTrait, InterceptedSvc,
+        NetworkClientTrait, StorageClientTrait,
+    },
     common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
     consensus::consensus_service_client::ConsensusServiceClient,
     crypto::crypto_service_client::CryptoServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
     network::{network_service_client::NetworkServiceClient, NetworkStatusResponse},
+    retry::RetryClient,
     storage::{storage_service_client::StorageServiceClient, ExtKey, Regions},
 };
 use cloud_util::{
@@ -32,81 +37,105 @@ use prost::Message;
 use status_code::StatusCode;
 use status_code::StatusCode::{NoneRawTx, NoneTransaction};
 use tokio::sync::OnceCell;
-use tonic::{
-    transport::{Channel, Endpoint},
-    Request,
-};
 
-pub static CONSENSUS_CLIENT: OnceCell<ConsensusServiceClient<Channel>> = OnceCell::const_new();
-pub static STORAGE_CLIENT: OnceCell<StorageServiceClient<Channel>> = OnceCell::const_new();
-pub static EXECUTOR_CLIENT: OnceCell<ExecutorServiceClient<Channel>> = OnceCell::const_new();
-pub static NETWORK_CLIENT: OnceCell<NetworkServiceClient<Channel>> = OnceCell::const_new();
-pub static CRYPTO_CLIENT: OnceCell<CryptoServiceClient<Channel>> = OnceCell::const_new();
+pub static CONSENSUS_CLIENT: OnceCell<RetryClient<ConsensusServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
+pub static STORAGE_CLIENT: OnceCell<RetryClient<StorageServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
+pub static EXECUTOR_CLIENT: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
+pub static NETWORK_CLIENT: OnceCell<RetryClient<NetworkServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
+pub static CRYPTO_CLIENT: OnceCell<RetryClient<CryptoServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
 
 // This must be called before access to clients.
 pub fn init_grpc_client(config: &ControllerConfig) {
     CONSENSUS_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.consensus_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
-            ConsensusServiceClient::new(channel)
+            let client_options = ClientOptions::new(
+                "consensus".to_string(),
+                format!("http://127.0.0.1:{}", config.consensus_port),
+            );
+            match client_options.connect_consensus() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
         })
         .unwrap();
     STORAGE_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.storage_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
-            StorageServiceClient::new(channel)
+            let client_options = ClientOptions::new(
+                "storage".to_string(),
+                format!("http://127.0.0.1:{}", config.storage_port),
+            );
+            match client_options.connect_storage() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
         })
         .unwrap();
     EXECUTOR_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.executor_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
-            ExecutorServiceClient::new(channel)
+            let client_options = ClientOptions::new(
+                "executor".to_string(),
+                format!("http://127.0.0.1:{}", config.executor_port),
+            );
+            match client_options.connect_executor() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
         })
         .unwrap();
     NETWORK_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.network_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
-            NetworkServiceClient::new(channel)
+            let client_options = ClientOptions::new(
+                "network".to_string(),
+                format!("http://127.0.0.1:{}", config.network_port),
+            );
+            match client_options.connect_network() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
         })
         .unwrap();
     CRYPTO_CLIENT
         .set({
-            let addr = format!("http://127.0.0.1:{}", config.crypto_port);
-            let channel = Endpoint::from_shared(addr).unwrap().connect_lazy();
-            CryptoServiceClient::new(channel)
+            let client_options = ClientOptions::new(
+                "crypto".to_string(),
+                format!("http://127.0.0.1:{}", config.crypto_port),
+            );
+            match client_options.connect_crypto() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
         })
         .unwrap();
 }
 
-pub fn consensus_client() -> ConsensusServiceClient<Channel> {
+pub fn consensus_client() -> RetryClient<ConsensusServiceClient<InterceptedSvc>> {
     CONSENSUS_CLIENT.get().cloned().unwrap()
 }
 
-pub fn storage_client() -> StorageServiceClient<Channel> {
+pub fn storage_client() -> RetryClient<StorageServiceClient<InterceptedSvc>> {
     STORAGE_CLIENT.get().cloned().unwrap()
 }
 
-pub fn executor_client() -> ExecutorServiceClient<Channel> {
+pub fn executor_client() -> RetryClient<ExecutorServiceClient<InterceptedSvc>> {
     EXECUTOR_CLIENT.get().cloned().unwrap()
 }
 
-pub fn network_client() -> NetworkServiceClient<Channel> {
+pub fn network_client() -> RetryClient<NetworkServiceClient<InterceptedSvc>> {
     NETWORK_CLIENT.get().cloned().unwrap()
 }
 
-pub fn crypto_client() -> CryptoServiceClient<Channel> {
+pub fn crypto_client() -> RetryClient<CryptoServiceClient<InterceptedSvc>> {
     CRYPTO_CLIENT.get().cloned().unwrap()
 }
 
 pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCode {
-    let request = Request::new(consensus_config);
-
-    match consensus_client().reconfigure(request).await {
-        Ok(response) => StatusCode::from(response.into_inner()),
+    match consensus_client().reconfigure(consensus_config).await {
+        Ok(response) => StatusCode::from(response),
         Err(e) => {
             warn!("reconfigure failed: {}", e.to_string());
             StatusCode::ConsensusServerNotReady
@@ -115,13 +144,11 @@ pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCode
 }
 
 pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCode {
-    let mut client = consensus_client();
-
     let proposal = Some(Proposal { height, data });
-    let request = Request::new(ProposalWithProof { proposal, proof });
+    let pp = ProposalWithProof { proposal, proof };
 
-    match client.check_block(request).await {
-        Ok(respond) => StatusCode::from(respond.into_inner()),
+    match consensus_client().check_block(pp).await {
+        Ok(code) => StatusCode::from(code),
         Err(e) => {
             warn!("check_block failed: {}", e.to_string());
             StatusCode::ConsensusServerNotReady
@@ -168,24 +195,20 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
 }
 
 pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>, StatusCode> {
-    let mut client = storage_client();
-
-    let request = Request::new(ExtKey { region, key });
-
-    client.load(request).await.map_or_else(
-        |e| {
-            warn!("load_data_maybe_empty failed: {:?}", e);
-            Err(StatusCode::StorageServerNotReady)
-        },
-        |response| {
-            let value = response.into_inner();
-            match StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?) {
+    storage_client()
+        .load(ExtKey { region, key })
+        .await
+        .map_or_else(
+            |e| {
+                warn!("load_data_maybe_empty failed: {:?}", e);
+                Err(StatusCode::StorageServerNotReady)
+            },
+            |value| match StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?) {
                 StatusCode::Success => Ok(value.value),
                 StatusCode::NotFound => Ok(vec![]),
                 statue => Err(statue),
-            }
-        },
-    )
+            },
+        )
 }
 
 pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
@@ -205,23 +228,18 @@ pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
 }
 
 pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
-    let mut client = executor_client();
-    let request = Request::new(block);
-    match client.exec(request).await {
-        Ok(response) => {
-            let hash_respond = response.into_inner();
-            (
-                StatusCode::from(
-                    hash_respond
-                        .status
-                        .unwrap_or_else(|| StatusCode::NoneStatusCode.into()),
-                ),
+    match executor_client().exec(block).await {
+        Ok(hash_respond) => (
+            StatusCode::from(
                 hash_respond
-                    .hash
-                    .unwrap_or(cita_cloud_proto::common::Hash { hash: vec![] })
-                    .hash,
-            )
-        }
+                    .status
+                    .unwrap_or_else(|| StatusCode::NoneStatusCode.into()),
+            ),
+            hash_respond
+                .hash
+                .unwrap_or(cita_cloud_proto::common::Hash { hash: vec![] })
+                .hash,
+        ),
         Err(e) => {
             warn!("exec_block failed: {}", e.to_string());
             (StatusCode::ExecuteServerNotReady, vec![])
@@ -230,13 +248,14 @@ pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
 }
 
 pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
-    let mut client = network_client();
-    let request = Request::new(Empty {});
-    let response = client.get_network_status(request).await.map_err(|e| {
-        warn!("get_network_status failed: {}", e.to_string());
-        StatusCode::NetworkServerNotReady
-    })?;
-    Ok(response.into_inner())
+    let network_status_response = network_client()
+        .get_network_status(Empty {})
+        .await
+        .map_err(|e| {
+            warn!("get_network_status failed: {}", e.to_string());
+            StatusCode::NetworkServerNotReady
+        })?;
+    Ok(network_status_response)
 }
 
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
@@ -354,6 +373,8 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), S
 macro_rules! impl_multicast {
     ($func_name:ident, $type:ident, $name:expr) => {
         pub async fn $func_name(&self, item: $type) -> Vec<tokio::task::JoinHandle<()>> {
+            use cita_cloud_proto::client::NetworkClientTrait;
+
             let nodes = self.node_manager.grab_node().await;
 
             let mut buf = Vec::new();
@@ -371,8 +392,6 @@ macro_rules! impl_multicast {
                     hex::encode(&node.address)
                 );
 
-                let mut client = $crate::util::network_client();
-
                 let origin = self.node_manager.get_origin(&node).await.expect(
                     format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
                 );
@@ -384,10 +403,8 @@ macro_rules! impl_multicast {
                     msg: buf.clone(),
                 };
 
-                let request = tonic::Request::new(msg);
-
                 let handle = tokio::spawn(async move {
-                    match client.send_msg(request).await {
+                    match $crate::util::network_client().send_msg(msg).await {
                         Ok(_) => {
                             log::debug!("multicast {} ok", $name)
                         }
@@ -414,7 +431,7 @@ macro_rules! impl_multicast {
 macro_rules! impl_unicast {
     ($func_name:ident, $type:ident, $name:expr) => {
         pub async fn $func_name(&self, origin: u64, item: $type) -> tokio::task::JoinHandle<()> {
-            let mut client = $crate::util::network_client();
+            use cita_cloud_proto::client::NetworkClientTrait;
 
             let mut buf = Vec::new();
 
@@ -430,10 +447,8 @@ macro_rules! impl_unicast {
                 msg: buf,
             };
 
-            let request = tonic::Request::new(msg);
-
             tokio::spawn(async move {
-                match client.send_msg(request).await {
+                match $crate::util::network_client().send_msg(msg).await {
                     Ok(_) => {}
                     Err(status) => {
                         log::warn!(
@@ -453,7 +468,7 @@ macro_rules! impl_unicast {
 macro_rules! impl_broadcast {
     ($func_name:ident, $type:ident, $name:expr) => {
         pub async fn $func_name(&self, item: $type) -> tokio::task::JoinHandle<()> {
-            let mut client = $crate::util::network_client();
+            use cita_cloud_proto::client::NetworkClientTrait;
 
             let mut buf = Vec::new();
 
@@ -469,10 +484,8 @@ macro_rules! impl_broadcast {
                 msg: buf,
             };
 
-            let request = tonic::Request::new(msg);
-
             tokio::spawn(async move {
-                match client.broadcast(request).await {
+                match $crate::util::network_client().broadcast(msg).await {
                     Ok(_) => {}
                     Err(status) => {
                         log::warn!("broadcast {} failed: {:?}", $name, status)
