@@ -429,7 +429,11 @@ impl RpcService for RPCServer {
     ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
         debug!("add_node request: {:?}", request);
 
-        Ok(self.controller.rpc_add_node(request).await)
+        let info = request.into_inner();
+
+        let reply = Response::new(self.controller.rpc_add_node(info).await);
+
+        Ok(reply)
     }
 
     async fn get_peers_info(
@@ -440,7 +444,7 @@ impl RpcService for RPCServer {
 
         Ok(Response::new(
             self.controller
-                .rpc_get_peers_info(request)
+                .rpc_get_peers_info(request.into_inner())
                 .await
                 .map_err(|e| Status::invalid_argument(e.to_string()))?,
         ))

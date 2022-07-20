@@ -52,7 +52,6 @@ use tokio::{
     sync::{mpsc, RwLock},
     time,
 };
-use tonic::{Request, Response};
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
@@ -406,17 +405,11 @@ impl Controller {
         Ok(sys_config)
     }
 
-    pub async fn rpc_add_node(
-        &self,
-        request: Request<NodeNetInfo>,
-    ) -> Response<cita_cloud_proto::common::StatusCode> {
-        let res = network_client()
-            .add_node(request.into_inner())
-            .await
-            .unwrap_or_else(|e| {
-                log::warn!("rpc_add_node failed: {}", e.to_string());
-                StatusCode::NetworkServerNotReady.into()
-            });
+    pub async fn rpc_add_node(&self, info: NodeNetInfo) -> cita_cloud_proto::common::StatusCode {
+        let res = network_client().add_node(info).await.unwrap_or_else(|e| {
+            log::warn!("rpc_add_node failed: {}", e.to_string());
+            StatusCode::NetworkServerNotReady.into()
+        });
 
         let controller_for_add = self.clone();
         let code = StatusCode::from(res.clone());
@@ -433,16 +426,13 @@ impl Controller {
                     .unwrap();
             });
         }
-        Response::new(res)
+        res
     }
 
-    pub async fn rpc_get_peers_info(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<TotalNodeInfo, StatusCode> {
+    pub async fn rpc_get_peers_info(&self, empty: Empty) -> Result<TotalNodeInfo, StatusCode> {
         let mut tnis = Vec::new();
         let tnni = network_client()
-            .get_peers_net_info(request.into_inner())
+            .get_peers_net_info(empty)
             .await
             .map_err(|e| {
                 log::warn!("rpc_get_peers_info failed: {}", e.to_string());

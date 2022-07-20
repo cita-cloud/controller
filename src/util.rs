@@ -1,6 +1,6 @@
 // Copyright Rivtower Technologies LLC.
 //
-// Licensed under th&e Apache License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -49,12 +49,14 @@ pub static NETWORK_CLIENT: OnceCell<RetryClient<NetworkServiceClient<Intercepted
 pub static CRYPTO_CLIENT: OnceCell<RetryClient<CryptoServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 
+const CLIENT_NAME: &str = "controller";
+
 // This must be called before access to clients.
 pub fn init_grpc_client(config: &ControllerConfig) {
     CONSENSUS_CLIENT
         .set({
             let client_options = ClientOptions::new(
-                "consensus".to_string(),
+                CLIENT_NAME.to_string(),
                 format!("http://127.0.0.1:{}", config.consensus_port),
             );
             match client_options.connect_consensus() {
@@ -66,7 +68,7 @@ pub fn init_grpc_client(config: &ControllerConfig) {
     STORAGE_CLIENT
         .set({
             let client_options = ClientOptions::new(
-                "storage".to_string(),
+                CLIENT_NAME.to_string(),
                 format!("http://127.0.0.1:{}", config.storage_port),
             );
             match client_options.connect_storage() {
@@ -78,7 +80,7 @@ pub fn init_grpc_client(config: &ControllerConfig) {
     EXECUTOR_CLIENT
         .set({
             let client_options = ClientOptions::new(
-                "executor".to_string(),
+                CLIENT_NAME.to_string(),
                 format!("http://127.0.0.1:{}", config.executor_port),
             );
             match client_options.connect_executor() {
@@ -90,7 +92,7 @@ pub fn init_grpc_client(config: &ControllerConfig) {
     NETWORK_CLIENT
         .set({
             let client_options = ClientOptions::new(
-                "network".to_string(),
+                CLIENT_NAME.to_string(),
                 format!("http://127.0.0.1:{}", config.network_port),
             );
             match client_options.connect_network() {
@@ -102,7 +104,7 @@ pub fn init_grpc_client(config: &ControllerConfig) {
     CRYPTO_CLIENT
         .set({
             let client_options = ClientOptions::new(
-                "crypto".to_string(),
+                CLIENT_NAME.to_string(),
                 format!("http://127.0.0.1:{}", config.crypto_port),
             );
             match client_options.connect_crypto() {
