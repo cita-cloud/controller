@@ -931,6 +931,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         .send(EventTask::BroadCastCSI)
                         .await
                         .unwrap();
+                    if controller_for_healthy.get_sync_state().await {
+                        controller_for_healthy.set_sync_state(false).await;
+                    }
                     retry_limit += tick;
                     tick = 0;
                 } else if controller_for_healthy.get_status().await.height < current_height {
