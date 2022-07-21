@@ -19,6 +19,7 @@ use crate::{
 };
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
+    client::CryptoClientTrait,
     common::{proposal_enum::Proposal, BftProposal, ConsensusConfiguration, Hash, ProposalEnum},
     storage::Regions,
 };
@@ -628,7 +629,7 @@ impl Chain {
             .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
             .await
         {
-            Ok(response) => StatusCode::from(response.into_inner()).is_success()?,
+            Ok(code) => StatusCode::from(code).is_success()?,
             Err(e) => {
                 log::warn!(
                     "check_transactions check block(0x{})'s txs failed: {}",

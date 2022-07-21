@@ -49,6 +49,7 @@ use cita_cloud_proto::{
     blockchain::{
         raw_transaction::Tx::UtxoTx, Block, CompactBlock, RawTransaction, RawTransactions,
     },
+    client::CryptoClientTrait,
     common::{
         ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
         Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
@@ -428,7 +429,11 @@ impl RpcService for RPCServer {
     ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
         debug!("add_node request: {:?}", request);
 
-        Ok(self.controller.rpc_add_node(request).await)
+        let info = request.into_inner();
+
+        let reply = Response::new(self.controller.rpc_add_node(info).await);
+
+        Ok(reply)
     }
 
     async fn get_peers_info(
@@ -439,7 +444,7 @@ impl RpcService for RPCServer {
 
         Ok(Response::new(
             self.controller
-                .rpc_get_peers_info(request)
+                .rpc_get_peers_info(request.into_inner())
                 .await
                 .map_err(|e| Status::invalid_argument(e.to_string()))?,
         ))
@@ -649,18 +654,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         server_retry_interval.tick().await;
         // register endpoint
         {
-            if let Ok(crypto_info) = crypto_client()
-                .get_crypto_info(Request::new(Empty {}))
-                .await
-            {
-                let inner = crypto_info.into_inner();
-                if inner.status.is_some() {
-                    match StatusCode::from(inner.status.unwrap()) {
+            if let Ok(crypto_info) = crypto_client().get_crypto_info(Empty {}).await {
+                if crypto_info.status.is_some() {
+                    match StatusCode::from(crypto_info.status.unwrap()) {
                         StatusCode::Success => {
-                            config.hash_len = inner.hash_len;
-                            config.signature_len = inner.signature_len;
-                            config.address_len = inner.address_len;
-                            info!("crypto({}) is ready!", &inner.name);
+                            config.hash_len = crypto_info.hash_len;
+                            config.signature_len = crypto_info.signature_len;
+                            config.address_len = crypto_info.address_len;
+                            info!("crypto({}) is ready!", &crypto_info.name);
                             break;
                         }
                         status => warn!("get get_crypto_info failed: {:?}", status),
