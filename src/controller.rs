@@ -271,7 +271,7 @@ impl Controller {
         };
         if res {
             if broadcast {
-                self.multicast_send_tx(raw_tx).await;
+                self.broadcast_send_tx(raw_tx).await;
             }
             Ok(tx_hash)
         } else {
@@ -312,7 +312,7 @@ impl Controller {
             }
         }
         if broadcast {
-            self.multicast_send_txs(raw_txs).await;
+            self.broadcast_send_txs(raw_txs).await;
         }
         Ok(Hashes { hashes })
     }
@@ -521,7 +521,7 @@ impl Controller {
                 None => return Err(StatusCode::NoneProposal),
             },
             Err(StatusCode::ProposalTooHigh) => {
-                self.multicast_chain_status(self.get_status().await).await;
+                self.broadcast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_candidate();
@@ -565,7 +565,7 @@ impl Controller {
                 Ok(config)
             }
             Err(StatusCode::ProposalTooHigh) => {
-                self.multicast_chain_status(self.get_status().await).await;
+                self.broadcast_chain_status(self.get_status().await).await;
                 {
                     let mut wr = self.chain.write().await;
                     wr.clear_candidate();
@@ -909,9 +909,11 @@ impl Controller {
     );
     impl_multicast!(broadcast_chain_status, ChainStatus, "chain_status");
 
-    impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
-    impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
-    impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
+    // impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
+    // impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
+    impl_broadcast!(broadcast_send_tx, RawTransaction, "send_tx");
+    // impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
+    impl_broadcast!(broadcast_send_txs, RawTransactions, "send_txs");
     // impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
     // impl_multicast!(multicast_sync_block, SyncBlockRequest, "sync_block");
 
