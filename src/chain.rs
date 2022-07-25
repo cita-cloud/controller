@@ -314,16 +314,13 @@ impl Chain {
                 let state_root =
                     load_data(storage_client(), i32::from(Regions::Result) as u32, key).await?;
 
-                let proof = get_compact_block(pre_h).await?.1;
-
-                if bft_proposal.pre_state_root == state_root && bft_proposal.pre_proof == proof {
+                if bft_proposal.pre_state_root == state_root {
                     Ok(())
                 } else {
-                    log::warn!("check_proposal failed!\nproposal_state_root {}\nstate_root {}\nproposal_proof {}\nproof {}",
-                          hex::encode(&bft_proposal.pre_state_root),
-                          hex::encode(&state_root),
-                          hex::encode(&bft_proposal.pre_proof),
-                          hex::encode(&proof),
+                    log::warn!(
+                        "check_proposal failed!\nproposal_state_root {}\nstate_root {}",
+                        hex::encode(&bft_proposal.pre_state_root),
+                        hex::encode(&state_root),
                     );
                     Err(StatusCode::ProposalCheckError)
                 }
