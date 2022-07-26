@@ -119,10 +119,6 @@ impl Chain {
         auth.init(init_block_number).await;
     }
 
-    pub fn get_block_number(&self, _is_pending: bool) -> u64 {
-        self.block_number
-    }
-
     pub async fn extract_proposal_info(&self, h: u64) -> Result<(Vec<u8>, Vec<u8>), StatusCode> {
         let pre_h = h - 1;
         let pre_height_bytes = pre_h.to_be_bytes().to_vec();
