@@ -247,9 +247,8 @@ impl Controller {
         }
     }
 
-    pub async fn rpc_get_block_number(&self, is_pending: bool) -> Result<u64, String> {
-        let chain = self.chain.read().await;
-        let block_number = chain.get_block_number(is_pending);
+    pub async fn rpc_get_block_number(&self, _is_pending: bool) -> Result<u64, String> {
+        let block_number = self.get_status().await.height;
         Ok(block_number)
     }
 
