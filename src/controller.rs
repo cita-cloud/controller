@@ -1087,6 +1087,9 @@ impl Controller {
                             .get_sync_block_req(current_height, &global_status)
                             .await
                         {
+                            if !controller_clone.get_sync_state().await {
+                                controller_clone.set_sync_state(true).await;
+                            }
                             current_height = sync_req.end_height;
                             controller_clone
                                 .unicast_sync_block(origin, sync_req.clone())
@@ -1135,6 +1138,9 @@ impl Controller {
                         .get_sync_block_req(current_height, &global_status)
                         .await
                     {
+                        if !self.get_sync_state().await {
+                            self.set_sync_state(true).await;
+                        }
                         current_height = sync_req.end_height;
                         self.unicast_sync_block(origin, sync_req.clone())
                             .await

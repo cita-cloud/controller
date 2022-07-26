@@ -933,6 +933,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         .unwrap();
                     if controller_for_healthy.get_sync_state().await {
                         controller_for_healthy.set_sync_state(false).await;
+                        controller_for_healthy.sync_manager.clear().await;
                     }
                     retry_limit += tick;
                     tick = 0;
