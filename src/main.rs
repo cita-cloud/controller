@@ -1036,7 +1036,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                     == 0
                                                 {
                                                     controller_for_task
-                                                        .multicast_chain_status(status)
+                                                        .broadcast_chain_status(status)
                                                         .await;
                                                 }
                                                 syncing = true;
