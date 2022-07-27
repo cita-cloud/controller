@@ -18,6 +18,7 @@ use cita_cloud_proto::health_check::{
     HealthCheckResponse,
 };
 use cloud_util::unix_now;
+use log::info;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tonic::{Request, Response, Status};
 
@@ -46,6 +47,7 @@ impl Health for HealthCheckServer {
         &self,
         _request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
+        info!("healthcheck entry!");
         let height = self.controller.rpc_get_block_number(true).await.unwrap();
         let timestamp = unix_now();
         let old_height = self.height.load(Ordering::Relaxed);
@@ -54,9 +56,17 @@ impl Health for HealthCheckServer {
         let status = if height > old_height {
             self.height.store(height, Ordering::Relaxed);
             self.timestamp.store(timestamp, Ordering::Relaxed);
+            info!(
+                "healthcheck: block increase {} {} {}",
+                old_height, height, timestamp
+            );
             ServingStatus::Serving.into()
         } else {
             // block number not increase for a long time
+            info!(
+                "healthcheck: block not increase {} {} {}",
+                height, old_timestamp, timestamp
+            );
             if timestamp - old_timestamp > self.timeout * 1000 {
                 ServingStatus::NotServing.into()
             } else {
