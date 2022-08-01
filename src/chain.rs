@@ -120,7 +120,7 @@ impl Chain {
         auth.init(init_block_number).await;
     }
 
-    pub async fn extract_proposal_info(&self, h: u64) -> Result<(Vec<u8>, Vec<u8>), StatusCode> {
+    pub async fn extract_proposal_info(&self, h: u64) -> Result<Vec<u8>, StatusCode> {
         let pre_h = h - 1;
         let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
@@ -131,9 +131,7 @@ impl Chain {
         )
         .await?;
 
-        let proof = get_compact_block(pre_h).await?.1;
-
-        Ok((state_root, proof))
+        Ok(state_root)
     }
 
     pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
@@ -174,13 +172,13 @@ impl Chain {
         height: u64,
     ) -> Result<Vec<u8>, StatusCode> {
         block.proof = Vec::new();
-        let (pre_state_root, pre_proof) = self.extract_proposal_info(height).await?;
+        let pre_state_root = self.extract_proposal_info(height).await?;
 
         let proposal = ProposalEnum {
             proposal: Some(Proposal::BftProposal(BftProposal {
                 proposal: Some(block),
                 pre_state_root,
-                pre_proof,
+                pre_proof: vec![],
             })),
         };
 
