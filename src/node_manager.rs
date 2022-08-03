@@ -23,6 +23,7 @@ use rand::{seq::SliceRandom, thread_rng};
 use status_code::StatusCode;
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -185,32 +186,34 @@ impl Default for NodeConfig {
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct NodeAddress([u8; 20]);
+pub struct NodeAddress(pub u64);
 
-impl From<&Address> for NodeAddress {
-    fn from(addr: &Address) -> Self {
-        let mut slice = [0; 20];
-        slice.copy_from_slice(addr.address.as_slice());
-        Self(slice)
+impl Display for NodeAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "NodeAddress({})",
+            hex::encode(self.0.to_be_bytes())
+        ))
     }
 }
 
-impl NodeAddress {
-    pub(crate) fn to_addr(self) -> Address {
-        Address {
-            address: self.to_vec(),
-        }
+impl From<&Address> for NodeAddress {
+    fn from(address: &Address) -> Self {
+        let tmp = &address.address[0..8];
+        NodeAddress(u64::from_be_bytes(tmp.try_into().unwrap()))
     }
+}
 
-    pub fn to_vec(self) -> Vec<u8> {
-        self.0.to_vec()
-    }
+#[test]
+fn test_node_address_display() {
+    assert_eq!(
+        &format!("{}", NodeAddress(8585939877295017053)),
+        "NodeAddress(772762d40107cc5d)"
+    );
 }
 
 #[derive(Clone, Default)]
 pub struct NodeManager {
-    pub node_origin: Arc<RwLock<HashMap<NodeAddress, u64>>>,
-
     pub nodes: Arc<RwLock<HashMap<NodeAddress, ChainStatus>>>,
 
     pub misbehavior_nodes: Arc<RwLock<HashMap<NodeAddress, MisbehaviorStatus>>>,
@@ -221,104 +224,50 @@ pub struct NodeManager {
 }
 
 impl NodeManager {
-    pub async fn set_origin(&self, node: &Address, origin: u64) -> Option<u64> {
-        let na: NodeAddress = node.into();
-        if let Some(addr) = self.get_address(origin).await {
-            if &addr == node {
-                // same node set again, do nothing
-                log::info!("set origin: same node({}) set again", origin);
-                return None;
-            } else {
-                // delete repeat origin link
-                log::warn!("set origin: exist repeat origin: {}", origin);
-                self.delete_origin(&addr).await;
-                if self.in_node(&addr).await {
-                    self.delete_node(&addr).await;
-                }
-            }
-        }
-        log::info!("set origin[{}] to node: 0x{}", origin, hex::encode(&na.0));
-        let mut wr = self.node_origin.write().await;
-        wr.insert(na, origin)
+    pub async fn in_node(&self, na: &NodeAddress) -> bool {
+        let rd = self.nodes.read().await;
+        rd.contains_key(na)
     }
 
-    pub async fn delete_origin(&self, node: &Address) {
-        let na: NodeAddress = node.into();
-        log::info!("delete origin of node: 0x{}", hex::encode(&na.0));
-        let mut wr = self.node_origin.write().await;
-        wr.remove(&na);
-    }
-
-    pub async fn get_origin(&self, node: &Address) -> Option<u64> {
-        let na = node.into();
-        {
-            let rd = self.node_origin.read().await;
-            rd.get(&na).cloned()
-        }
-    }
-
-    pub async fn get_address(&self, session_id: u64) -> Option<Address> {
-        let map = { self.node_origin.read().await.clone() };
-
-        for (na, origin) in map.into_iter() {
-            if origin == session_id {
-                let addr = na.to_addr();
-                return Some(addr);
-            }
-        }
-
-        None
-    }
-
-    pub async fn in_node(&self, node: &Address) -> bool {
-        let na: NodeAddress = node.into();
-        {
-            let rd = self.nodes.read().await;
-            rd.contains_key(&na)
-        }
-    }
-
-    pub async fn delete_node(&self, node: &Address) -> Option<ChainStatus> {
-        let na: NodeAddress = node.into();
-        log::info!("delete node: 0x{}", hex::encode(&na.0));
+    pub async fn delete_node(&self, na: &NodeAddress) -> Option<ChainStatus> {
+        log::info!("delete node: {}", na);
         {
             let mut wr = self.nodes.write().await;
-            wr.remove(&na)
+            wr.remove(na)
         }
     }
 
     pub async fn set_node(
         &self,
-        node: &Address,
+        na: &NodeAddress,
         chain_status: ChainStatus,
     ) -> Result<Option<ChainStatus>, StatusCode> {
-        if self.in_ban_node(node).await {
+        if self.in_ban_node(na).await {
             return Err(StatusCode::BannedNode);
         }
 
-        if self.in_misbehavior_node(node).await && !self.try_delete_misbehavior_node(node).await {
+        if self.in_misbehavior_node(na).await && !self.try_delete_misbehavior_node(na).await {
             return Err(StatusCode::MisbehaveNode);
         }
-        let na: NodeAddress = node.into();
 
         let status = {
             let rd = self.nodes.read().await;
-            rd.get(&na).cloned()
+            rd.get(na).cloned()
         };
 
         if status.is_none() || status.unwrap().height < chain_status.height {
-            log::info!("update node: 0x{}", hex::encode(&na.0));
+            log::info!("update node: {}", na);
             let mut wr = self.nodes.write().await;
-            Ok(wr.insert(na, chain_status))
+            Ok(wr.insert(*na, chain_status))
         } else {
             Err(StatusCode::EarlyStatus)
         }
     }
 
-    pub async fn grab_node(&self) -> Vec<Address> {
-        let mut keys: Vec<Address> = {
+    pub async fn grab_node(&self) -> Vec<NodeAddress> {
+        let mut keys: Vec<NodeAddress> = {
             let rd = self.nodes.read().await;
-            rd.keys().map(|na| na.to_addr()).collect()
+            rd.keys().copied().collect()
         };
 
         keys.shuffle(&mut thread_rng());
@@ -327,8 +276,8 @@ impl NodeManager {
         keys
     }
 
-    pub async fn pick_node(&self) -> (Address, ChainStatus) {
-        let mut out_addr = Address { address: vec![] };
+    pub async fn pick_node(&self) -> (NodeAddress, ChainStatus) {
+        let mut out_addr = NodeAddress(0);
         let mut out_status = ChainStatus {
             version: 0,
             chain_id: vec![],
@@ -340,28 +289,22 @@ impl NodeManager {
         for (na, status) in rd.iter() {
             if status.height > out_status.height {
                 out_status = status.clone();
-                out_addr = Address {
-                    address: na.0.to_vec(),
-                };
+                out_addr = *na;
             }
         }
 
         (out_addr, out_status)
     }
 
-    pub async fn in_misbehavior_node(&self, node: &Address) -> bool {
-        let na = node.into();
-        {
-            let rd = self.misbehavior_nodes.read().await;
-            rd.contains_key(&na)
-        }
+    pub async fn in_misbehavior_node(&self, na: &NodeAddress) -> bool {
+        let rd = self.misbehavior_nodes.read().await;
+        rd.contains_key(na)
     }
 
-    pub async fn try_delete_misbehavior_node(&self, misbehavior_node: &Address) -> bool {
-        let na: NodeAddress = misbehavior_node.into();
+    pub async fn try_delete_misbehavior_node(&self, misbehavior_node: &NodeAddress) -> bool {
         let res = {
             let rd = self.misbehavior_nodes.read().await;
-            rd.get(&na).unwrap().free()
+            rd.get(misbehavior_node).unwrap().free()
         };
         if res {
             self.delete_misbehavior_node(misbehavior_node).await;
@@ -373,22 +316,19 @@ impl NodeManager {
 
     pub async fn delete_misbehavior_node(
         &self,
-        misbehavior_node: &Address,
+        misbehavior_node: &NodeAddress,
     ) -> Option<MisbehaviorStatus> {
-        let na: NodeAddress = misbehavior_node.into();
-        log::info!("delete misbehavior node: 0x{}", hex::encode(&na.0));
+        log::info!("delete misbehavior node: {}", misbehavior_node);
         {
             let mut wr = self.misbehavior_nodes.write().await;
-            wr.remove(&na)
+            wr.remove(misbehavior_node)
         }
     }
 
     pub async fn set_misbehavior_node(
         &self,
-        node: &Address,
+        node: &NodeAddress,
     ) -> Result<Option<MisbehaviorStatus>, StatusCode> {
-        self.delete_origin(node).await;
-
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
@@ -398,41 +338,34 @@ impl NodeManager {
             return Err(StatusCode::BannedNode);
         }
 
-        let na: NodeAddress = node.into();
-        log::info!("set misbehavior node: 0x{}", hex::encode(&na.0));
+        log::info!("set misbehavior node: {}", node);
         if let Some(mis_status) = {
             let rd = self.misbehavior_nodes.read().await;
-            rd.get(&na).cloned()
+            rd.get(node).cloned()
         } {
             let mut wr = self.misbehavior_nodes.write().await;
-            Ok(wr.insert(na, mis_status.update()))
+            Ok(wr.insert(*node, mis_status.update()))
         } else {
             let mut wr = self.misbehavior_nodes.write().await;
-            Ok(wr.insert(na, MisbehaviorStatus::default()))
+            Ok(wr.insert(*node, MisbehaviorStatus::default()))
         }
     }
 
-    pub async fn in_ban_node(&self, node: &Address) -> bool {
-        let na = node.into();
-        {
-            let rd = self.ban_nodes.read().await;
-            rd.contains(&na)
-        }
+    pub async fn in_ban_node(&self, node: &NodeAddress) -> bool {
+        let rd = self.ban_nodes.read().await;
+        rd.contains(node)
     }
 
     #[allow(dead_code)]
-    pub async fn delete_ban_node(&self, ban_node: &Address) -> bool {
-        let na: NodeAddress = ban_node.into();
-        log::info!("delete ban node: 0x{}", hex::encode(&na.0));
+    pub async fn delete_ban_node(&self, ban_node: &NodeAddress) -> bool {
+        log::info!("delete ban node: {}", ban_node);
         {
             let mut wr = self.ban_nodes.write().await;
-            wr.remove(&na)
+            wr.remove(ban_node)
         }
     }
 
-    pub async fn set_ban_node(&self, node: &Address) -> Result<bool, StatusCode> {
-        self.delete_origin(node).await;
-
+    pub async fn set_ban_node(&self, node: &NodeAddress) -> Result<bool, StatusCode> {
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
@@ -441,36 +374,28 @@ impl NodeManager {
             self.delete_misbehavior_node(node).await;
         }
 
-        let na: NodeAddress = node.into();
-        log::info!("set ban node: 0x{}", hex::encode(&na.0));
+        log::info!("set ban node: {}", node);
         {
             let mut wr = self.ban_nodes.write().await;
-            Ok(wr.insert(na))
+            Ok(wr.insert(*node))
         }
     }
 
     pub async fn check_address_origin(
         &self,
-        node: &Address,
-        origin: u64,
+        node: &NodeAddress,
+        origin: NodeAddress,
     ) -> Result<bool, StatusCode> {
-        let record_origin = {
-            let na = node.into();
-            self.node_origin.read().await.get(&na).cloned()
-        };
+        if !self.nodes.read().await.contains_key(node) {
+            return Ok(false);
+        }
 
-        if record_origin.is_none() {
-            Ok(false)
-        } else if record_origin != Some(origin) {
-            let e = StatusCode::AddressOriginCheckError;
-            log::warn!(
-                "check_address_origin: node(0x{}) {:?} ",
-                hex::encode(&node.address),
-                e
-            );
-            Err(e)
-        } else {
+        if node == &origin {
             Ok(true)
+        } else {
+            let e = StatusCode::AddressOriginCheckError;
+            log::warn!("check_address_origin: node({}) {:?} ", node, e);
+            Err(e)
         }
     }
 }
