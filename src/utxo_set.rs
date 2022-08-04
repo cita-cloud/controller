@@ -28,6 +28,7 @@ pub struct SystemConfigFile {
     pub block_interval: u32,
     pub validators: Vec<String>,
     pub block_limit: u64,
+    pub quota_limit: u64,
 }
 
 // store related utxo tx hash into global region
@@ -42,10 +43,10 @@ pub struct SystemConfig {
     pub block_interval: u32,
     pub validators: Vec<Vec<u8>>,
     pub emergency_brake: bool,
-    pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
     pub block_limit: u64,
     pub quota_limit: u64,
-    pub validator_address_len: u32,
+    pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
+    validator_address_len: u32,
 }
 
 pub const LOCK_ID_VERSION: u64 = 1_000;
@@ -91,7 +92,7 @@ impl SystemConfig {
             emergency_brake: false,
             utxo_tx_hashes: map,
             block_limit: sys_config_file.block_limit,
-            quota_limit: config.quota_limit,
+            quota_limit: sys_config_file.quota_limit,
             validator_address_len: config.validator_address_len,
         }
     }
