@@ -69,6 +69,8 @@ OPTIONS:
     * `chain_id` 链的唯一标识
     * `validators` 验证者账户地址列表
     * `version` 协议版本号
+    * `block_limit` 交易查重历史区块上限
+    * `quota_limit` 每个区块打包的交易`quota`上限
   
 
 2. 日志配置文件。

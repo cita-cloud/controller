@@ -44,8 +44,6 @@ pub struct ControllerConfig {
     pub node_address: String,
     /// audit blocks epoch length
     pub block_limit: u64,
-    /// block contains txs upper-limit
-    pub quota_limit: u64,
     /// address length from crypto
     pub address_len: u32,
     /// hash length from crypto
@@ -95,7 +93,6 @@ impl Default for ControllerConfig {
             executor_port: 50002,
             node_address: "".to_string(),
             block_limit: 0,
-            quota_limit: 1073741824,
             address_len: 20,
             hash_len: 32,
             signature_len: 128,
