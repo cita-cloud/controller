@@ -82,6 +82,12 @@ pub struct ControllerConfig {
     pub http2_keepalive_timeout: u64,
     /// the duration(seconds) specified will be the time to remain idle before sending TCP keepalive probes.
     pub tcp_keepalive: u64,
+    /// enable metrics or not
+    pub enable_metrics: bool,
+    /// metrics exporter port
+    pub metrics_port: u16,
+    /// metrics histogram buckets
+    pub metrics_buckets: Vec<f64>,
 }
 
 impl Default for ControllerConfig {
@@ -113,6 +119,11 @@ impl Default for ControllerConfig {
             http2_keepalive_interval: 60,
             http2_keepalive_timeout: 20,
             tcp_keepalive: 60,
+            enable_metrics: true,
+            metrics_port: 60004,
+            metrics_buckets: vec![
+                0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 25.0, 50.0, 75.0, 100.0, 250.0, 500.0,
+            ],
         }
     }
 }
