@@ -80,6 +80,10 @@ pub struct ControllerConfig {
     pub http2_keepalive_timeout: u64,
     /// the duration(seconds) specified will be the time to remain idle before sending TCP keepalive probes.
     pub tcp_keepalive: u64,
+    /// the tx batch's upper limit of retransmission
+    pub count_per_batch: usize,
+    /// forward tx batch check interval
+    pub buffer_duration: u64,
 }
 
 impl Default for ControllerConfig {
@@ -110,6 +114,8 @@ impl Default for ControllerConfig {
             http2_keepalive_interval: 60,
             http2_keepalive_timeout: 20,
             tcp_keepalive: 60,
+            count_per_batch: 1000,
+            buffer_duration: 300,
         }
     }
 }

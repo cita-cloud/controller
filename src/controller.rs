@@ -133,6 +133,8 @@ pub struct Controller {
     pub(crate) task_sender: mpsc::Sender<EventTask>,
     // sync state flag
     is_sync: Arc<RwLock<bool>>,
+
+    pub(crate) forward_pool: Arc<RwLock<RawTransactions>>,
 }
 
 impl Controller {
@@ -193,6 +195,7 @@ impl Controller {
             global_status: Arc::new(RwLock::new((NodeAddress(0), ChainStatus::default()))),
             task_sender,
             is_sync: Arc::new(RwLock::new(false)),
+            forward_pool: Arc::new(RwLock::new(RawTransactions { body: vec![] })),
         }
     }
 
@@ -265,7 +268,12 @@ impl Controller {
         };
         if res {
             if broadcast {
-                self.broadcast_send_tx(raw_tx).await;
+                let mut f_polls = self.forward_pool.write().await;
+                f_polls.body.push(raw_tx);
+                if f_polls.body.len() > self.config.count_per_batch {
+                    self.broadcast_send_txs(f_polls.clone()).await;
+                    f_polls.body.clear();
+                }
             }
             Ok(tx_hash)
         } else {
@@ -905,7 +913,6 @@ impl Controller {
 
     // impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     // impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
-    impl_broadcast!(broadcast_send_tx, RawTransaction, "send_tx");
     // impl_multicast!(multicast_send_txs, RawTransactions, "send_txs");
     impl_broadcast!(broadcast_send_txs, RawTransactions, "send_txs");
     // impl_multicast!(multicast_sync_tx, SyncTxRequest, "sync_tx");
