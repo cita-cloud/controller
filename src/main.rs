@@ -949,6 +949,25 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     });
 
+    let controller_for_retransmission = controller.clone();
+    tokio::spawn(async move {
+        let mut forward_interval = time::interval(Duration::from_micros(
+            controller_for_retransmission.config.buffer_duration,
+        ));
+        loop {
+            forward_interval.tick().await;
+            {
+                let mut f_polls = controller_for_retransmission.forward_pool.write().await;
+                if !f_polls.body.is_empty() {
+                    controller_for_retransmission
+                        .broadcast_send_txs(f_polls.clone())
+                        .await;
+                    f_polls.body.clear();
+                }
+            }
+        }
+    });
+
     let controller_for_task = controller.clone();
     tokio::spawn(async move {
         let mut old_status: HashMap<NodeAddress, ChainStatus> = HashMap::new();
