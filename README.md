@@ -11,7 +11,7 @@ docker build -t citacloud/controller .
 
 ```shell
 $ controller -h
-controller 6.4.1
+controller 6.6.0
 Rivtower Technologies.
 This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
 
