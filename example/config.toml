@@ -18,3 +18,4 @@ admin = "0x060504030201"
 block_interval = 3
 validators = ["0x01010101", "0x02020202"]
 block_limit = 100
+quota_limit = 1073741824

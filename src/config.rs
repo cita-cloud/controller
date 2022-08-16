@@ -44,8 +44,6 @@ pub struct ControllerConfig {
     pub node_address: String,
     /// audit blocks epoch length
     pub block_limit: u64,
-    /// block contains txs upper-limit
-    pub quota_limit: u64,
     /// address length from crypto
     pub address_len: u32,
     /// hash length from crypto
@@ -88,6 +86,10 @@ pub struct ControllerConfig {
     pub metrics_port: u16,
     /// metrics histogram buckets
     pub metrics_buckets: Vec<f64>,
+    /// the tx batch's upper limit of retransmission
+    pub count_per_batch: usize,
+    /// forward tx batch check interval
+    pub buffer_duration: u64,
 }
 
 impl Default for ControllerConfig {
@@ -101,7 +103,6 @@ impl Default for ControllerConfig {
             executor_port: 50002,
             node_address: "".to_string(),
             block_limit: 0,
-            quota_limit: 1073741824,
             address_len: 20,
             hash_len: 32,
             signature_len: 128,
@@ -124,6 +125,8 @@ impl Default for ControllerConfig {
             metrics_buckets: vec![
                 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 25.0, 50.0, 75.0, 100.0, 250.0, 500.0,
             ],
+            count_per_batch: 1000,
+            buffer_duration: 300,
         }
     }
 }

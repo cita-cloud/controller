@@ -387,21 +387,12 @@ macro_rules! impl_multicast {
             let mut handle_vec = Vec::new();
 
             for node in nodes {
-                log::debug!(
-                    "multicast {} len: {} to 0x{}",
-                    $name,
-                    buf.len(),
-                    hex::encode(&node.address)
-                );
-
-                let origin = self.node_manager.get_origin(&node).await.expect(
-                    format!("not get address: 0x{} origin", hex::encode(&node.address)).as_str(),
-                );
+                log::debug!("multicast {} len: {} to {}", $name, buf.len(), node);
 
                 let msg = cita_cloud_proto::network::NetworkMsg {
                     module: "controller".to_string(),
                     r#type: $name.into(),
-                    origin,
+                    origin: node.0,
                     msg: buf.clone(),
                 };
 
@@ -411,12 +402,7 @@ macro_rules! impl_multicast {
                             log::debug!("multicast {} ok", $name)
                         }
                         Err(status) => {
-                            log::warn!(
-                                "multicast {} to 0x{} failed: {:?}",
-                                $name,
-                                hex::encode(&node.address),
-                                status
-                            )
+                            log::warn!("multicast {} to {} failed: {:?}", $name, node, status)
                         }
                     }
                 });

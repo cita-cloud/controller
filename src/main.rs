@@ -32,7 +32,7 @@ use crate::{
     config::ControllerConfig,
     controller::Controller,
     event::EventTask,
-    node_manager::ChainStatusInit,
+    node_manager::{ChainStatusInit, NodeAddress},
     panic_hook::set_panic_handler,
     protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
     util::{
@@ -556,7 +556,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
     }
 }
 
-use crate::node_manager::{ChainStatus, NodeAddress};
+use crate::node_manager::ChainStatus;
 use cita_cloud_proto::network::{
     network_msg_handler_service_server::NetworkMsgHandlerService,
     network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
@@ -953,6 +953,25 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         }
     });
 
+    let controller_for_retransmission = controller.clone();
+    tokio::spawn(async move {
+        let mut forward_interval = time::interval(Duration::from_micros(
+            controller_for_retransmission.config.buffer_duration,
+        ));
+        loop {
+            forward_interval.tick().await;
+            {
+                let mut f_polls = controller_for_retransmission.forward_pool.write().await;
+                if !f_polls.body.is_empty() {
+                    controller_for_retransmission
+                        .broadcast_send_txs(f_polls.clone())
+                        .await;
+                    f_polls.body.clear();
+                }
+            }
+        }
+    });
+
     let controller_for_task = controller.clone();
     tokio::spawn(async move {
         let mut old_status: HashMap<NodeAddress, ChainStatus> = HashMap::new();
@@ -1051,11 +1070,13 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                     e.to_string(),
                                                     hex::encode(&addr.address)
                                                 );
+
+                                                let node_orign = NodeAddress::from(&addr);
                                                 let _ = controller_for_task
                                                     .node_manager
-                                                    .set_misbehavior_node(&addr)
+                                                    .set_misbehavior_node(&node_orign)
                                                     .await;
-                                                if global_address == addr {
+                                                if global_address == node_orign {
                                                     let (ex_addr, ex_status) = controller_for_task
                                                         .node_manager
                                                         .pick_node()
@@ -1073,12 +1094,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                         controller_for_task
                                                             .get_global_status()
                                                             .await;
-                                                    if !global_address.address.is_empty() {
-                                                        let global_origin = controller_for_task
-                                                            .node_manager
-                                                            .get_origin(&global_address)
-                                                            .await
-                                                            .unwrap();
+                                                    if global_address.0 != 0 {
                                                         for range_height in range_heights {
                                                             if let Some(reqs) = controller_for_task
                                                                 .sync_manager
@@ -1090,7 +1106,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                                 for req in reqs {
                                                                     controller_for_task
                                                                         .unicast_sync_block(
-                                                                            global_origin,
+                                                                            global_address.0,
                                                                             req,
                                                                         )
                                                                         .await;
@@ -1150,27 +1166,20 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             match old_cs.height.cmp(&current_cs.height) {
                                 Ordering::Greater => {
                                     error!(
-                                        "node(0x{}) is a misbehave node, old height: {}, current height: {}",
-                                        hex::encode(&na.to_vec()),
+                                        "node({}) is a misbehave node, old height: {}, current height: {}",
+                                        &na,
                                         old_cs.height,
                                         current_cs.height
                                     );
-                                    let addr = na.to_addr();
                                     let _ = controller_for_task
                                         .node_manager
-                                        .set_misbehavior_node(&addr)
+                                        .set_misbehavior_node(na)
                                         .await;
                                 }
                                 Ordering::Equal => {
-                                    warn!(
-                                        "node(0x{}) is stale node, height: {}",
-                                        hex::encode(&na.to_vec()),
-                                        old_cs.height
-                                    );
-                                    let addr = na.to_addr();
-                                    controller_for_task.node_manager.delete_origin(&addr).await;
-                                    if controller_for_task.node_manager.in_node(&addr).await {
-                                        controller_for_task.node_manager.delete_node(&addr).await;
+                                    warn!("node({}) is stale node, height: {}", &na, old_cs.height);
+                                    if controller_for_task.node_manager.in_node(na).await {
+                                        controller_for_task.node_manager.delete_node(na).await;
                                     }
                                 }
                                 Ordering::Less => {
