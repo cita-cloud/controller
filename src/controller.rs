@@ -228,21 +228,23 @@ impl Controller {
         // send configuration to consensus
         let mut server_retry_interval =
             time::interval(Duration::from_secs(self.config.server_retry_interval));
-        loop {
-            server_retry_interval.tick().await;
-            {
-                if reconfigure(consensus_config.clone())
-                    .await
-                    .is_success()
-                    .is_ok()
+        tokio::spawn(async move {
+            loop {
+                server_retry_interval.tick().await;
                 {
-                    log::info!("reconfigure consensus success!");
-                    break;
-                } else {
-                    log::warn!("reconfigure consensus failed! Retrying")
+                    if reconfigure(consensus_config.clone())
+                        .await
+                        .is_success()
+                        .is_ok()
+                    {
+                        log::info!("reconfigure consensus success!");
+                        break;
+                    } else {
+                        log::warn!("reconfigure consensus failed! Retrying")
+                    }
                 }
             }
-        }
+        });
     }
 
     pub async fn rpc_get_block_number(&self, _is_pending: bool) -> Result<u64, String> {

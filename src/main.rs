@@ -529,30 +529,42 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             rd.get_system_config()
         };
 
-        self.controller
-            .chain_commit_block(height, &data, &proof)
-            .await
-            .map_or_else(
-                |e| {
-                    warn!("rpc: commit_block failed: {:?}", e);
+        if height != u64::MAX {
+            self.controller
+                .chain_commit_block(height, &data, &proof)
+                .await
+                .map_or_else(
+                    |e| {
+                        warn!("rpc: commit_block failed: {:?}", e);
 
-                    let con_cfg = ConsensusConfiguration {
-                        height,
-                        block_interval: config.block_interval,
-                        validators: config.validators,
-                    };
-                    Ok(Response::new(ConsensusConfigurationResponse {
-                        status: Some(e.into()),
-                        config: Some(con_cfg),
-                    }))
-                },
-                |r| {
-                    Ok(Response::new(ConsensusConfigurationResponse {
-                        status: Some(StatusCode::Success.into()),
-                        config: Some(r),
-                    }))
-                },
-            )
+                        let con_cfg = ConsensusConfiguration {
+                            height,
+                            block_interval: config.block_interval,
+                            validators: config.validators,
+                        };
+                        Ok(Response::new(ConsensusConfigurationResponse {
+                            status: Some(e.into()),
+                            config: Some(con_cfg),
+                        }))
+                    },
+                    |r| {
+                        Ok(Response::new(ConsensusConfigurationResponse {
+                            status: Some(StatusCode::Success.into()),
+                            config: Some(r),
+                        }))
+                    },
+                )
+        } else {
+            let con_cfg = ConsensusConfiguration {
+                height: self.controller.get_status().await.height,
+                block_interval: config.block_interval,
+                validators: config.validators,
+            };
+            Ok(Response::new(ConsensusConfigurationResponse {
+                status: Some(StatusCode::Success.into()),
+                config: Some(con_cfg),
+            }))
+        }
     }
 }
 
