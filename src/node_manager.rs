@@ -160,7 +160,9 @@ impl Default for MisbehaviorStatus {
 
 impl MisbehaviorStatus {
     fn update(mut self) -> Self {
-        self.ban_times += 1;
+        if self.ban_times < 7 {
+            self.ban_times += 1;
+        }
         self.start_time = SystemTime::now();
         self
     }
@@ -170,6 +172,7 @@ impl MisbehaviorStatus {
             .start_time
             .elapsed()
             .expect("Clock may have gone backwards");
+        // upper limit 3840s
         elapsed >= Duration::from_secs(30) * 2u32.pow(self.ban_times)
     }
 }
