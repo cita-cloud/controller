@@ -36,7 +36,7 @@ use std::path::Path;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
 
-#[derive(PartialEq)]
+#[derive(Eq, PartialEq)]
 pub enum ChainStep {
     SyncStep,
     OnlineStep,

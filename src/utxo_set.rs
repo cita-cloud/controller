@@ -124,7 +124,7 @@ impl SystemConfig {
     }
 
     pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>) -> bool {
-        let ret = match lock_id {
+        match lock_id {
             LOCK_ID_VERSION => {
                 self.version = u32_decode(data);
                 true
@@ -181,9 +181,7 @@ impl SystemConfig {
                 warn!("Invalid lock_id:{}", lock_id);
                 false
             }
-        };
-
-        ret
+        }
     }
 }
 

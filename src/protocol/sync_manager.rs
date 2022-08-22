@@ -24,7 +24,7 @@ pub struct SyncManager {
     sync_config: SyncConfig,
 }
 
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Eq, PartialEq, ::prost::Message)]
 pub struct SyncBlockRequest {
     #[prost(uint64, tag = "1")]
     pub start_height: u64,
@@ -59,7 +59,7 @@ pub mod sync_block_respond {
     }
 }
 
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Eq, PartialEq, ::prost::Message)]
 pub struct SyncTxRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub tx_hash: ::prost::alloc::vec::Vec<u8>,

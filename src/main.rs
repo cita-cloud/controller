@@ -66,6 +66,7 @@ use cita_cloud_proto::{
 use clap::Parser;
 use cloud_util::{
     crypto::{hash_data, sign_message},
+    metrics::{run_metrics_exporter, MiddlewareLayer},
     network::register_network_msg_handler,
     storage::{load_data, store_data},
 };
@@ -604,6 +605,9 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     // read consensus-config.toml
     let mut config = ControllerConfig::new(&opts.config_path);
+    let enable_metrics = config.enable_metrics;
+    let metrics_port = config.metrics_port;
+    let metrics_buckets = config.metrics_buckets.clone();
 
     // init log4rs
     log4rs::init_file(&opts.log_file, Default::default())
@@ -614,7 +618,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
 
     let grpc_port = config.controller_port.to_string();
 
-    info!("grpc port of this service: {}", grpc_port);
+    info!("grpc port of controller: {}", grpc_port);
 
     let health_check_timeout = config.health_check_timeout;
 
@@ -1198,28 +1202,69 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         StatusCode::FatalError
     })?;
 
-    info!("start grpc server!");
-    Server::builder()
-        .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
-        .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
-        .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
-        .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
-        .add_service(Consensus2ControllerServiceServer::new(
-            Consensus2ControllerServer::new(controller.clone()),
-        ))
-        .add_service(NetworkMsgHandlerServiceServer::new(
-            ControllerNetworkMsgHandlerServer::new(controller.clone()),
-        ))
-        .add_service(HealthServer::new(HealthCheckServer::new(
-            controller,
-            health_check_timeout,
-        )))
-        .serve(addr)
-        .await
-        .map_err(|e| {
-            warn!("start controller grpc server failed: {} ", e.to_string());
-            StatusCode::FatalError
-        })?;
+    let layer = if enable_metrics {
+        tokio::spawn(async move {
+            run_metrics_exporter(metrics_port).await.unwrap();
+        });
+
+        Some(
+            tower::ServiceBuilder::new()
+                .layer(MiddlewareLayer::new(metrics_buckets))
+                .into_inner(),
+        )
+    } else {
+        None
+    };
+
+    info!("start controller grpc server!");
+    if layer.is_some() {
+        info!("metrics on");
+        Server::builder()
+            .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
+            .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
+            .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
+            .layer(layer.unwrap())
+            .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
+            .add_service(Consensus2ControllerServiceServer::new(
+                Consensus2ControllerServer::new(controller.clone()),
+            ))
+            .add_service(NetworkMsgHandlerServiceServer::new(
+                ControllerNetworkMsgHandlerServer::new(controller.clone()),
+            ))
+            .add_service(HealthServer::new(HealthCheckServer::new(
+                controller,
+                health_check_timeout,
+            )))
+            .serve(addr)
+            .await
+            .map_err(|e| {
+                warn!("start controller grpc server failed: {} ", e.to_string());
+                StatusCode::FatalError
+            })?;
+    } else {
+        info!("metrics off");
+        Server::builder()
+            .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
+            .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
+            .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
+            .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
+            .add_service(Consensus2ControllerServiceServer::new(
+                Consensus2ControllerServer::new(controller.clone()),
+            ))
+            .add_service(NetworkMsgHandlerServiceServer::new(
+                ControllerNetworkMsgHandlerServer::new(controller.clone()),
+            ))
+            .add_service(HealthServer::new(HealthCheckServer::new(
+                controller,
+                health_check_timeout,
+            )))
+            .serve(addr)
+            .await
+            .map_err(|e| {
+                warn!("start controller grpc server failed: {} ", e.to_string());
+                StatusCode::FatalError
+            })?;
+    }
 
     Ok(())
 }
