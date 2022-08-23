@@ -14,6 +14,7 @@
 
 use crate::{config::ControllerConfig, node_manager::ChainStatus};
 use cita_cloud_proto::{blockchain::Block, common::Address};
+use log::info;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -173,7 +174,7 @@ impl SyncManager {
             for (&height, (addr, _)) in rd.iter() {
                 if node == addr {
                     remove_heights.push(height);
-                    if start == u64::MAX && height > own_status.height && !eazy {
+                    if height > own_status.height && !eazy {
                         eazy = true;
                         start = height;
                     }
@@ -181,7 +182,12 @@ impl SyncManager {
                 } else if start != u64::MAX && eazy {
                     eazy = false;
                     range_vec.push((start, end));
+                    info!("clear_node_block: push range_vec: ({}, {})", start, end);
                 }
+            }
+            if start != u64::MAX && end != u64::MAX {
+                range_vec.push((start, end));
+                info!("clear_node_block: push range_vec: ({}, {})", start, end);
             }
         }
 

@@ -45,6 +45,7 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
 };
+use log::{debug, info, warn};
 use prost::Message;
 use status_code::StatusCode;
 use std::{sync::Arc, time::Duration};
@@ -147,7 +148,7 @@ impl Controller {
         task_sender: mpsc::Sender<EventTask>,
     ) -> Self {
         let node_address = hex::decode(clean_0x(&config.node_address)).unwrap();
-        log::info!("node address: {}", &config.node_address);
+        info!("node address: {}", &config.node_address);
 
         h160_address_check(Some(&Address {
             address: node_address.clone(),
@@ -216,33 +217,35 @@ impl Controller {
         } {
             self.set_status(status.clone()).await;
             consensus_config = new_consensus_config;
-            log::info!("wal redo status_height: {}", status.height);
+            info!("wal redo status_height: {}", status.height);
         } else {
             let status = self
                 .init_status(init_block_number, sys_config)
                 .await
                 .unwrap();
             self.set_status(status.clone()).await;
-            log::info!("init_block_number: {}", init_block_number);
+            info!("init_block_number: {}", init_block_number);
         }
         // send configuration to consensus
         let mut server_retry_interval =
             time::interval(Duration::from_secs(self.config.server_retry_interval));
-        loop {
-            server_retry_interval.tick().await;
-            {
-                if reconfigure(consensus_config.clone())
-                    .await
-                    .is_success()
-                    .is_ok()
+        tokio::spawn(async move {
+            loop {
+                server_retry_interval.tick().await;
                 {
-                    log::info!("reconfigure consensus success!");
-                    break;
-                } else {
-                    log::warn!("reconfigure consensus failed! Retrying")
+                    if reconfigure(consensus_config.clone())
+                        .await
+                        .is_success()
+                        .is_ok()
+                    {
+                        info!("reconfigure consensus success!");
+                        break;
+                    } else {
+                        warn!("reconfigure consensus failed! Retrying")
+                    }
                 }
             }
-        }
+        });
     }
 
     pub async fn rpc_get_block_number(&self, _is_pending: bool) -> Result<u64, String> {
@@ -277,7 +280,7 @@ impl Controller {
             }
             Ok(tx_hash)
         } else {
-            log::warn!(
+            warn!(
                 "rpc_send_raw_transaction: found dup tx(0x{}) in pool",
                 hex::encode(&tx_hash)
             );
@@ -293,7 +296,7 @@ impl Controller {
         match crypto_client().check_transactions(raw_txs.clone()).await {
             Ok(code) => StatusCode::from(code).is_success()?,
             Err(e) => {
-                log::warn!(
+                warn!(
                     "batch_transactions: check_transactions failed: {}",
                     e.to_string()
                 );
@@ -327,7 +330,7 @@ impl Controller {
         )
         .await
         .map_err(|e| {
-            log::warn!(
+            warn!(
                 "load block(0x{})'s height failed, error: {}",
                 hex::encode(&hash),
                 e.to_string()
@@ -350,7 +353,7 @@ impl Controller {
         )
         .await
         .map_err(|e| {
-            log::warn!(
+            warn!(
                 "load block({})'s hash failed, error: {}",
                 block_number,
                 e.to_string()
@@ -409,7 +412,7 @@ impl Controller {
 
     pub async fn rpc_add_node(&self, info: NodeNetInfo) -> cita_cloud_proto::common::StatusCode {
         let res = network_client().add_node(info).await.unwrap_or_else(|e| {
-            log::warn!("rpc_add_node failed: {}", e.to_string());
+            warn!("rpc_add_node failed: {}", e.to_string());
             StatusCode::NetworkServerNotReady.into()
         });
 
@@ -463,7 +466,7 @@ impl Controller {
 
     pub async fn chain_check_proposal(&self, height: u64, data: &[u8]) -> Result<(), StatusCode> {
         let proposal_enum = ProposalEnum::decode(data).map_err(|_| {
-            log::warn!("chain_check_proposal: decode ProposalEnum failed");
+            warn!("chain_check_proposal: decode ProposalEnum failed");
             StatusCode::DecodeError
         })?;
 
@@ -489,7 +492,7 @@ impl Controller {
 
                     // todo re-enter check
                     let res = {
-                        log::info!(
+                        info!(
                             "chain_check_proposal: add remote proposal(0x{})",
                             hex::encode(&block_hash)
                         );
@@ -506,9 +509,9 @@ impl Controller {
                         )
                         .await?;
 
-                        log::info!("chain_check_proposal: finished");
+                        info!("chain_check_proposal: finished");
                     } else {
-                        log::info!("the proposal is own");
+                        info!("the proposal is own");
                     }
                 }
                 None => return Err(StatusCode::NoneProposal),
@@ -571,12 +574,12 @@ impl Controller {
     }
 
     pub async fn process_network_msg(&self, msg: NetworkMsg) -> Result<(), StatusCode> {
-        log::debug!("get network msg: {}", msg.r#type);
+        debug!("get network msg: {}", msg.r#type);
         match ControllerMsgType::from(msg.r#type.as_str()) {
             ControllerMsgType::ChainStatusInitType => {
                 let chain_status_init =
                     ChainStatusInit::decode(msg.msg.as_slice()).map_err(|_| {
-                        log::warn!(
+                        warn!(
                             "process_network_msg: decode {} msg failed",
                             ControllerMsgType::ChainStatusInitType
                         );
@@ -662,7 +665,7 @@ impl Controller {
             }
             ControllerMsgType::ChainStatusType => {
                 let chain_status = ChainStatus::decode(msg.msg.as_slice()).map_err(|_| {
-                    log::warn!("decode {} msg failed", ControllerMsgType::ChainStatusType);
+                    warn!("decode {} msg failed", ControllerMsgType::ChainStatusType);
                     StatusCode::DecodeError
                 })?;
 
@@ -716,8 +719,8 @@ impl Controller {
             ControllerMsgType::ChainStatusRespondType => {
                 let chain_status_respond =
                     ChainStatusRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        log::warn!(
-                            "decode {} msg failed",
+                        warn!(
+                            "process_network_msg: decode {} msg failed",
                             ControllerMsgType::ChainStatusRespondType
                         );
                         StatusCode::DecodeError
@@ -726,6 +729,10 @@ impl Controller {
                 if let Some(respond) = chain_status_respond.respond {
                     match respond {
                         Respond::NotSameChain(node) => {
+                            warn!(
+                                "process_network_msg: {} chain_status check error: Not Same Chain",
+                                ControllerMsgType::ChainStatusRespondType
+                            );
                             h160_address_check(Some(&node))?;
                             let node_orign = NodeAddress::from(&node);
                             self.delete_global_status(&node_orign).await;
@@ -738,14 +745,16 @@ impl Controller {
             ControllerMsgType::SyncBlockType => {
                 let sync_block_request =
                     SyncBlockRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                        log::warn!("decode {} msg failed", ControllerMsgType::SyncBlockType);
+                        warn!(
+                            "process_network_msg:: decode {} msg failed",
+                            ControllerMsgType::SyncBlockType
+                        );
                         StatusCode::DecodeError
                     })?;
 
-                log::info!(
+                info!(
                     "get sync_block_req: {}-{}",
-                    sync_block_request.start_height,
-                    sync_block_request.end_height
+                    sync_block_request.start_height, sync_block_request.end_height
                 );
                 self.task_sender
                     .send(EventTask::SyncBlockReq(sync_block_request, msg.origin))
@@ -756,7 +765,7 @@ impl Controller {
             ControllerMsgType::SyncBlockRespondType => {
                 let sync_block_respond =
                     SyncBlockRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                        log::warn!(
+                        warn!(
                             "decode {} msg failed",
                             ControllerMsgType::SyncBlockRespondType
                         );
@@ -802,13 +811,13 @@ impl Controller {
                                 }
                                 Err(StatusCode::ProvideAddressError)
                                 | Err(StatusCode::NoProvideAddress) => {
-                                    log::warn!(
+                                    warn!(
                                         "sync_block_respond error, origin: {}, message: given address error",
                                         msg.origin,
                                     );
                                 }
                                 Err(e) => {
-                                    log::warn!(
+                                    warn!(
                                         "sync_block_respond error, origin: {}, message: {}",
                                         msg.origin,
                                         e.to_string()
@@ -831,7 +840,7 @@ impl Controller {
 
             ControllerMsgType::SyncTxType => {
                 let sync_tx = SyncTxRequest::decode(msg.msg.as_slice()).map_err(|_| {
-                    log::warn!("decode {} msg failed", ControllerMsgType::SyncTxType);
+                    warn!("decode {} msg failed", ControllerMsgType::SyncTxType);
                     StatusCode::DecodeError
                 })?;
 
@@ -857,7 +866,7 @@ impl Controller {
 
             ControllerMsgType::SyncTxRespondType => {
                 let sync_tx_respond = SyncTxRespond::decode(msg.msg.as_slice()).map_err(|_| {
-                    log::warn!("decode {} msg failed", ControllerMsgType::SyncTxRespondType);
+                    warn!("decode {} msg failed", ControllerMsgType::SyncTxRespondType);
                     StatusCode::DecodeError
                 })?;
 
@@ -877,7 +886,7 @@ impl Controller {
 
             ControllerMsgType::SendTxType => {
                 let send_tx = RawTransaction::decode(msg.msg.as_slice()).map_err(|_| {
-                    log::warn!("decode {} msg failed", ControllerMsgType::SendTxType);
+                    warn!("decode {} msg failed", ControllerMsgType::SendTxType);
                     StatusCode::DecodeError
                 })?;
 
@@ -886,7 +895,7 @@ impl Controller {
 
             ControllerMsgType::SendTxsType => {
                 let body = RawTransactions::decode(msg.msg.as_slice()).map_err(|_| {
-                    log::warn!("decode {} msg failed", ControllerMsgType::SendTxsType);
+                    warn!("decode {} msg failed", ControllerMsgType::SendTxsType);
                     StatusCode::DecodeError
                 })?;
 
@@ -894,6 +903,7 @@ impl Controller {
             }
 
             ControllerMsgType::Noop => {
+                warn!("process_network_msg: oh got noop!");
                 self.delete_global_status(&NodeAddress(msg.origin)).await;
                 self.node_manager
                     .set_ban_node(&NodeAddress(msg.origin))
@@ -975,10 +985,9 @@ impl Controller {
         let old_status = self.get_global_status().await;
         let own_status = self.get_status().await;
         if status.height > old_status.1.height && status.height >= own_status.height {
-            log::info!(
+            info!(
                 "update global status node({}) height({})",
-                node,
-                status.height
+                node, status.height
             );
             let global_height = status.height;
             self.update_global_status(node.to_owned(), status).await;
@@ -1153,7 +1162,7 @@ impl Controller {
     pub async fn make_csi(&self, own_status: ChainStatus) -> Result<ChainStatusInit, StatusCode> {
         let mut chain_status_bytes = Vec::new();
         own_status.encode(&mut chain_status_bytes).map_err(|_| {
-            log::warn!("process_network_msg: encode ChainStatus failed");
+            warn!("process_network_msg: encode ChainStatus failed");
             StatusCode::EncodeError
         })?;
         let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;

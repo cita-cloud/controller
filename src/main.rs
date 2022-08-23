@@ -529,30 +529,42 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             rd.get_system_config()
         };
 
-        self.controller
-            .chain_commit_block(height, &data, &proof)
-            .await
-            .map_or_else(
-                |e| {
-                    warn!("rpc: commit_block failed: {:?}", e);
+        if height != u64::MAX {
+            self.controller
+                .chain_commit_block(height, &data, &proof)
+                .await
+                .map_or_else(
+                    |e| {
+                        warn!("rpc: commit_block failed: {:?}", e);
 
-                    let con_cfg = ConsensusConfiguration {
-                        height,
-                        block_interval: config.block_interval,
-                        validators: config.validators,
-                    };
-                    Ok(Response::new(ConsensusConfigurationResponse {
-                        status: Some(e.into()),
-                        config: Some(con_cfg),
-                    }))
-                },
-                |r| {
-                    Ok(Response::new(ConsensusConfigurationResponse {
-                        status: Some(StatusCode::Success.into()),
-                        config: Some(r),
-                    }))
-                },
-            )
+                        let con_cfg = ConsensusConfiguration {
+                            height,
+                            block_interval: config.block_interval,
+                            validators: config.validators,
+                        };
+                        Ok(Response::new(ConsensusConfigurationResponse {
+                            status: Some(e.into()),
+                            config: Some(con_cfg),
+                        }))
+                    },
+                    |r| {
+                        Ok(Response::new(ConsensusConfigurationResponse {
+                            status: Some(StatusCode::Success.into()),
+                            config: Some(r),
+                        }))
+                    },
+                )
+        } else {
+            let con_cfg = ConsensusConfiguration {
+                height: self.controller.get_status().await.height,
+                block_interval: config.block_interval,
+                validators: config.validators,
+            };
+            Ok(Response::new(ConsensusConfigurationResponse {
+                status: Some(StatusCode::Success.into()),
+                config: Some(con_cfg),
+            }))
+        }
     }
 }
 
@@ -985,7 +997,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         if let Ok(block) = get_full_block(h).await {
                             block_vec.push(block);
                         } else {
-                            log::warn!("handle sync_block error: not get block(h: {})", h);
+                            warn!("handle sync_block error: not get block(h: {})", h);
                             break;
                         }
                     }
@@ -1000,10 +1012,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                             .unicast_sync_block_respond(origin, sync_block_respond)
                             .await;
                     } else {
-                        log::info!(
+                        info!(
                             "send sync_block_res: {}-{}",
-                            req.start_height,
-                            req.end_height
+                            req.start_height, req.end_height
                         );
                         let sync_block = SyncBlocks {
                             address: Some(controller_for_task.local_address.clone()),
@@ -1018,7 +1029,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     }
                 }
                 EventTask::SyncBlock => {
-                    log::debug!("receive sync block event");
+                    debug!("receive sync block event");
                     let (global_address, global_status) =
                         controller_for_task.get_global_status().await;
                     let mut own_status = controller_for_task.get_status().await;
@@ -1041,7 +1052,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                         chain.clear_candidate();
                                         match chain.process_block(block, false).await {
                                             Ok((consensus_config, mut status)) => {
-                                                // todo reconfigure failed
                                                 reconfigure(consensus_config)
                                                     .await
                                                     .is_success()
@@ -1065,18 +1075,17 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                 syncing = true;
                                             }
                                             Err(e) => {
-                                                warn!(
-                                                    "sync block error: {}, node: 0x{} been misbehavior_node",
-                                                    e.to_string(),
-                                                    hex::encode(&addr.address)
-                                                );
-
-                                                let node_orign = NodeAddress::from(&addr);
+                                                if Into::<u64>::into(e) % 100 == 0 {
+                                                    warn!("sync block error: {}", e);
+                                                    continue;
+                                                }
+                                                warn!("sync block error: {}, node: 0x{} been misbehavior_node", e.to_string(), hex::encode(&addr.address));
+                                                let del_node_addr = NodeAddress::from(&addr);
                                                 let _ = controller_for_task
                                                     .node_manager
-                                                    .set_misbehavior_node(&node_orign)
+                                                    .set_misbehavior_node(&del_node_addr)
                                                     .await;
-                                                if global_address == node_orign {
+                                                if global_address == del_node_addr {
                                                     let (ex_addr, ex_status) = controller_for_task
                                                         .node_manager
                                                         .pick_node()
@@ -1134,14 +1143,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     }
                 }
                 EventTask::BroadCastCSI => {
-                    log::info!("receive BroadCastCSI event task");
+                    info!("receive BroadCastCSI event task");
                     let status = controller_for_task.get_status().await;
 
                     let mut chain_status_bytes = Vec::new();
                     status
                         .encode(&mut chain_status_bytes)
                         .map_err(|_| {
-                            log::warn!("process_network_msg: encode ChainStatus failed");
+                            warn!("process_network_msg: encode ChainStatus failed");
                             StatusCode::EncodeError
                         })
                         .unwrap();
