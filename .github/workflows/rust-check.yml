@@ -1,4 +1,4 @@
-name: Github Action
+name: Rust Check
 
 on:
   pull_request:
