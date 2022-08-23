@@ -615,6 +615,8 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCode> {
+    tokio::spawn(cloud_util::signal::handle_signals());
+
     // read consensus-config.toml
     let mut config = ControllerConfig::new(&opts.config_path);
     let enable_metrics = config.enable_metrics;
