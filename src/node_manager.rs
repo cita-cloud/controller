@@ -67,7 +67,7 @@ impl ChainStatus {
 
     pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
         if own_status.height >= self.height {
-            let compact_block = get_compact_block(self.height).await.map(|t| t.0)?;
+            let compact_block = get_compact_block(self.height).await?;
             if get_block_hash(crypto_client(), compact_block.header.as_ref()).await?
                 != self.hash.clone().unwrap().hash
             {

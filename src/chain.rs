@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::utxo_set::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT};
+use crate::system_config::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT};
 use crate::{
-    auth::Authentication, node_manager::ChainStatus, pool::Pool, util::*, utxo_set::SystemConfig,
-    GenesisBlock,
+    auth::Authentication, node_manager::ChainStatus, pool::Pool, system_config::SystemConfig,
+    util::*, GenesisBlock,
 };
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
@@ -97,8 +97,9 @@ impl Chain {
         let mut interval = time::interval(Duration::from_secs(server_retry_interval));
         loop {
             interval.tick().await;
+            // if init_block_number != 0, finalize genesis_block to test if executor is ready, in this case block_hash is wrong but doesn't matter
             match self
-                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone(), false)
+                .finalize_block(self.genesis.genesis_block(), false)
                 .await
             {
                 Ok(()) | Err(StatusCode::ReenterBlock) => {
@@ -262,6 +263,7 @@ impl Chain {
                 header: Some(header.clone()),
                 body: Some(RawTransactions { body: tx_list }),
                 proof: vec![],
+                state_root: vec![],
             };
 
             let mut block_header_bytes = Vec::new();
@@ -339,12 +341,7 @@ impl Chain {
     ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
     /// }
     /// ```
-    async fn finalize_block(
-        &self,
-        block: Block,
-        block_hash: Vec<u8>,
-        wal_redo: bool,
-    ) -> Result<(), StatusCode> {
+    async fn finalize_block(&self, mut block: Block, wal_redo: bool) -> Result<(), StatusCode> {
         let block_height = block
             .header
             .as_ref()
@@ -402,17 +399,17 @@ impl Chain {
 
         let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
 
-        // exec block
-        let (executed_block_status, executed_block_hash) = exec_block(block).await;
+        // execute block, executed_blocks_hash == state_root
+        let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
 
         log::info!(
-            "exec_block({}): status: {}, executed_block_hash: 0x{}",
+            "exec_block({}): status: {}, state_root: 0x{}",
             block_height,
-            executed_block_status,
-            hex::encode(&executed_block_hash)
+            executed_blocks_status,
+            hex::encode(&executed_blocks_hash)
         );
 
-        match executed_block_status {
+        match executed_blocks_status {
             StatusCode::Success => {}
             status_code => {
                 if status_code != StatusCode::ReenterBlock || !wal_redo {
@@ -421,7 +418,7 @@ impl Chain {
             }
         }
 
-        // update auth and pool
+        // update auth and pool after block is executed
         {
             let mut auth = self.auth.write().await;
             let mut pool = self.pool.write().await;
@@ -429,39 +426,28 @@ impl Chain {
             pool.update(&tx_hash_list);
         }
 
+        // if state_root is empty record state_root to Block, else check it
+        if block.state_root.is_empty() {
+            block.state_root = executed_blocks_hash;
+        } else if block.state_root != executed_blocks_hash {
+            log::warn!("check state_root error");
+            return Err(StatusCode::StateRootCheckError);
+        }
+
+        let new_block_bytes = {
+            let mut buf = Vec::with_capacity(block.encoded_len());
+            block.encode(&mut buf).map_err(|_| {
+                log::warn!("encode Block failed");
+                StatusCode::EncodeError
+            })?;
+            buf
+        };
+
         store_data(
             storage_client(),
-            i32::from(Regions::FullBlock) as u32,
+            i32::from(Regions::AllBlockData) as u32,
             block_height_bytes.clone(),
-            block_bytes,
-        )
-        .await
-        .is_success()?;
-
-        store_data(
-            storage_client(),
-            i32::from(Regions::Result) as u32,
-            block_height_bytes.clone(),
-            executed_block_hash,
-        )
-        .await
-        .is_success()?;
-
-        // region 0: 0 - current height; 1 - current hash
-        store_data(
-            storage_client(),
-            i32::from(Regions::Global) as u32,
-            1u64.to_be_bytes().to_vec(),
-            block_hash.clone(),
-        )
-        .await
-        .is_success()?;
-
-        store_data(
-            storage_client(),
-            i32::from(Regions::Global) as u32,
-            0u64.to_be_bytes().to_vec(),
-            block_height_bytes,
+            new_block_bytes,
         )
         .await
         .is_success()?;
@@ -475,11 +461,8 @@ impl Chain {
             })
             .unwrap();
 
-        log::info!(
-            "finalize_block: {}, block_hash: 0x{}",
-            block_height,
-            hex::encode(&block_hash)
-        );
+        log::info!("finalize_block height: {}", block_height);
+
         Ok(())
     }
 
@@ -536,9 +519,12 @@ impl Chain {
                 return Err(StatusCode::ProposalCheckError);
             }
 
-            log::info!("height: {} hash 0x{}", height, hex::encode(&block_hash));
-            self.finalize_block(full_block, block_hash.clone(), false)
-                .await?;
+            log::info!(
+                "commit_block height: {} hash 0x{}",
+                height,
+                hex::encode(&block_hash)
+            );
+            self.finalize_block(full_block, false).await?;
 
             self.block_number = height;
             self.block_hash = block_hash;
@@ -604,9 +590,11 @@ impl Chain {
             return Err(StatusCode::BlockCheckError);
         }
 
-        let proposal_bytes = self.assemble_proposal(block.clone(), height).await?;
+        let mut block_for_check = block.clone();
+        block_for_check.state_root = vec![];
+        let block_for_check_bytes = self.assemble_proposal(block_for_check, height).await?;
 
-        let status = check_block(height, proposal_bytes, block.proof.clone()).await;
+        let status = check_block(height, block_for_check_bytes, block.proof.clone()).await;
         if status != StatusCode::Success {
             return Err(status);
         }
@@ -631,12 +619,7 @@ impl Chain {
             }
         }
 
-        self.finalize_block(
-            block,
-            get_block_hash(crypto_client(), Some(&header)).await?,
-            wal_redo,
-        )
-        .await?;
+        self.finalize_block(block, wal_redo).await?;
 
         self.block_number = height;
         self.block_hash = block_hash;

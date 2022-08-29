@@ -13,10 +13,17 @@
 // limitations under the License.
 
 use crate::config::ControllerConfig;
-use cita_cloud_proto::blockchain::UnverifiedUtxoTransaction;
-use cloud_util::{clean_0x, common::read_toml};
+use crate::util::storage_client;
+use cita_cloud_proto::blockchain::{
+    raw_transaction::Tx::UtxoTx, RawTransaction, UnverifiedUtxoTransaction,
+};
+use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
+use cita_cloud_proto::storage::Regions;
+use cloud_util::{clean_0x, common::read_toml, storage::load_data};
 use log::warn;
+use prost::Message;
 use serde_derive::Deserialize;
+use status_code::StatusCode;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -180,6 +187,84 @@ impl SystemConfig {
             _ => {
                 warn!("Invalid lock_id:{}", lock_id);
                 false
+            }
+        }
+    }
+
+    pub fn generate_proto_sys_config(&self) -> ProtoSystemConfig {
+        ProtoSystemConfig {
+            version: self.version,
+            chain_id: self.chain_id.clone(),
+            admin: self.admin.clone(),
+            block_interval: self.block_interval,
+            validators: self.validators.clone(),
+            emergency_brake: self.emergency_brake,
+            quota_limit: self.quota_limit as u32,
+            block_limit: self.block_limit as u32,
+            version_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_VERSION)
+                .unwrap()
+                .to_owned(),
+            chain_id_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_CHAIN_ID)
+                .unwrap()
+                .to_owned(),
+            admin_pre_hash: self.utxo_tx_hashes.get(&LOCK_ID_ADMIN).unwrap().to_owned(),
+            block_interval_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_BLOCK_INTERVAL)
+                .unwrap()
+                .to_owned(),
+            validators_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_VALIDATORS)
+                .unwrap()
+                .to_owned(),
+            emergency_brake_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_EMERGENCY_BRAKE)
+                .unwrap()
+                .to_owned(),
+            quota_limit_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_QUOTA_LIMIT)
+                .unwrap()
+                .to_owned(),
+            block_limit_pre_hash: self
+                .utxo_tx_hashes
+                .get(&LOCK_ID_BLOCK_LIMIT)
+                .unwrap()
+                .to_owned(),
+        }
+    }
+
+    pub async fn modify_sys_config_by_utxotx_hash(&mut self, utxo_hash: Vec<u8>) -> StatusCode {
+        match load_data(
+            storage_client(),
+            i32::from(Regions::Transactions) as u32,
+            utxo_hash.clone(),
+        )
+        .await
+        {
+            Ok(raw_tx_bytes) => {
+                let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
+                let tx = raw_tx.tx.unwrap();
+                if let UtxoTx(utxo_tx) = tx {
+                    self.update(&utxo_tx, true);
+                    StatusCode::Success
+                } else {
+                    warn!(
+                        "tx from utxo_tx_hash{:?} is not utxo_tx",
+                        hex::encode(&utxo_hash)
+                    );
+                    StatusCode::NoneUtxo
+                }
+            }
+            Err(e) => {
+                warn!("load utxo_tx failed: {}", e);
+                StatusCode::NoTransaction
             }
         }
     }

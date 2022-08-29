@@ -46,6 +46,7 @@ impl GenesisBlock {
             header: Some(header),
             body: Some(RawTransactions { body: Vec::new() }),
             proof: Vec::new(),
+            state_root: Vec::new(),
         }
     }
 
