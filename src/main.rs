@@ -25,7 +25,7 @@ mod protocol;
 mod util;
 mod event;
 mod health_check;
-mod utxo_set;
+mod system_config;
 
 use crate::{
     chain::ChainStep,
@@ -35,24 +35,22 @@ use crate::{
     node_manager::{ChainStatusInit, NodeAddress},
     panic_hook::set_panic_handler,
     protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
-    util::{
-        crypto_client, get_full_block, init_grpc_client, load_data_maybe_empty, reconfigure,
-        storage_client,
-    },
-    utxo_set::{
+    system_config::{
         LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
         LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_QUOTA_LIMIT, LOCK_ID_VALIDATORS,
         LOCK_ID_VERSION,
     },
+    util::{
+        crypto_client, get_full_block, get_hash_in_range, init_grpc_client, load_data_maybe_empty,
+        reconfigure, storage_client,
+    },
 };
 use cita_cloud_proto::{
-    blockchain::{
-        raw_transaction::Tx::UtxoTx, Block, CompactBlock, RawTransaction, RawTransactions,
-    },
+    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     client::CryptoClientTrait,
     common::{
         ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
-        Proposal, ProposalResponse, ProposalWithProof, TotalNodeInfo,
+        Proof, Proposal, ProposalResponse, ProposalWithProof, StateRoot, TotalNodeInfo,
     },
     controller::SystemConfig,
     controller::{
@@ -144,9 +142,9 @@ impl RpcService for RPCServer {
     ) -> Result<Response<BlockNumber>, Status> {
         debug!("get_block_number request: {:?}", request);
 
-        let flag = request.into_inner();
+        let flag = request.into_inner().flag;
         self.controller
-            .rpc_get_block_number(flag.flag)
+            .rpc_get_block_number(flag)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e)),
@@ -217,21 +215,81 @@ impl RpcService for RPCServer {
             )
     }
 
+    async fn get_height_by_hash(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<Response<BlockNumber>, Status> {
+        debug!("get_height_by_hash request: {:?}", request);
+
+        let hash = request.into_inner().hash;
+
+        self.controller
+            .rpc_get_height_by_hash(hash)
+            .await
+            .map_or_else(
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |height| {
+                    let reply = Response::new(height);
+                    Ok(reply)
+                },
+            )
+    }
+
     async fn get_block_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<CompactBlock>, Status> {
         debug!("get_block_by_number request: {:?}", request);
 
-        let block_number = request.into_inner();
+        let block_number = request.into_inner().block_number;
 
         self.controller
-            .rpc_get_block_by_number(block_number.block_number)
+            .rpc_get_block_by_number(block_number)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
                 |block| {
                     let reply = Response::new(block);
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_state_root_by_number(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<tonic::Response<StateRoot>, Status> {
+        debug!("get_state_root_by_number request: {:?}", request);
+
+        let height: u64 = request.into_inner().block_number;
+
+        self.controller
+            .rpc_get_state_root_by_number(height)
+            .await
+            .map_or_else(
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |state_root| {
+                    let reply = Response::new(state_root);
+                    Ok(reply)
+                },
+            )
+    }
+
+    async fn get_proof_by_number(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<tonic::Response<Proof>, Status> {
+        debug!("get_proof_by_number request: {:?}", request);
+
+        let height: u64 = request.into_inner().block_number;
+
+        self.controller
+            .rpc_get_proof_by_number(height)
+            .await
+            .map_or_else(
+                |e| Err(Status::invalid_argument(e.to_string())),
+                |proof| {
+                    let reply = Response::new(proof);
                     Ok(reply)
                 },
             )
@@ -243,10 +301,10 @@ impl RpcService for RPCServer {
     ) -> Result<tonic::Response<Block>, Status> {
         debug!("get_block_detail_by_number request: {:?}", request);
 
-        let block_number = request.into_inner();
+        let block_number = request.into_inner().block_number;
 
         self.controller
-            .rpc_get_block_detail_by_number(block_number.block_number)
+            .rpc_get_block_detail_by_number(block_number)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
@@ -286,59 +344,49 @@ impl RpcService for RPCServer {
         self.controller.rpc_get_system_config().await.map_or_else(
             |e| Err(Status::invalid_argument(e.to_string())),
             |sys_config| {
-                let reply = Response::new(SystemConfig {
-                    version: sys_config.version,
-                    chain_id: sys_config.chain_id,
-                    admin: sys_config.admin,
-                    block_interval: sys_config.block_interval,
-                    validators: sys_config.validators,
-                    emergency_brake: sys_config.emergency_brake,
-                    quota_limit: sys_config.quota_limit as u32,
-                    block_limit: sys_config.block_limit as u32,
-                    version_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_VERSION)
-                        .unwrap()
-                        .to_owned(),
-                    chain_id_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_CHAIN_ID)
-                        .unwrap()
-                        .to_owned(),
-                    admin_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_ADMIN)
-                        .unwrap()
-                        .to_owned(),
-                    block_interval_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_BLOCK_INTERVAL)
-                        .unwrap()
-                        .to_owned(),
-                    validators_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_VALIDATORS)
-                        .unwrap()
-                        .to_owned(),
-                    emergency_brake_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_EMERGENCY_BRAKE)
-                        .unwrap()
-                        .to_owned(),
-                    quota_limit_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_QUOTA_LIMIT)
-                        .unwrap()
-                        .to_owned(),
-                    block_limit_pre_hash: sys_config
-                        .utxo_tx_hashes
-                        .get(&LOCK_ID_BLOCK_LIMIT)
-                        .unwrap()
-                        .to_owned(),
-                });
+                let reply = Response::new(sys_config.generate_proto_sys_config());
                 Ok(reply)
             },
         )
+    }
+
+    async fn get_system_config_by_number(
+        &self,
+        request: Request<BlockNumber>,
+    ) -> Result<Response<SystemConfig>, Status> {
+        debug!("get_system_config_by_number request: {:?}", request);
+
+        let height: u64 = request.into_inner().block_number;
+
+        let mut initial_sys_config = self.controller.initial_sys_config.clone();
+        let utxo_tx_hashes = self
+            .controller
+            .rpc_get_system_config()
+            .await
+            .unwrap()
+            .utxo_tx_hashes;
+
+        for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
+            let hash = utxo_tx_hashes.get(&lock_id).unwrap().to_owned();
+            if hash != vec![0u8; 33] {
+                let hash_in_range = get_hash_in_range(hash, height)
+                    .await
+                    .map_err(|e| Status::invalid_argument(e.to_string()))?;
+                if hash_in_range != vec![0u8; 33] {
+                    //modify sys_config by utxo_tx
+                    let res = initial_sys_config
+                        .modify_sys_config_by_utxotx_hash(hash_in_range)
+                        .await;
+                    if res != StatusCode::Success {
+                        return Err(Status::invalid_argument(res.to_string()));
+                    }
+                }
+            }
+        }
+
+        let reply = Response::new(initial_sys_config.generate_proto_sys_config());
+
+        Ok(reply)
     }
 
     async fn get_version(
@@ -358,10 +406,10 @@ impl RpcService for RPCServer {
     ) -> Result<Response<Hash>, Status> {
         debug!("get_block_hash request: {:?}", request);
 
-        let block_number = request.into_inner();
+        let block_number = request.into_inner().block_number;
 
         self.controller
-            .rpc_get_block_hash(block_number.block_number)
+            .rpc_get_block_hash(block_number)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
@@ -378,10 +426,10 @@ impl RpcService for RPCServer {
     ) -> Result<Response<BlockNumber>, Status> {
         debug!("get_transaction_block_number request: {:?}", request);
 
-        let tx_hash = request.into_inner();
+        let tx_hash = request.into_inner().hash;
 
         self.controller
-            .rpc_get_tx_block_number(tx_hash.hash)
+            .rpc_get_tx_block_number(tx_hash)
             .await
             .map_or_else(
                 |e| Err(Status::invalid_argument(e.to_string())),
@@ -738,7 +786,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         hex::encode(&current_block_hash)
     );
 
-    let mut sys_config = utxo_set::SystemConfig::new(&opts.config_path);
+    let mut sys_config = system_config::SystemConfig::new(&opts.config_path);
+    let initial_sys_config = sys_config.clone();
     for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
         // region 0 global
         match load_data(
@@ -753,26 +802,12 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                 // region 1: tx_hash - tx
                 if data_or_tx_hash.len() == config.hash_len as usize && lock_id != LOCK_ID_CHAIN_ID
                 {
-                    match load_data(
-                        storage_client(),
-                        i32::from(Regions::Transactions) as u32,
-                        data_or_tx_hash.clone(),
-                    )
-                    .await
+                    if sys_config
+                        .modify_sys_config_by_utxotx_hash(data_or_tx_hash.clone())
+                        .await
+                        != StatusCode::Success
                     {
-                        Ok(raw_tx_bytes) => {
-                            info!("lock_id: {} stored tx_hash", lock_id);
-                            let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
-                            let tx = raw_tx.tx.unwrap();
-                            if let UtxoTx(utxo_tx) = tx {
-                                sys_config.update(&utxo_tx, true);
-                            } else {
-                                panic!("tx_hash lock_id: {} stored is not utxo_tx", lock_id);
-                            }
-                        }
-                        Err(e) => {
-                            panic!("load tx stored at lock_id: {} failed: {}", lock_id, e)
-                        }
+                        panic!("modify_sys_config_by_utxotx_hash failed in lockid: {}, with utxo hash: {:?}", lock_id, hex::encode(data_or_tx_hash))
                     }
                 } else {
                     info!("lock_id: {} stored data", lock_id);
@@ -889,6 +924,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         sys_config.clone(),
         genesis,
         task_sender,
+        initial_sys_config,
     );
 
     config.set_global();

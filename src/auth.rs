@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::{
+    system_config::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
     util::{get_compact_block, verify_tx_hash, verify_tx_signature},
-    utxo_set::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
 };
 use cita_cloud_proto::blockchain::{
     raw_transaction::Tx::{NormalTx, UtxoTx},
@@ -59,7 +59,7 @@ impl Authentication {
         };
 
         for h in begin_block_number..(init_block_number + 1) {
-            let block = get_compact_block(h).await.unwrap().0;
+            let block = get_compact_block(h).await.unwrap();
             let block_body = block.body.unwrap();
             self.history_hashes
                 .insert(h, HashSet::from_iter(block_body.tx_hashes));

@@ -58,6 +58,8 @@ OPTIONS:
     * `network_port` 网络微服务的gRPC端口
     * `storage_port` 存储微服务的gRPC端口
     * `validator_address_len` 是共识使用的地址的长度
+    * `metrics_port` 是metrics信息的导出端口
+    * `enable_metrics` 是metrics功能的开关
   
     其中`[genesis_block]`段配置创世块相关的信息：
     * `prevhash` 默认全0
@@ -127,7 +129,7 @@ $ controller run -c example/config.toml -l controller-log4rs.yaml
 
 初始化的时候会读取配置文件，然后生成相应的块结构。
 
-#### utxo_set
+#### system_config
 本实现的区块链系统同时支持account和utxo两种类型的交易。但是utxo类型的交易只用于系统配置管理。
 
 初始化时需要一个单独的初始系统配置，给系统配置项赋予初值。

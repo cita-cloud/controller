@@ -25,8 +25,8 @@ use crate::{
     protocol::sync_manager::{
         SyncBlockRequest, SyncBlockRespond, SyncBlocks, SyncManager, SyncTxRequest, SyncTxRespond,
     },
+    system_config::SystemConfig,
     util::*,
-    utxo_set::SystemConfig,
     GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
 };
 use cita_cloud_proto::{
@@ -34,8 +34,9 @@ use cita_cloud_proto::{
     client::{CryptoClientTrait, NetworkClientTrait},
     common::{
         proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
-        NodeNetInfo, ProposalEnum, TotalNodeInfo,
+        NodeNetInfo, Proof, ProposalEnum, StateRoot, TotalNodeInfo,
     },
+    controller::BlockNumber,
     network::NetworkMsg,
     storage::Regions,
 };
@@ -136,6 +137,8 @@ pub struct Controller {
     is_sync: Arc<RwLock<bool>>,
 
     pub(crate) forward_pool: Arc<RwLock<RawTransactions>>,
+
+    pub initial_sys_config: SystemConfig,
 }
 
 impl Controller {
@@ -146,6 +149,7 @@ impl Controller {
         sys_config: SystemConfig,
         genesis: GenesisBlock,
         task_sender: mpsc::Sender<EventTask>,
+        initial_sys_config: SystemConfig,
     ) -> Self {
         let node_address = hex::decode(clean_0x(&config.node_address)).unwrap();
         info!("node address: {}", &config.node_address);
@@ -197,6 +201,7 @@ impl Controller {
             task_sender,
             is_sync: Arc::new(RwLock::new(false)),
             forward_pool: Arc::new(RwLock::new(RawTransactions { body: vec![] })),
+            initial_sys_config,
         }
     }
 
@@ -322,29 +327,6 @@ impl Controller {
         Ok(Hashes { hashes })
     }
 
-    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, StatusCode> {
-        let block_number = load_data(
-            storage_client(),
-            i32::from(Regions::BlockHash2blockHeight) as u32,
-            hash.clone(),
-        )
-        .await
-        .map_err(|e| {
-            warn!(
-                "load block(0x{})'s height failed, error: {}",
-                hex::encode(&hash),
-                e.to_string()
-            );
-            StatusCode::NoBlockHeight
-        })
-        .map(|v| {
-            let mut bytes: [u8; 8] = [0; 8];
-            bytes.clone_from_slice(&v[..8]);
-            u64::from_be_bytes(bytes)
-        })?;
-        self.rpc_get_block_by_number(block_number).await
-    }
-
     pub async fn rpc_get_block_hash(&self, block_number: u64) -> Result<Vec<u8>, StatusCode> {
         load_data(
             storage_client(),
@@ -374,11 +356,49 @@ impl Controller {
         get_network_status().await.map(|status| status.peer_count)
     }
 
+    pub async fn rpc_get_height_by_hash(&self, hash: Vec<u8>) -> Result<BlockNumber, StatusCode> {
+        get_height_by_block_hash(hash).await
+    }
+
     pub async fn rpc_get_block_by_number(
         &self,
         block_number: u64,
     ) -> Result<CompactBlock, StatusCode> {
-        get_compact_block(block_number).await.map(|t| t.0)
+        get_compact_block(block_number).await
+    }
+
+    pub async fn rpc_get_block_by_hash(&self, hash: Vec<u8>) -> Result<CompactBlock, StatusCode> {
+        let block_number = load_data(
+            storage_client(),
+            i32::from(Regions::BlockHash2blockHeight) as u32,
+            hash.clone(),
+        )
+        .await
+        .map_err(|e| {
+            warn!(
+                "load block(0x{})'s height failed, error: {}",
+                hex::encode(&hash),
+                e.to_string()
+            );
+            StatusCode::NoBlockHeight
+        })
+        .map(|v| {
+            let mut bytes: [u8; 8] = [0; 8];
+            bytes.clone_from_slice(&v[..8]);
+            u64::from_be_bytes(bytes)
+        })?;
+        self.rpc_get_block_by_number(block_number).await
+    }
+
+    pub async fn rpc_get_state_root_by_number(
+        &self,
+        block_number: u64,
+    ) -> Result<StateRoot, StatusCode> {
+        get_state_root(block_number).await
+    }
+
+    pub async fn rpc_get_proof_by_number(&self, block_number: u64) -> Result<Proof, StatusCode> {
+        get_proof(block_number).await
     }
 
     pub async fn rpc_get_block_detail_by_number(
@@ -1019,7 +1039,7 @@ impl Controller {
         height: u64,
         config: SystemConfig,
     ) -> Result<ChainStatus, StatusCode> {
-        let compact_block = get_compact_block(height).await?.0;
+        let compact_block = get_compact_block(height).await?;
 
         Ok(ChainStatus {
             version: config.version,

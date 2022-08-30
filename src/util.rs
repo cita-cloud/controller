@@ -14,13 +14,17 @@
 
 use crate::config::{controller_config, ControllerConfig};
 use cita_cloud_proto::{
-    blockchain::{raw_transaction::Tx, Block, CompactBlock, RawTransaction, RawTransactions},
+    blockchain::{
+        raw_transaction::{Tx, Tx::UtxoTx},
+        Block, CompactBlock, RawTransaction, RawTransactions,
+    },
     client::{
         ClientOptions, ConsensusClientTrait, ExecutorClientTrait, InterceptedSvc,
         NetworkClientTrait, StorageClientTrait,
     },
-    common::{ConsensusConfiguration, Empty, Proposal, ProposalWithProof},
+    common::{ConsensusConfiguration, Empty, Proof, Proposal, ProposalWithProof, StateRoot},
     consensus::consensus_service_client::ConsensusServiceClient,
+    controller::BlockNumber,
     crypto::crypto_service_client::CryptoServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
     network::{network_service_client::NetworkServiceClient, NetworkStatusResponse},
@@ -338,7 +342,30 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
     Ok((block_height, tx_index))
 }
 
-pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), StatusCode> {
+pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, StatusCode> {
+    let block_number = load_data(
+        storage_client(),
+        i32::from(Regions::BlockHash2blockHeight) as u32,
+        hash.clone(),
+    )
+    .await
+    .map_err(|e| {
+        warn!(
+            "get_height_by_block_hash({}) error: {}",
+            hex::encode(hash),
+            e.to_string()
+        );
+        StatusCode::NoBlockHeight
+    })
+    .map(|v| {
+        let mut bytes: [u8; 8] = [0; 8];
+        bytes.clone_from_slice(&v[..8]);
+        u64::from_be_bytes(bytes)
+    })?;
+    Ok(BlockNumber { block_number })
+}
+
+pub async fn get_compact_block(height: u64) -> Result<CompactBlock, StatusCode> {
     let height_bytes = height.to_be_bytes().to_vec();
 
     let compact_block_bytes = load_data(
@@ -357,6 +384,12 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), S
         StatusCode::DecodeError
     })?;
 
+    Ok(compact_block)
+}
+
+pub async fn get_proof(height: u64) -> Result<Proof, StatusCode> {
+    let height_bytes = height.to_be_bytes().to_vec();
+
     let proof = load_data(
         storage_client(),
         i32::from(Regions::Proof) as u32,
@@ -368,7 +401,81 @@ pub async fn get_compact_block(height: u64) -> Result<(CompactBlock, Vec<u8>), S
         StatusCode::NoProof
     })?;
 
-    Ok((compact_block, proof))
+    Ok(Proof { proof })
+}
+
+pub async fn get_state_root(height: u64) -> Result<StateRoot, StatusCode> {
+    let height_bytes = height.to_be_bytes().to_vec();
+
+    let state_root = load_data(
+        storage_client(),
+        i32::from(Regions::Result) as u32,
+        height_bytes,
+    )
+    .await
+    .map_err(|e| {
+        warn!("get state_root({}) error: {}", height, e.to_string());
+        StatusCode::NoStateRoot
+    })?;
+
+    Ok(StateRoot { state_root })
+}
+
+pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>, StatusCode> {
+    let height_bytes = load_data(
+        storage_client(),
+        i32::from(Regions::TransactionHash2blockHeight) as u32,
+        hash.clone(),
+    )
+    .await
+    .unwrap();
+    let mut buf: [u8; 8] = [0; 8];
+    buf.clone_from_slice(&height_bytes[..8]);
+    let mut tx_height = u64::from_be_bytes(buf);
+    while tx_height >= height {
+        hash = match load_data(
+            storage_client(),
+            i32::from(Regions::Transactions) as u32,
+            hash.clone(),
+        )
+        .await
+        {
+            Ok(raw_tx_bytes) => {
+                if let UtxoTx(tx) = RawTransaction::decode(raw_tx_bytes.as_slice())
+                    .unwrap()
+                    .tx
+                    .unwrap()
+                {
+                    tx.transaction.unwrap().pre_tx_hash
+                } else {
+                    warn!(
+                        "tx from utxo_tx_hash{:?} is not utxo_tx",
+                        hex::encode(&hash)
+                    );
+                    return Err(StatusCode::NoneUtxo);
+                }
+            }
+            Err(status) => {
+                warn!("load utxo_tx failed: {}", status);
+                return Err(StatusCode::NoTransaction);
+            }
+        };
+        if hash == vec![0u8; 33] {
+            tx_height = 0;
+        } else {
+            let height_bytes = load_data(
+                storage_client(),
+                i32::from(Regions::TransactionHash2blockHeight) as u32,
+                hash.clone(),
+            )
+            .await
+            .unwrap();
+            let mut buf: [u8; 8] = [0; 8];
+            buf.clone_from_slice(&height_bytes[..8]);
+            tx_height = u64::from_be_bytes(buf);
+        };
+    }
+    Ok(hash)
 }
 
 #[macro_export]
