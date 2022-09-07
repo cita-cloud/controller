@@ -60,6 +60,7 @@ OPTIONS:
     * `validator_address_len` 是共识使用的地址的长度
     * `metrics_port` 是metrics信息的导出端口
     * `enable_metrics` 是metrics功能的开关
+    * `node_address` 节点地址文件路径
   
     其中`[genesis_block]`段配置创世块相关的信息：
     * `prevhash` 默认全0

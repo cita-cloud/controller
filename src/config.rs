@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fs;
+
 use cloud_util::common::read_toml;
 use serde_derive::Deserialize;
 use tokio::sync::OnceCell;
@@ -40,7 +42,7 @@ pub struct ControllerConfig {
     pub crypto_port: u16,
     /// executor service port
     pub executor_port: u16,
-    /// self node address
+    /// self node address file path
     pub node_address: String,
     /// audit blocks epoch length
     pub block_limit: u64,
@@ -133,7 +135,10 @@ impl Default for ControllerConfig {
 
 impl ControllerConfig {
     pub fn new(config_str: &str) -> Self {
-        read_toml(config_str, "controller")
+        let mut config: ControllerConfig = read_toml(config_str, "controller");
+        let node_address_path = config.node_address.clone();
+        config.node_address = fs::read_to_string(node_address_path).unwrap();
+        config
     }
 
     pub fn set_global(self) {
@@ -157,7 +162,7 @@ mod tests {
         assert_eq!(config.controller_port, 50004);
         assert_eq!(
             config.node_address,
-            "0x37d1c7449bfe76fe9c445e626da06265e9377601".to_string()
+            "c356876e7f4831476f99ea0593b0cd7a6053e4d3".to_string()
         );
     }
 }
