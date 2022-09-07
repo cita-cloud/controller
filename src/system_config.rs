@@ -104,46 +104,15 @@ impl SystemConfig {
         }
     }
 
-    pub fn update(&mut self, tx: &UnverifiedUtxoTransaction, is_init: bool) -> bool {
-        let tx_hash = tx.transaction_hash.clone();
-        let utxo_tx = tx.clone().transaction.unwrap();
-        let lock_id = utxo_tx.lock_id;
-        let pre_tx_hash = utxo_tx.pre_tx_hash;
-        let data = utxo_tx.output;
-
-        if !is_init {
-            if let Some(hash) = self.utxo_tx_hashes.get(&lock_id) {
-                if hash != &pre_tx_hash {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-
-        let ret = self.match_data(lock_id, data);
-
-        if ret {
-            self.utxo_tx_hashes.insert(lock_id, tx_hash);
-        }
-
-        ret
-    }
-
     pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>) -> bool {
         match lock_id {
+            LOCK_ID_CHAIN_ID | LOCK_ID_BLOCK_LIMIT => {
+                warn!("can't change chain_id or block_limit");
+                false
+            }
             LOCK_ID_VERSION => {
                 self.version = u32_decode(data);
                 true
-            }
-            LOCK_ID_CHAIN_ID => {
-                if data.len() == 32 {
-                    self.chain_id = data;
-                    true
-                } else {
-                    warn!("Invalid chain id");
-                    false
-                }
             }
             LOCK_ID_ADMIN => {
                 if data.len() == 20 {
@@ -176,10 +145,6 @@ impl SystemConfig {
                 self.emergency_brake = !data.is_empty();
                 true
             }
-            LOCK_ID_BLOCK_LIMIT => {
-                self.block_limit = u64_decode(data);
-                true
-            }
             LOCK_ID_QUOTA_LIMIT => {
                 self.quota_limit = u64_decode(data);
                 true
@@ -187,6 +152,64 @@ impl SystemConfig {
             _ => {
                 warn!("Invalid lock_id:{}", lock_id);
                 false
+            }
+        }
+    }
+
+    pub fn update(&mut self, tx: &UnverifiedUtxoTransaction, is_init: bool) -> bool {
+        let tx_hash = tx.transaction_hash.clone();
+        let utxo_tx = tx.clone().transaction.unwrap();
+        let lock_id = utxo_tx.lock_id;
+        let pre_tx_hash = utxo_tx.pre_tx_hash;
+        let data = utxo_tx.output;
+
+        if !is_init {
+            if let Some(hash) = self.utxo_tx_hashes.get(&lock_id) {
+                if hash != &pre_tx_hash {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        let ret = self.match_data(lock_id, data);
+
+        if ret {
+            self.utxo_tx_hashes.insert(lock_id, tx_hash);
+        }
+
+        ret
+    }
+
+    pub async fn modify_sys_config_by_utxotx_hash(&mut self, utxo_hash: Vec<u8>) -> StatusCode {
+        match load_data(
+            storage_client(),
+            i32::from(Regions::Transactions) as u32,
+            utxo_hash.clone(),
+        )
+        .await
+        {
+            Ok(raw_tx_bytes) => {
+                let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
+                let tx = raw_tx.tx.unwrap();
+                if let UtxoTx(utxo_tx) = tx {
+                    if self.update(&utxo_tx, true) {
+                        StatusCode::Success
+                    } else {
+                        StatusCode::UpdateSystemConfigError
+                    }
+                } else {
+                    warn!(
+                        "tx from utxo_tx_hash{:?} is not utxo_tx",
+                        hex::encode(&utxo_hash)
+                    );
+                    StatusCode::NoneUtxo
+                }
+            }
+            Err(e) => {
+                warn!("load utxo_tx failed: {}", e);
+                StatusCode::NoTransaction
             }
         }
     }
@@ -237,35 +260,6 @@ impl SystemConfig {
                 .get(&LOCK_ID_BLOCK_LIMIT)
                 .unwrap()
                 .to_owned(),
-        }
-    }
-
-    pub async fn modify_sys_config_by_utxotx_hash(&mut self, utxo_hash: Vec<u8>) -> StatusCode {
-        match load_data(
-            storage_client(),
-            i32::from(Regions::Transactions) as u32,
-            utxo_hash.clone(),
-        )
-        .await
-        {
-            Ok(raw_tx_bytes) => {
-                let raw_tx = RawTransaction::decode(raw_tx_bytes.as_slice()).unwrap();
-                let tx = raw_tx.tx.unwrap();
-                if let UtxoTx(utxo_tx) = tx {
-                    self.update(&utxo_tx, true);
-                    StatusCode::Success
-                } else {
-                    warn!(
-                        "tx from utxo_tx_hash{:?} is not utxo_tx",
-                        hex::encode(&utxo_hash)
-                    );
-                    StatusCode::NoneUtxo
-                }
-            }
-            Err(e) => {
-                warn!("load utxo_tx failed: {}", e);
-                StatusCode::NoTransaction
-            }
         }
     }
 }
