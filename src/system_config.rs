@@ -104,11 +104,21 @@ impl SystemConfig {
         }
     }
 
-    pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>) -> bool {
+    pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>, is_init: bool) -> bool {
         match lock_id {
-            LOCK_ID_CHAIN_ID | LOCK_ID_BLOCK_LIMIT => {
-                warn!("can't change chain_id or block_limit");
-                false
+            LOCK_ID_CHAIN_ID => {
+                if is_init {
+                    if data.len() == 32 {
+                        self.chain_id = data;
+                        true
+                    } else {
+                        warn!("Invalid chain id");
+                        false
+                    }
+                } else {
+                    warn!("attempt to change chain_id when not init");
+                    false
+                }
             }
             LOCK_ID_VERSION => {
                 self.version = u32_decode(data);
@@ -145,6 +155,15 @@ impl SystemConfig {
                 self.emergency_brake = !data.is_empty();
                 true
             }
+            LOCK_ID_BLOCK_LIMIT => {
+                if is_init {
+                    self.block_limit = u64_decode(data);
+                    true
+                } else {
+                    warn!("attempt to change block_limit when not init");
+                    false
+                }
+            }
             LOCK_ID_QUOTA_LIMIT => {
                 self.quota_limit = u64_decode(data);
                 true
@@ -173,7 +192,7 @@ impl SystemConfig {
             }
         }
 
-        let ret = self.match_data(lock_id, data);
+        let ret = self.match_data(lock_id, data, is_init);
 
         if ret {
             self.utxo_tx_hashes.insert(lock_id, tx_hash);

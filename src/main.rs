@@ -811,7 +811,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     }
                 } else {
                     info!("lock_id: {} stored data", lock_id);
-                    if !sys_config.match_data(lock_id, data_or_tx_hash) {
+                    if !sys_config.match_data(lock_id, data_or_tx_hash, true) {
                         panic!("match data lock_id: {} stored failed", lock_id);
                     }
                 }
