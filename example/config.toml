@@ -1,10 +1,13 @@
 [controller]
-network_port = 50000
 consensus_port = 50001
-storage_port = 50003
+controller_port = 50004
 crypto_port = 50005
+enable_metrics = true
 executor_port = 50002
-node_address = '0x37d1c7449bfe76fe9c445e626da06265e9377601'
+metrics_port = 60004
+network_port = 50000
+node_address = 'example/node_address'
+storage_port = 50003
 validator_address_len = 20
 
 [genesis_block]
