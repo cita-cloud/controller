@@ -590,32 +590,34 @@ impl Chain {
             return Err(StatusCode::BlockCheckError);
         }
 
-        let mut block_for_check = block.clone();
-        block_for_check.state_root = vec![];
-        let block_for_check_bytes = self.assemble_proposal(block_for_check, height).await?;
+        if !wal_redo {
+            let mut block_for_check = block.clone();
+            block_for_check.state_root = vec![];
+            let block_for_check_bytes = self.assemble_proposal(block_for_check, height).await?;
 
-        let status = check_block(height, block_for_check_bytes, block.proof.clone()).await;
-        if status != StatusCode::Success {
-            return Err(status);
-        }
+            let status = check_block(height, block_for_check_bytes, block.proof.clone()).await;
+            if status != StatusCode::Success {
+                return Err(status);
+            }
 
-        {
-            let auth = self.auth.read().await;
-            auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?
-        }
+            {
+                let auth = self.auth.read().await;
+                auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?
+            }
 
-        match crypto_client()
-            .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
-            .await
-        {
-            Ok(code) => StatusCode::from(code).is_success()?,
-            Err(e) => {
-                log::warn!(
-                    "check_transactions check block(0x{})'s txs failed: {}",
-                    hex::encode(&block_hash),
-                    e.to_string()
-                );
-                return Err(StatusCode::CryptoServerNotReady);
+            match crypto_client()
+                .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
+                .await
+            {
+                Ok(code) => StatusCode::from(code).is_success()?,
+                Err(e) => {
+                    log::warn!(
+                        "check_transactions check block(0x{})'s txs failed: {}",
+                        hex::encode(&block_hash),
+                        e.to_string()
+                    );
+                    return Err(StatusCode::CryptoServerNotReady);
+                }
             }
         }
 
