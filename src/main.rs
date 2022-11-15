@@ -980,6 +980,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         "inner healthy check: broadcast csi h: {} the {}th time",
                         current_height, tick
                     );
+                    if controller_for_healthy.get_global_status().await.1.height > current_height {
+                        let mut chain = controller_for_healthy.chain.write().await;
+                        chain.clear_candidate();
+                    }
                     controller_for_healthy
                         .task_sender
                         .send(EventTask::BroadCastCSI)
