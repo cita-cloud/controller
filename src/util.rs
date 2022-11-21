@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::config::{controller_config, ControllerConfig};
+use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::{
     blockchain::{
         raw_transaction::{Tx, Tx::UtxoTx},
@@ -41,8 +42,6 @@ use cloud_util::{
 };
 use log::warn;
 use prost::Message;
-use status_code::StatusCode;
-use status_code::StatusCode::{NoneRawTx, NoneTransaction};
 use tokio::sync::OnceCell;
 
 pub static CONSENSUS_CLIENT: OnceCell<RetryClient<ConsensusServiceClient<InterceptedSvc>>> =
@@ -142,30 +141,33 @@ pub fn crypto_client() -> RetryClient<CryptoServiceClient<InterceptedSvc>> {
     CRYPTO_CLIENT.get().cloned().unwrap()
 }
 
-pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCode {
+pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCodeEnum {
     match consensus_client().reconfigure(consensus_config).await {
-        Ok(response) => StatusCode::from(response),
+        Ok(response) => StatusCodeEnum::from(response),
         Err(e) => {
             warn!("reconfigure failed: {}", e.to_string());
-            StatusCode::ConsensusServerNotReady
+            StatusCodeEnum::ConsensusServerNotReady
         }
     }
 }
 
-pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCode {
+pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCodeEnum {
     let proposal = Some(Proposal { height, data });
     let pp = ProposalWithProof { proposal, proof };
 
     match consensus_client().check_block(pp).await {
-        Ok(code) => StatusCode::from(code),
+        Ok(code) => StatusCodeEnum::from(code),
         Err(e) => {
             warn!("check_block failed: {}", e.to_string());
-            StatusCode::ConsensusServerNotReady
+            StatusCodeEnum::ConsensusServerNotReady
         }
     }
 }
 
-pub async fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec<u8>, StatusCode> {
+pub async fn verify_tx_signature(
+    tx_hash: &[u8],
+    signature: &[u8],
+) -> Result<Vec<u8>, StatusCodeEnum> {
     let config = controller_config();
     if signature.len() != config.signature_len as usize {
         warn!(
@@ -173,13 +175,13 @@ pub async fn verify_tx_signature(tx_hash: &[u8], signature: &[u8]) -> Result<Vec
             signature.len(),
             config.signature_len
         );
-        Err(StatusCode::SigLenError)
+        Err(StatusCodeEnum::SigLenError)
     } else {
         recover_signature(crypto_client(), signature, tx_hash).await
     }
 }
 
-pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), StatusCode> {
+pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), StatusCodeEnum> {
     let config = controller_config();
     if tx_hash.len() != config.hash_len as usize {
         warn!(
@@ -187,7 +189,7 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
             tx_hash.len(),
             config.hash_len
         );
-        Err(StatusCode::HashLenError)
+        Err(StatusCodeEnum::HashLenError)
     } else {
         let computed_hash = hash_data(crypto_client(), tx_bytes).await?;
         if tx_hash != computed_hash {
@@ -196,31 +198,32 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
                 hex::encode(tx_hash),
                 hex::encode(&hash_data(crypto_client(), tx_bytes).await?)
             );
-            Err(StatusCode::HashCheckError)
+            Err(StatusCodeEnum::HashCheckError)
         } else {
             Ok(())
         }
     }
 }
 
-pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>, StatusCode> {
+pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>, StatusCodeEnum> {
     storage_client()
         .load(ExtKey { region, key })
         .await
         .map_or_else(
             |e| {
                 warn!("load_data_maybe_empty failed: {:?}", e);
-                Err(StatusCode::StorageServerNotReady)
+                Err(StatusCodeEnum::StorageServerNotReady)
             },
-            |value| match StatusCode::from(value.status.ok_or(StatusCode::NoneStatusCode)?) {
-                StatusCode::Success => Ok(value.value),
-                StatusCode::NotFound => Ok(vec![]),
+            |value| match StatusCodeEnum::from(value.status.ok_or(StatusCodeEnum::NoneStatusCode)?)
+            {
+                StatusCodeEnum::Success => Ok(value.value),
+                StatusCodeEnum::NotFound => Ok(vec![]),
                 statue => Err(statue),
             },
         )
 }
 
-pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
+pub async fn get_full_block(height: u64) -> Result<Block, StatusCodeEnum> {
     let height_bytes = height.to_be_bytes().to_vec();
 
     let block_bytes = load_data(
@@ -232,17 +235,17 @@ pub async fn get_full_block(height: u64) -> Result<Block, StatusCode> {
 
     Block::decode(block_bytes.as_slice()).map_err(|_| {
         warn!("get_full_block: decode Block failed");
-        StatusCode::DecodeError
+        StatusCodeEnum::DecodeError
     })
 }
 
-pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
+pub async fn exec_block(block: Block) -> (StatusCodeEnum, Vec<u8>) {
     match executor_client().exec(block).await {
         Ok(hash_respond) => (
-            StatusCode::from(
+            StatusCodeEnum::from(
                 hash_respond
                     .status
-                    .unwrap_or_else(|| StatusCode::NoneStatusCode.into()),
+                    .unwrap_or_else(|| StatusCodeEnum::NoneStatusCode.into()),
             ),
             hash_respond
                 .hash
@@ -251,34 +254,34 @@ pub async fn exec_block(block: Block) -> (StatusCode, Vec<u8>) {
         ),
         Err(e) => {
             warn!("exec_block failed: {}", e.to_string());
-            (StatusCode::ExecuteServerNotReady, vec![])
+            (StatusCodeEnum::ExecuteServerNotReady, vec![])
         }
     }
 }
 
-pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
+pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCodeEnum> {
     let network_status_response = network_client()
         .get_network_status(Empty {})
         .await
         .map_err(|e| {
             warn!("get_network_status failed: {}", e.to_string());
-            StatusCode::NetworkServerNotReady
+            StatusCodeEnum::NetworkServerNotReady
         })?;
     Ok(network_status_response)
 }
 
-pub async fn get_peers_info() -> Result<TotalNodeNetInfo, StatusCode> {
+pub async fn get_peers_info() -> Result<TotalNodeNetInfo, StatusCodeEnum> {
     let peers_info = network_client()
         .get_peers_net_info(Empty {})
         .await
         .map_err(|e| {
             warn!("get_network_status failed: {}", e.to_string());
-            StatusCode::NetworkServerNotReady
+            StatusCodeEnum::NetworkServerNotReady
         })?;
     Ok(peers_info)
 }
 
-pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
+pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCodeEnum> {
     let tx_hash_bytes = tx_hash.to_vec();
 
     let tx_bytes = load_data(
@@ -293,18 +296,18 @@ pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
             hex::encode(tx_hash),
             e.to_string()
         );
-        StatusCode::NoTransaction
+        StatusCodeEnum::NoTransaction
     })?;
 
     let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(|_| {
         warn!("db_get_tx: decode RawTransaction failed");
-        StatusCode::DecodeError
+        StatusCodeEnum::DecodeError
     })?;
 
     Ok(raw_tx)
 }
 
-pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, StatusCode> {
+pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, StatusCodeEnum> {
     let mut hashes = Vec::new();
     for raw_tx in &raw_txs.body {
         hashes.push(get_tx_hash(raw_tx)?.to_vec())
@@ -312,7 +315,7 @@ pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, Statu
     Ok(hashes)
 }
 
-pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
+pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCodeEnum> {
     let tx_hash_bytes = tx_hash.to_vec();
 
     let height_bytes = load_data(
@@ -327,7 +330,7 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
             hex::encode(tx_hash),
             e.to_string()
         );
-        StatusCode::NoTxHeight
+        StatusCodeEnum::NoTxHeight
     })?;
 
     let tx_index_bytes = load_data(
@@ -342,7 +345,7 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
             hex::encode(tx_hash),
             e.to_string()
         );
-        StatusCode::NoTxIndex
+        StatusCodeEnum::NoTxIndex
     })?;
 
     let mut buf: [u8; 8] = [0; 8];
@@ -356,7 +359,7 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCode> {
     Ok((block_height, tx_index))
 }
 
-pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, StatusCode> {
+pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, StatusCodeEnum> {
     let block_number = load_data(
         storage_client(),
         i32::from(Regions::BlockHash2blockHeight) as u32,
@@ -369,7 +372,7 @@ pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, Stat
             hex::encode(hash),
             e.to_string()
         );
-        StatusCode::NoBlockHeight
+        StatusCodeEnum::NoBlockHeight
     })
     .map(|v| {
         let mut bytes: [u8; 8] = [0; 8];
@@ -379,7 +382,7 @@ pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, Stat
     Ok(BlockNumber { block_number })
 }
 
-pub async fn get_compact_block(height: u64) -> Result<CompactBlock, StatusCode> {
+pub async fn get_compact_block(height: u64) -> Result<CompactBlock, StatusCodeEnum> {
     let height_bytes = height.to_be_bytes().to_vec();
 
     let compact_block_bytes = load_data(
@@ -390,18 +393,18 @@ pub async fn get_compact_block(height: u64) -> Result<CompactBlock, StatusCode> 
     .await
     .map_err(|e| {
         warn!("get compact_block({}) error: {}", height, e.to_string());
-        StatusCode::NoBlock
+        StatusCodeEnum::NoBlock
     })?;
 
     let compact_block = CompactBlock::decode(compact_block_bytes.as_slice()).map_err(|_| {
         warn!("get_compact_block: decode CompactBlock failed");
-        StatusCode::DecodeError
+        StatusCodeEnum::DecodeError
     })?;
 
     Ok(compact_block)
 }
 
-pub async fn get_proof(height: u64) -> Result<Proof, StatusCode> {
+pub async fn get_proof(height: u64) -> Result<Proof, StatusCodeEnum> {
     let height_bytes = height.to_be_bytes().to_vec();
 
     let proof = load_data(
@@ -412,13 +415,13 @@ pub async fn get_proof(height: u64) -> Result<Proof, StatusCode> {
     .await
     .map_err(|e| {
         warn!("get proof({}) error: {}", height, e.to_string());
-        StatusCode::NoProof
+        StatusCodeEnum::NoProof
     })?;
 
     Ok(Proof { proof })
 }
 
-pub async fn get_state_root(height: u64) -> Result<StateRoot, StatusCode> {
+pub async fn get_state_root(height: u64) -> Result<StateRoot, StatusCodeEnum> {
     let height_bytes = height.to_be_bytes().to_vec();
 
     let state_root = load_data(
@@ -429,13 +432,13 @@ pub async fn get_state_root(height: u64) -> Result<StateRoot, StatusCode> {
     .await
     .map_err(|e| {
         warn!("get state_root({}) error: {}", height, e.to_string());
-        StatusCode::NoStateRoot
+        StatusCodeEnum::NoStateRoot
     })?;
 
     Ok(StateRoot { state_root })
 }
 
-pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>, StatusCode> {
+pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>, StatusCodeEnum> {
     let height_bytes = load_data(
         storage_client(),
         i32::from(Regions::TransactionHash2blockHeight) as u32,
@@ -466,12 +469,12 @@ pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>
                         "tx from utxo_tx_hash{:?} is not utxo_tx",
                         hex::encode(&hash)
                     );
-                    return Err(StatusCode::NoneUtxo);
+                    return Err(StatusCodeEnum::NoneUtxo);
                 }
             }
             Err(status) => {
                 warn!("load utxo_tx failed: {}", status);
-                return Err(StatusCode::NoTransaction);
+                return Err(StatusCodeEnum::NoTransaction);
             }
         };
         if hash == vec![0u8; 33] {
@@ -605,27 +608,27 @@ macro_rules! impl_broadcast {
     };
 }
 
-pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), StatusCode> {
+pub async fn check_sig(sig: &[u8], msg: &[u8], address: &[u8]) -> Result<(), StatusCodeEnum> {
     if recover_signature(crypto_client(), sig, msg).await? != address {
-        Err(StatusCode::SigCheckError)
+        Err(StatusCodeEnum::SigCheckError)
     } else {
         Ok(())
     }
 }
 
-pub fn get_tx_quota(raw_tx: &RawTransaction) -> Result<u64, StatusCode> {
+pub fn get_tx_quota(raw_tx: &RawTransaction) -> Result<u64, StatusCodeEnum> {
     match &raw_tx.tx {
         Some(Tx::NormalTx(normal_tx)) => match normal_tx.transaction {
             Some(ref tx) => Ok(tx.quota),
             None => {
                 warn!("tx_quota: found NoneTransaction");
-                Err(NoneTransaction)
+                Err(StatusCodeEnum::NoneTransaction)
             }
         },
         Some(Tx::UtxoTx(_)) => Ok(0),
         None => {
             warn!("tx_quota: found NoneRawTx");
-            Err(NoneRawTx)
+            Err(StatusCodeEnum::NoneRawTx)
         }
     }
 }

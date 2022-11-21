@@ -14,13 +14,13 @@
 
 use crate::util::{check_sig, crypto_client, get_compact_block};
 use cita_cloud_proto::common::{Address, Hash};
+use cita_cloud_proto::status_code::StatusCodeEnum;
 use cloud_util::{
     common::h160_address_check,
     crypto::{get_block_hash, hash_data},
 };
 use prost::Message;
 use rand::{seq::SliceRandom, thread_rng};
-use status_code::StatusCode;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -50,22 +50,22 @@ pub struct ChainStatus {
 }
 
 impl ChainStatus {
-    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCodeEnum> {
         h160_address_check(self.address.as_ref())?;
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
             log::warn!(
                 "ChainStatus check error: {:?}",
-                StatusCode::VersionOrIdCheckError
+                StatusCodeEnum::VersionOrIdCheckError
             );
-            Err(StatusCode::VersionOrIdCheckError)
+            Err(StatusCodeEnum::VersionOrIdCheckError)
         } else {
             self.check_hash(own_status).await?;
             Ok(())
         }
     }
 
-    pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
+    pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCodeEnum> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await?;
             if get_block_hash(crypto_client(), compact_block.header.as_ref()).await?
@@ -73,9 +73,9 @@ impl ChainStatus {
             {
                 log::warn!(
                     "ChainStatus check_hash error: {:?}",
-                    StatusCode::HashCheckError
+                    StatusCodeEnum::HashCheckError
                 );
-                Err(StatusCode::HashCheckError)
+                Err(StatusCodeEnum::HashCheckError)
             } else {
                 Ok(())
             }
@@ -94,16 +94,16 @@ pub struct ChainStatusInit {
 }
 
 impl ChainStatusInit {
-    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCode> {
+    pub async fn check(&self, own_status: &ChainStatus) -> Result<(), StatusCodeEnum> {
         let chain_status = self
             .chain_status
             .clone()
-            .ok_or(StatusCode::NoneChainStatus)?;
+            .ok_or(StatusCodeEnum::NoneChainStatus)?;
 
         let mut chain_status_bytes = Vec::new();
         chain_status.encode(&mut chain_status_bytes).map_err(|_| {
             log::warn!("ChainStatusInit: check: encode ChainStatus failed");
-            StatusCode::EncodeError
+            StatusCodeEnum::EncodeError
         })?;
 
         let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;
@@ -113,10 +113,10 @@ impl ChainStatusInit {
             &self
                 .chain_status
                 .as_ref()
-                .ok_or(StatusCode::NoneChainStatus)?
+                .ok_or(StatusCodeEnum::NoneChainStatus)?
                 .address
                 .as_ref()
-                .ok_or(StatusCode::NoProvideAddress)?
+                .ok_or(StatusCodeEnum::NoProvideAddress)?
                 .address,
         )
         .await?;
@@ -244,13 +244,13 @@ impl NodeManager {
         &self,
         na: &NodeAddress,
         chain_status: ChainStatus,
-    ) -> Result<Option<ChainStatus>, StatusCode> {
+    ) -> Result<Option<ChainStatus>, StatusCodeEnum> {
         if self.in_ban_node(na).await {
-            return Err(StatusCode::BannedNode);
+            return Err(StatusCodeEnum::BannedNode);
         }
 
         if self.in_misbehavior_node(na).await && !self.try_delete_misbehavior_node(na).await {
-            return Err(StatusCode::MisbehaveNode);
+            return Err(StatusCodeEnum::MisbehaveNode);
         }
 
         let status = {
@@ -263,7 +263,7 @@ impl NodeManager {
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(*na, chain_status))
         } else {
-            Err(StatusCode::EarlyStatus)
+            Err(StatusCodeEnum::EarlyStatus)
         }
     }
 
@@ -331,14 +331,14 @@ impl NodeManager {
     pub async fn set_misbehavior_node(
         &self,
         node: &NodeAddress,
-    ) -> Result<Option<MisbehaviorStatus>, StatusCode> {
+    ) -> Result<Option<MisbehaviorStatus>, StatusCodeEnum> {
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
 
         if self.in_ban_node(node).await {
             log::warn!("set misbehavior node: the node have been banned");
-            return Err(StatusCode::BannedNode);
+            return Err(StatusCodeEnum::BannedNode);
         }
 
         log::info!("set misbehavior node: {}", node);
@@ -368,7 +368,7 @@ impl NodeManager {
         }
     }
 
-    pub async fn set_ban_node(&self, node: &NodeAddress) -> Result<bool, StatusCode> {
+    pub async fn set_ban_node(&self, node: &NodeAddress) -> Result<bool, StatusCodeEnum> {
         if self.in_node(node).await {
             self.delete_node(node).await;
         }
@@ -388,7 +388,7 @@ impl NodeManager {
         &self,
         node: &NodeAddress,
         origin: NodeAddress,
-    ) -> Result<bool, StatusCode> {
+    ) -> Result<bool, StatusCodeEnum> {
         if !self.nodes.read().await.contains_key(node) {
             return Ok(false);
         }
@@ -396,7 +396,7 @@ impl NodeManager {
         if node == &origin {
             Ok(true)
         } else {
-            let e = StatusCode::AddressOriginCheckError;
+            let e = StatusCodeEnum::AddressOriginCheckError;
             log::warn!("check_address_origin: node({}) {:?} ", node, e);
             Err(e)
         }
