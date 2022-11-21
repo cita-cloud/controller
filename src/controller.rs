@@ -33,8 +33,8 @@ use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     client::{CryptoClientTrait, NetworkClientTrait},
     common::{
-        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeInfo,
-        NodeNetInfo, Proof, ProposalEnum, StateRoot, TotalNodeInfo,
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeHeight,
+        NodeNetInfo, NodeStatus, Proof, ProposalEnum, StateRoot,
     },
     controller::BlockNumber,
     network::NetworkMsg,
@@ -352,10 +352,6 @@ impl Controller {
         load_tx_info(&tx_hash).await.map(|t| t.1)
     }
 
-    pub async fn rpc_get_peer_count(&self) -> Result<u64, StatusCode> {
-        get_network_status().await.map(|status| status.peer_count)
-    }
-
     pub async fn rpc_get_height_by_hash(&self, hash: Vec<u8>) -> Result<BlockNumber, StatusCode> {
         get_height_by_block_hash(hash).await
     }
@@ -454,19 +450,35 @@ impl Controller {
         res
     }
 
-    pub async fn rpc_get_peers_info(&self, _: Empty) -> Result<TotalNodeInfo, StatusCode> {
-        let mut nodes = Vec::new();
-        let orgins;
-        {
-            orgins = self.node_manager.nodes.read().await;
-        }
-        for orgin in orgins.keys() {
-            nodes.push(NodeInfo {
-                address: orgin.0.to_be_bytes().to_vec(),
-                net_info: None,
-            });
-        }
-        Ok(TotalNodeInfo { nodes })
+    pub async fn rpc_get_node_status(&self, _: Empty) -> Result<NodeStatus, StatusCode> {
+        let connected_peer_count = get_network_status().await?.peer_count;
+        let connected_peers_info = Some(get_peers_info().await?);
+        let chain_status = self.get_status().await;
+        let self_status = Some(NodeHeight {
+            height: chain_status.height,
+            address: chain_status.address.unwrap().address,
+        });
+        let peer_status: Vec<NodeHeight> = self
+            .node_manager
+            .nodes
+            .read()
+            .await
+            .iter()
+            .map(|(_, c)| NodeHeight {
+                height: c.height,
+                address: c.address.clone().unwrap().address,
+            })
+            .collect();
+
+        let node_status = NodeStatus {
+            is_sync: self.get_sync_state().await,
+            connected_peer_count,
+            connected_peers_info,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            self_status,
+            peer_status,
+        };
+        Ok(node_status)
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {

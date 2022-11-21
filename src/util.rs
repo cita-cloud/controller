@@ -22,7 +22,10 @@ use cita_cloud_proto::{
         ClientOptions, ConsensusClientTrait, ExecutorClientTrait, InterceptedSvc,
         NetworkClientTrait, StorageClientTrait,
     },
-    common::{ConsensusConfiguration, Empty, Proof, Proposal, ProposalWithProof, StateRoot},
+    common::{
+        ConsensusConfiguration, Empty, Proof, Proposal, ProposalWithProof, StateRoot,
+        TotalNodeNetInfo,
+    },
     consensus::consensus_service_client::ConsensusServiceClient,
     controller::BlockNumber,
     crypto::crypto_service_client::CryptoServiceClient,
@@ -262,6 +265,17 @@ pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCode> {
             StatusCode::NetworkServerNotReady
         })?;
     Ok(network_status_response)
+}
+
+pub async fn get_peers_info() -> Result<TotalNodeNetInfo, StatusCode> {
+    let peers_info = network_client()
+        .get_peers_net_info(Empty {})
+        .await
+        .map_err(|e| {
+            warn!("get_network_status failed: {}", e.to_string());
+            StatusCode::NetworkServerNotReady
+        })?;
+    Ok(peers_info)
 }
 
 pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
