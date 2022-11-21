@@ -50,12 +50,12 @@ use cita_cloud_proto::{
     client::CryptoClientTrait,
     common::{
         ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
-        Proof, Proposal, ProposalResponse, ProposalWithProof, StateRoot, TotalNodeInfo,
+        NodeStatus, Proof, Proposal, ProposalResponse, ProposalWithProof, StateRoot,
     },
     controller::SystemConfig,
     controller::{
         rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-        PeerCount, SoftwareVersion, TransactionIndex,
+        TransactionIndex,
     },
     health_check::health_server::HealthServer,
     network::RegisterInfo,
@@ -389,17 +389,6 @@ impl RpcService for RPCServer {
         Ok(reply)
     }
 
-    async fn get_version(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<SoftwareVersion>, Status> {
-        debug!("get_version request: {:?}", request);
-        let reply = Response::new(SoftwareVersion {
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        });
-        Ok(reply)
-    }
-
     async fn get_block_hash(
         &self,
         request: Request<BlockNumber>,
@@ -460,18 +449,6 @@ impl RpcService for RPCServer {
             )
     }
 
-    async fn get_peer_count(&self, request: Request<Empty>) -> Result<Response<PeerCount>, Status> {
-        debug!("get_peer_count request: {:?}", request);
-
-        self.controller.rpc_get_peer_count().await.map_or_else(
-            |e| Err(Status::invalid_argument(e.to_string())),
-            |peer_count| {
-                let reply = Response::new(PeerCount { peer_count });
-                Ok(reply)
-            },
-        )
-    }
-
     async fn add_node(
         &self,
         request: Request<NodeNetInfo>,
@@ -485,15 +462,15 @@ impl RpcService for RPCServer {
         Ok(reply)
     }
 
-    async fn get_peers_info(
+    async fn get_node_status(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<TotalNodeInfo>, Status> {
-        debug!("get_peers_info request: {:?}", request);
+    ) -> Result<Response<NodeStatus>, Status> {
+        debug!("get_node_status request: {:?}", request);
 
         Ok(Response::new(
             self.controller
-                .rpc_get_peers_info(request.into_inner())
+                .rpc_get_node_status(request.into_inner())
                 .await
                 .map_err(|e| Status::invalid_argument(e.to_string()))?,
         ))
