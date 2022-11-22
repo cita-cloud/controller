@@ -18,12 +18,12 @@ use cita_cloud_proto::blockchain::{
     raw_transaction::Tx::UtxoTx, RawTransaction, UnverifiedUtxoTransaction,
 };
 use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
+use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::storage::Regions;
 use cloud_util::{clean_0x, common::read_toml, storage::load_data};
 use log::warn;
 use prost::Message;
 use serde_derive::Deserialize;
-use status_code::StatusCode;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -201,7 +201,7 @@ impl SystemConfig {
         ret
     }
 
-    pub async fn modify_sys_config_by_utxotx_hash(&mut self, utxo_hash: Vec<u8>) -> StatusCode {
+    pub async fn modify_sys_config_by_utxotx_hash(&mut self, utxo_hash: Vec<u8>) -> StatusCodeEnum {
         match load_data(
             storage_client(),
             i32::from(Regions::Transactions) as u32,
@@ -214,21 +214,21 @@ impl SystemConfig {
                 let tx = raw_tx.tx.unwrap();
                 if let UtxoTx(utxo_tx) = tx {
                     if self.update(&utxo_tx, true) {
-                        StatusCode::Success
+                        StatusCodeEnum::Success
                     } else {
-                        StatusCode::UpdateSystemConfigError
+                        StatusCodeEnum::UpdateSystemConfigError
                     }
                 } else {
                     warn!(
                         "tx from utxo_tx_hash{:?} is not utxo_tx",
                         hex::encode(&utxo_hash)
                     );
-                    StatusCode::NoneUtxo
+                    StatusCodeEnum::NoneUtxo
                 }
             }
             Err(e) => {
                 warn!("load utxo_tx failed: {}", e);
-                StatusCode::NoTransaction
+                StatusCodeEnum::NoTransaction
             }
         }
     }

@@ -45,6 +45,7 @@ use crate::{
         reconfigure, storage_client,
     },
 };
+use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     client::CryptoClientTrait,
@@ -72,7 +73,6 @@ use genesis::GenesisBlock;
 use health_check::HealthCheckServer;
 use log::{debug, error, info, warn};
 use prost::Message;
-use status_code::StatusCode;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::AddrParseError;
@@ -377,7 +377,7 @@ impl RpcService for RPCServer {
                     let res = initial_sys_config
                         .modify_sys_config_by_utxotx_hash(hash_in_range)
                         .await;
-                    if res != StatusCode::Success {
+                    if res != StatusCodeEnum::Success {
                         return Err(Status::invalid_argument(res.to_string()));
                     }
                 }
@@ -534,7 +534,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 warn!("rpc: check_proposal failed: {:?}", e.to_string());
                 Ok(Response::new(e.into()))
             }
-            Ok(_) => Ok(Response::new(StatusCode::Success.into())),
+            Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
         }
     }
     async fn commit_block(
@@ -574,7 +574,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                     },
                     |r| {
                         Ok(Response::new(ConsensusConfigurationResponse {
-                            status: Some(StatusCode::Success.into()),
+                            status: Some(StatusCodeEnum::Success.into()),
                             config: Some(r),
                         }))
                     },
@@ -586,7 +586,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 validators: config.validators,
             };
             Ok(Response::new(ConsensusConfigurationResponse {
-                status: Some(StatusCode::Success.into()),
+                status: Some(StatusCodeEnum::Success.into()),
                 config: Some(con_cfg),
             }))
         }
@@ -621,25 +621,25 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
         let msg = request.into_inner();
         if msg.module != "controller" {
-            Ok(Response::new(StatusCode::ModuleNotController.into()))
+            Ok(Response::new(StatusCodeEnum::ModuleNotController.into()))
         } else {
             let msg_type = msg.r#type.clone();
             self.controller.process_network_msg(msg).await.map_or_else(
                 |status| {
-                    if status != StatusCode::HistoryDupTx || rand::random::<u16>() < 8 {
+                    if status != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
                         warn!("rpc: process_network_msg({}) failed: {}", msg_type, status);
                     }
 
                     Ok(Response::new(status.into()))
                 },
-                |_| Ok(Response::new(StatusCode::Success.into())),
+                |_| Ok(Response::new(StatusCodeEnum::Success.into())),
             )
         }
     }
 }
 
 #[tokio::main]
-async fn run(opts: RunOpts) -> Result<(), StatusCode> {
+async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     tokio::spawn(cloud_util::signal::handle_signals());
 
     // read consensus-config.toml
@@ -680,7 +680,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         };
 
         match register_network_msg_handler(network_client(), request).await {
-            StatusCode::Success => {
+            StatusCodeEnum::Success => {
                 info!("register network msg handler success!");
                 break;
             }
@@ -699,8 +699,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
         {
             if let Ok(crypto_info) = crypto_client().get_crypto_info(Empty {}).await {
                 if crypto_info.status.is_some() {
-                    match StatusCode::from(crypto_info.status.unwrap()) {
-                        StatusCode::Success => {
+                    match StatusCodeEnum::from(crypto_info.status.unwrap()) {
+                        StatusCodeEnum::Success => {
                             config.hash_len = crypto_info.hash_len;
                             config.signature_len = crypto_info.signature_len;
                             config.address_len = crypto_info.address_len;
@@ -782,7 +782,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     if sys_config
                         .modify_sys_config_by_utxotx_hash(data_or_tx_hash.clone())
                         .await
-                        != StatusCode::Success
+                        != StatusCodeEnum::Success
                     {
                         panic!("modify_sys_config_by_utxotx_hash failed in lockid: {}, with utxo hash: {:?}", lock_id, hex::encode(data_or_tx_hash))
                     }
@@ -793,7 +793,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                     }
                 }
             }
-            Err(StatusCode::NotFound) => {
+            Err(StatusCodeEnum::NotFound) => {
                 //this lock_id is empty in local, store data from sys_config to local
                 info!("lock_id: {} empty, store from config to local", lock_id);
                 match lock_id {
@@ -1094,7 +1094,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                                                 syncing = true;
                                             }
                                             Err(e) => {
-                                                if Into::<u64>::into(e) % 100 == 0 {
+                                                if (e as u64) % 100 == 0 {
                                                     warn!("sync block error: {}", e);
                                                     continue;
                                                 }
@@ -1170,7 +1170,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
                         .encode(&mut chain_status_bytes)
                         .map_err(|_| {
                             warn!("process_network_msg: encode ChainStatus failed");
-                            StatusCode::EncodeError
+                            StatusCodeEnum::EncodeError
                         })
                         .unwrap();
                     let msg_hash = hash_data(crypto_client(), &chain_status_bytes)
@@ -1227,7 +1227,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
     let addr_str = format!("0.0.0.0:{}", grpc_port);
     let addr = addr_str.parse().map_err(|e: AddrParseError| {
         warn!("grpc listen addr parse failed: {} ", e.to_string());
-        StatusCode::FatalError
+        StatusCodeEnum::FatalError
     })?;
 
     let layer = if enable_metrics {
@@ -1267,7 +1267,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             .await
             .map_err(|e| {
                 warn!("start controller grpc server failed: {} ", e.to_string());
-                StatusCode::FatalError
+                StatusCodeEnum::FatalError
             })?;
     } else {
         info!("metrics off");
@@ -1290,7 +1290,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCode> {
             .await
             .map_err(|e| {
                 warn!("start controller grpc server failed: {} ", e.to_string());
-                StatusCode::FatalError
+                StatusCodeEnum::FatalError
             })?;
     }
 

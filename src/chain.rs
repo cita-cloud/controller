@@ -17,6 +17,7 @@ use crate::{
     auth::Authentication, node_manager::ChainStatus, pool::Pool, system_config::SystemConfig,
     util::*, GenesisBlock,
 };
+use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
     client::CryptoClientTrait,
@@ -31,7 +32,6 @@ use cloud_util::{
     wal::{LogType, Wal},
 };
 use prost::Message;
-use status_code::StatusCode;
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
@@ -102,11 +102,11 @@ impl Chain {
                 .finalize_block(self.genesis.genesis_block(), false)
                 .await
             {
-                Ok(()) | Err(StatusCode::ReenterBlock) => {
+                Ok(()) | Err(StatusCodeEnum::ReenterBlock) => {
                     log::info!("executor is ready!");
                     break;
                 }
-                Err(StatusCode::ExecuteServerNotReady) => {
+                Err(StatusCodeEnum::ExecuteServerNotReady) => {
                     log::warn!("executor server not ready! Retrying.")
                 }
                 Err(e) => {
@@ -121,7 +121,7 @@ impl Chain {
         auth.init(init_block_number).await;
     }
 
-    pub async fn extract_proposal_info(&self, h: u64) -> Result<Vec<u8>, StatusCode> {
+    pub async fn extract_proposal_info(&self, h: u64) -> Result<Vec<u8>, StatusCodeEnum> {
         let pre_h = h - 1;
         let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
@@ -135,12 +135,12 @@ impl Chain {
         Ok(state_root)
     }
 
-    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCode), StatusCode> {
+    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCodeEnum), StatusCodeEnum> {
         if let Some((h, _, block)) = self.own_proposal.clone() {
             // check again avoid bad proposal
             {
                 let auth = self.auth.read().await;
-                auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)
+                auth.check_transactions(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)
                     .map_err(|e| {
                         log::warn!("get_proposal: check_transactions failed: {:?}", e);
                         e
@@ -151,19 +151,19 @@ impl Chain {
                 if block
                     .body
                     .as_ref()
-                    .ok_or(StatusCode::NoneBlockBody)?
+                    .ok_or(StatusCodeEnum::NoneBlockBody)?
                     .body
                     .is_empty()
                 {
-                    StatusCode::NoTransaction
+                    StatusCodeEnum::NoTransaction
                 } else {
-                    StatusCode::Success
+                    StatusCodeEnum::Success
                 }
             };
 
             Ok((h, self.assemble_proposal(block, h).await?, status))
         } else {
-            Err(StatusCode::NoCandidate)
+            Err(StatusCodeEnum::NoCandidate)
         }
     }
 
@@ -171,7 +171,7 @@ impl Chain {
         &self,
         mut block: Block,
         height: u64,
-    ) -> Result<Vec<u8>, StatusCode> {
+    ) -> Result<Vec<u8>, StatusCodeEnum> {
         block.proof = Vec::new();
         let pre_state_root = self.extract_proposal_info(height).await?;
 
@@ -186,7 +186,7 @@ impl Chain {
         let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
         proposal.encode(&mut proposal_bytes).map_err(|_| {
             log::warn!("encode proposal error");
-            StatusCode::EncodeError
+            StatusCodeEnum::EncodeError
         })?;
 
         Ok(proposal_bytes)
@@ -196,19 +196,19 @@ impl Chain {
         &mut self,
         block_hash: &[u8],
         block: Block,
-    ) -> Result<bool, StatusCode> {
+    ) -> Result<bool, StatusCodeEnum> {
         let header = block.header.clone().unwrap();
         let block_height = header.height;
         if block_height <= self.block_number {
             log::warn!("add_remote_proposal: ProposalTooLow, self block number: {}, remote block number: {}",
             self.block_number, block_height);
-            return Err(StatusCode::ProposalTooLow);
+            return Err(StatusCodeEnum::ProposalTooLow);
         }
 
         if block_height > self.block_number + 1 {
             log::warn!("add_remote_proposal: ProposalTooHigh, self block number: {}, remote block number: {}",
                   self.block_number, block_height);
-            return Err(StatusCode::ProposalTooHigh);
+            return Err(StatusCodeEnum::ProposalTooHigh);
         }
 
         if !self.candidates.contains_key(block_hash) {
@@ -231,9 +231,9 @@ impl Chain {
         &mut self,
         global_status: &ChainStatus,
         proposer: Vec<u8>,
-    ) -> Result<(), StatusCode> {
+    ) -> Result<(), StatusCodeEnum> {
         if self.next_step(global_status).await == ChainStep::SyncStep {
-            Err(StatusCode::NodeInSyncMode)
+            Err(StatusCodeEnum::NodeInSyncMode)
         } else {
             let tx_list = {
                 let mut pool = self.pool.write().await;
@@ -287,14 +287,18 @@ impl Chain {
         }
     }
 
-    pub async fn check_proposal(&self, h: u64, proposal: ProposalEnum) -> Result<(), StatusCode> {
+    pub async fn check_proposal(
+        &self,
+        h: u64,
+        proposal: ProposalEnum,
+    ) -> Result<(), StatusCodeEnum> {
         if h <= self.block_number {
             log::warn!(
                 "check_proposal: ProposalTooLow, self block number: {}, remote block number: {}",
                 self.block_number,
                 h
             );
-            return Err(StatusCode::ProposalTooLow);
+            return Err(StatusCodeEnum::ProposalTooLow);
         }
 
         if h > self.block_number + 1 {
@@ -303,7 +307,7 @@ impl Chain {
                 self.block_number,
                 h
             );
-            return Err(StatusCode::ProposalTooHigh);
+            return Err(StatusCodeEnum::ProposalTooHigh);
         }
 
         match proposal.proposal {
@@ -322,30 +326,30 @@ impl Chain {
                         hex::encode(&bft_proposal.pre_state_root),
                         hex::encode(&state_root),
                     );
-                    Err(StatusCode::ProposalCheckError)
+                    Err(StatusCodeEnum::ProposalCheckError)
                 }
             }
-            None => Err(StatusCode::NoneProposal),
+            None => Err(StatusCodeEnum::NoneProposal),
         }
     }
 
     /// ### ReenterBlock needs to be handled and can only be ignored if wal_redo is true
     /// ```
     /// match executed_block_status {
-    ///     StatusCode::Success => {}
-    ///     StatusCode::ReenterBlock => {
+    ///     StatusCodeEnum::Success => {}
+    ///     StatusCodeEnum::ReenterBlock => {
     ///        if !wal_redo {
-    ///            return Err(StatusCode::ReenterBlock);
+    ///            return Err(StatusCodeEnum::ReenterBlock);
     ///        }
     ///    }
     ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
     /// }
     /// ```
-    async fn finalize_block(&self, mut block: Block, wal_redo: bool) -> Result<(), StatusCode> {
+    async fn finalize_block(&self, mut block: Block, wal_redo: bool) -> Result<(), StatusCodeEnum> {
         let block_height = block
             .header
             .as_ref()
-            .ok_or(StatusCode::NoneBlockHeader)?
+            .ok_or(StatusCodeEnum::NoneBlockHeader)?
             .height;
 
         let block_height_bytes = block_height.to_be_bytes().to_vec();
@@ -354,7 +358,7 @@ impl Chain {
             let mut buf = Vec::with_capacity(block.encoded_len());
             block.encode(&mut buf).map_err(|_| {
                 log::warn!("encode Block failed");
-                StatusCode::EncodeError
+                StatusCodeEnum::EncodeError
             })?;
             buf
         };
@@ -397,7 +401,8 @@ impl Chain {
             }
         }
 
-        let tx_hash_list = get_tx_hash_list(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?;
+        let tx_hash_list =
+            get_tx_hash_list(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?;
 
         // execute block, executed_blocks_hash == state_root
         let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
@@ -410,9 +415,9 @@ impl Chain {
         );
 
         match executed_blocks_status {
-            StatusCode::Success => {}
+            StatusCodeEnum::Success => {}
             status_code => {
-                if status_code != StatusCode::ReenterBlock || !wal_redo {
+                if status_code != StatusCodeEnum::ReenterBlock || !wal_redo {
                     return Err(status_code);
                 }
             }
@@ -431,14 +436,14 @@ impl Chain {
             block.state_root = executed_blocks_hash;
         } else if block.state_root != executed_blocks_hash {
             log::warn!("check state_root error");
-            return Err(StatusCode::StateRootCheckError);
+            return Err(StatusCodeEnum::StateRootCheckError);
         }
 
         let new_block_bytes = {
             let mut buf = Vec::with_capacity(block.encoded_len());
             block.encode(&mut buf).map_err(|_| {
                 log::warn!("encode Block failed");
-                StatusCode::EncodeError
+                StatusCodeEnum::EncodeError
             })?;
             buf
         };
@@ -471,14 +476,14 @@ impl Chain {
         height: u64,
         proposal: &[u8],
         proof: &[u8],
-    ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
+    ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCodeEnum> {
         if height <= self.block_number {
             log::warn!(
                 "commit_block: ProposalTooLow, self block number: {}, remote block number: {}",
                 self.block_number,
                 height
             );
-            return Err(StatusCode::ProposalTooLow);
+            return Err(StatusCodeEnum::ProposalTooLow);
         }
 
         if height > self.block_number + 1 {
@@ -487,20 +492,20 @@ impl Chain {
                 self.block_number,
                 height
             );
-            return Err(StatusCode::ProposalTooHigh);
+            return Err(StatusCodeEnum::ProposalTooHigh);
         }
 
         let bft_proposal = match ProposalEnum::decode(proposal)
             .map_err(|_| {
                 log::warn!("decode ProposalEnum failed");
-                StatusCode::DecodeError
+                StatusCodeEnum::DecodeError
             })?
             .proposal
         {
             Some(Proposal::BftProposal(bft_proposal)) => Ok(bft_proposal),
             None => {
                 log::warn!("commit_block: proposal({}) is none", height);
-                Err(StatusCode::NoneProposal)
+                Err(StatusCodeEnum::NoneProposal)
             }
         }?;
 
@@ -516,7 +521,7 @@ impl Chain {
                     "commit_block: proposal(0x{})'s prev-hash is not equal with chain's block_hash",
                     hex::encode(&block_hash)
                 );
-                return Err(StatusCode::ProposalCheckError);
+                return Err(StatusCodeEnum::ProposalCheckError);
             }
 
             log::info!(
@@ -552,14 +557,14 @@ impl Chain {
             ));
         }
 
-        Err(StatusCode::NoForkTree)
+        Err(StatusCodeEnum::NoForkTree)
     }
 
     pub async fn process_block(
         &mut self,
         block: Block,
         wal_redo: bool,
-    ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCode> {
+    ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCodeEnum> {
         let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
         let header = block.header.clone().unwrap();
         let height = header.height;
@@ -570,7 +575,7 @@ impl Chain {
                 self.block_number,
                 height
             );
-            return Err(StatusCode::ProposalTooLow);
+            return Err(StatusCodeEnum::ProposalTooLow);
         }
 
         if height > self.block_number + 1 {
@@ -579,7 +584,7 @@ impl Chain {
                 self.block_number,
                 height
             );
-            return Err(StatusCode::ProposalTooHigh);
+            return Err(StatusCodeEnum::ProposalTooHigh);
         }
 
         if header.prevhash != self.block_hash {
@@ -587,7 +592,7 @@ impl Chain {
                 "prev_hash of block({}) is not equal with self block hash",
                 height
             );
-            return Err(StatusCode::BlockCheckError);
+            return Err(StatusCodeEnum::BlockCheckError);
         }
 
         if !wal_redo {
@@ -596,27 +601,27 @@ impl Chain {
             let block_for_check_bytes = self.assemble_proposal(block_for_check, height).await?;
 
             let status = check_block(height, block_for_check_bytes, block.proof.clone()).await;
-            if status != StatusCode::Success {
+            if status != StatusCodeEnum::Success {
                 return Err(status);
             }
 
             {
                 let auth = self.auth.read().await;
-                auth.check_transactions(block.body.as_ref().ok_or(StatusCode::NoneBlockBody)?)?
+                auth.check_transactions(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?
             }
 
             match crypto_client()
-                .check_transactions(block.body.clone().ok_or(StatusCode::NoneBlockBody)?)
+                .check_transactions(block.body.clone().ok_or(StatusCodeEnum::NoneBlockBody)?)
                 .await
             {
-                Ok(code) => StatusCode::from(code).is_success()?,
+                Ok(code) => StatusCodeEnum::from(code).is_success()?,
                 Err(e) => {
                     log::warn!(
                         "check_transactions check block(0x{})'s txs failed: {}",
                         hex::encode(&block_hash),
                         e.to_string()
                     );
-                    return Err(StatusCode::CryptoServerNotReady);
+                    return Err(StatusCodeEnum::CryptoServerNotReady);
                 }
             }
         }
@@ -661,7 +666,7 @@ impl Chain {
         }
     }
 
-    pub async fn chain_get_tx(&self, tx_hash: &[u8]) -> Result<RawTransaction, StatusCode> {
+    pub async fn chain_get_tx(&self, tx_hash: &[u8]) -> Result<RawTransaction, StatusCodeEnum> {
         if let Some(raw_tx) = {
             let rd = self.pool.read().await;
             rd.pool_get_tx(tx_hash)
@@ -682,7 +687,7 @@ impl Chain {
         height: u64,
         ltype: LogType,
         msg: &[u8],
-    ) -> Result<u64, StatusCode> {
+    ) -> Result<u64, StatusCodeEnum> {
         self.wal_log
             .write()
             .await
