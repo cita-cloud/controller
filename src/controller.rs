@@ -34,8 +34,8 @@ use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     client::{CryptoClientTrait, NetworkClientTrait},
     common::{
-        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeHeight,
-        NodeNetInfo, NodeStatus, Proof, ProposalEnum, StateRoot,
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo,
+        NodeStatus, PeerStatus, Proof, ProposalEnum, StateRoot,
     },
     controller::BlockNumber,
     network::NetworkMsg,
@@ -460,32 +460,39 @@ impl Controller {
     }
 
     pub async fn rpc_get_node_status(&self, _: Empty) -> Result<NodeStatus, StatusCodeEnum> {
-        let connected_peer_count = get_network_status().await?.peer_count;
-        let connected_peers_info = Some(get_peers_info().await?);
+        let peers_count = get_network_status().await?.peer_count;
+        let peers_netinfo = get_peers_info().await?;
+        let mut peers_status = vec![];
+        for p in peers_netinfo.nodes {
+            let na = NodeAddress(p.origin);
+            let (address, height) = self
+                .node_manager
+                .nodes
+                .read()
+                .await
+                .get(&na)
+                .map_or((vec![], 0), |c| {
+                    (c.address.clone().unwrap().address, c.height)
+                });
+            peers_status.push(PeerStatus {
+                height,
+                address,
+                node_net_info: Some(p),
+            });
+        }
         let chain_status = self.get_status().await;
-        let self_status = Some(NodeHeight {
+        let self_status = Some(PeerStatus {
             height: chain_status.height,
             address: chain_status.address.unwrap().address,
+            node_net_info: None,
         });
-        let peer_status: Vec<NodeHeight> = self
-            .node_manager
-            .nodes
-            .read()
-            .await
-            .iter()
-            .map(|(_, c)| NodeHeight {
-                height: c.height,
-                address: c.address.clone().unwrap().address,
-            })
-            .collect();
 
         let node_status = NodeStatus {
             is_sync: self.get_sync_state().await,
-            connected_peer_count,
-            connected_peers_info,
             version: env!("CARGO_PKG_VERSION").to_string(),
             self_status,
-            peer_status,
+            peers_count,
+            peers_status,
         };
         Ok(node_status)
     }
