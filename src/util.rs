@@ -196,7 +196,7 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
             warn!(
                 "tx_hash is not consistent, item hash: {}, computed hash: {}",
                 hex::encode(tx_hash),
-                hex::encode(&hash_data(crypto_client(), tx_bytes).await?)
+                hex::encode(hash_data(crypto_client(), tx_bytes).await?)
             );
             Err(StatusCodeEnum::HashCheckError)
         } else {
