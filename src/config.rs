@@ -92,6 +92,8 @@ pub struct ControllerConfig {
     pub count_per_batch: usize,
     /// forward tx batch check interval
     pub buffer_duration: u64,
+    /// danger mode
+    pub is_danger: bool,
 }
 
 impl Default for ControllerConfig {
@@ -129,6 +131,7 @@ impl Default for ControllerConfig {
             ],
             count_per_batch: 1000,
             buffer_duration: 300,
+            is_danger: false,
         }
     }
 }
