@@ -493,6 +493,7 @@ impl Controller {
             self_status,
             peers_count,
             peers_status,
+            is_danger: self.config.is_danger,
         };
         Ok(node_status)
     }
