@@ -624,12 +624,15 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
             Ok(Response::new(StatusCodeEnum::ModuleNotController.into()))
         } else {
             let msg_type = msg.r#type.clone();
+            let msg_origin = msg.origin;
             self.controller.process_network_msg(msg).await.map_or_else(
                 |status| {
                     if status != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
-                        warn!("rpc: process_network_msg({}) failed: {}", msg_type, status);
+                        warn!(
+                            "rpc: process_network_msg({} from {:x}) failed: {}",
+                            msg_type, msg_origin, status
+                        );
                     }
-
                     Ok(Response::new(status.into()))
                 },
                 |_| Ok(Response::new(StatusCodeEnum::Success.into())),

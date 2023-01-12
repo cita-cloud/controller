@@ -193,10 +193,7 @@ pub struct NodeAddress(pub u64);
 
 impl Display for NodeAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "NodeAddress({})",
-            hex::encode(self.0.to_be_bytes())
-        ))
+        f.write_fmt(format_args!("NodeAddress({:x})", self.0))
     }
 }
 
