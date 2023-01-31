@@ -90,7 +90,7 @@ impl From<&str> for ControllerMsgType {
 
 impl ::std::fmt::Display for ControllerMsgType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -124,6 +124,8 @@ pub struct Controller {
 
     pub(crate) local_address: Address,
 
+    pub(crate) validator_address: Address,
+
     current_status: Arc<RwLock<ChainStatus>>,
 
     global_status: Arc<RwLock<(NodeAddress, ChainStatus)>>,
@@ -153,6 +155,9 @@ impl Controller {
     ) -> Self {
         let node_address = hex::decode(clean_0x(&config.node_address)).unwrap();
         info!("node address: {}", &config.node_address);
+        //
+        let validator_address = hex::decode(&clean_0x(&config.validator_address)[..40]).unwrap();
+        info!("validator address: {}", &config.validator_address[..40]);
 
         h160_address_check(Some(&Address {
             address: node_address.clone(),
@@ -195,6 +200,9 @@ impl Controller {
             chain,
             local_address: Address {
                 address: node_address,
+            },
+            validator_address: Address {
+                address: validator_address,
             },
             current_status: Arc::new(RwLock::new(own_status)),
             global_status: Arc::new(RwLock::new((NodeAddress(0), ChainStatus::default()))),
@@ -509,7 +517,7 @@ impl Controller {
         chain
             .add_proposal(
                 &self.get_global_status().await.1,
-                self.local_address.address.clone(),
+                self.validator_address.address.clone(),
             )
             .await?;
         chain.get_proposal().await
@@ -535,6 +543,16 @@ impl Controller {
                 Some(Proposal::BftProposal(bft_proposal)) => {
                     let sys_config = self.rpc_get_system_config().await?;
                     let block = bft_proposal.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
+
+                    //check proposer
+                    let proposer = &block
+                        .header
+                        .as_ref()
+                        .ok_or(StatusCodeEnum::NoneBlockHeader)?
+                        .proposer[..];
+                    if sys_config.validators.iter().all(|v| &v[..20] != proposer) {
+                        return Err(StatusCodeEnum::ProposalCheckError);
+                    }
 
                     let mut total_quota = 0;
                     for tx in &block

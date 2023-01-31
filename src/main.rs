@@ -653,7 +653,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     // init log4rs
     log4rs::init_file(&opts.log_file, Default::default())
-        .map_err(|e| println!("log init err: {}", e))
+        .map_err(|e| println!("log init err: {e}"))
         .unwrap();
 
     init_grpc_client(&config);
@@ -792,7 +792,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 } else {
                     info!("lock_id: {} stored data", lock_id);
                     if !sys_config.match_data(lock_id, data_or_tx_hash, true) {
-                        panic!("match data lock_id: {} stored failed", lock_id);
+                        panic!("match data lock_id: {lock_id} stored failed");
                     }
                 }
             }
@@ -889,7 +889,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                     }
                 };
             }
-            Err(e) => panic!("load_data lock_id: {} failed: {}", lock_id, e),
+            Err(e) => panic!("load_data lock_id: {lock_id} failed: {e}"),
         }
     }
     info!("load sys_config complete");
@@ -1227,7 +1227,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         }
     });
 
-    let addr_str = format!("0.0.0.0:{}", grpc_port);
+    let addr_str = format!("0.0.0.0:{grpc_port}");
     let addr = addr_str.parse().map_err(|e: AddrParseError| {
         warn!("grpc listen addr parse failed: {} ", e.to_string());
         StatusCodeEnum::FatalError

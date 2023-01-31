@@ -53,7 +53,7 @@ pub struct SystemConfig {
     pub block_limit: u64,
     pub quota_limit: u64,
     pub utxo_tx_hashes: HashMap<u64, Vec<u8>>,
-    validator_address_len: u32,
+    validator_address_len: usize,
     is_danger: bool,
 }
 
@@ -71,7 +71,7 @@ impl SystemConfig {
     pub fn new(config_path: &str) -> Self {
         //generate SystemConfigFile from config.toml
         let sys_config_file: SystemConfigFile = read_toml(config_path, "system_config");
-        let config: ControllerConfig = read_toml(config_path, "controller");
+        let config: ControllerConfig = ControllerConfig::new(config_path);
 
         //convert String to Vec<u8>
         let chain_id =
@@ -101,7 +101,7 @@ impl SystemConfig {
             utxo_tx_hashes: map,
             block_limit: sys_config_file.block_limit,
             quota_limit: sys_config_file.quota_limit,
-            validator_address_len: config.validator_address_len,
+            validator_address_len: config.validator_address.len() / 2,
             is_danger: config.is_danger,
         }
     }
@@ -140,7 +140,7 @@ impl SystemConfig {
                 true
             }
             LOCK_ID_VALIDATORS => {
-                let l = self.validator_address_len as usize;
+                let l = self.validator_address_len;
                 let mut validators = Vec::new();
                 if data.len() % l == 0 || self.is_danger {
                     for i in 0..(data.len() / l) {

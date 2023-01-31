@@ -8,7 +8,7 @@ metrics_port = 60004
 network_port = 50000
 node_address = 'example/node_address'
 storage_port = 50003
-validator_address_len = 20
+validator_address = 'example/validator_address'
 
 [genesis_block]
 timestamp = 123456
