@@ -44,6 +44,8 @@ pub struct ControllerConfig {
     pub executor_port: u16,
     /// self node address file path
     pub node_address: String,
+    /// self validator address file path
+    pub validator_address: String,
     /// audit blocks epoch length
     pub block_limit: u64,
     /// address length from crypto
@@ -71,8 +73,6 @@ pub struct ControllerConfig {
     /// multi-send chain status interval, counted by block number
     /// recommend: n < origin_node_reconnect_interval / block_interval
     pub send_chain_status_interval_sync: u64,
-    /// validator address length
-    pub validator_address_len: u32,
     /// health check timeout
     /// how many seconds after block number stop increase, will report unhealthy
     pub health_check_timeout: u64,
@@ -106,6 +106,7 @@ impl Default for ControllerConfig {
             crypto_port: 50005,
             executor_port: 50002,
             node_address: "".to_string(),
+            validator_address: "".to_string(),
             block_limit: 0,
             address_len: 20,
             hash_len: 32,
@@ -119,7 +120,6 @@ impl Default for ControllerConfig {
             force_sync_epoch: 100,
             wal_path: "./data/wal_chain".to_string(),
             send_chain_status_interval_sync: 1000,
-            validator_address_len: 20,
             health_check_timeout: 300,
             http2_keepalive_interval: 60,
             http2_keepalive_timeout: 20,
@@ -139,8 +139,8 @@ impl Default for ControllerConfig {
 impl ControllerConfig {
     pub fn new(config_str: &str) -> Self {
         let mut config: ControllerConfig = read_toml(config_str, "controller");
-        let node_address_path = config.node_address.clone();
-        config.node_address = fs::read_to_string(node_address_path).unwrap();
+        config.node_address = fs::read_to_string(config.node_address).unwrap();
+        config.validator_address = fs::read_to_string(config.validator_address).unwrap();
         config
     }
 
@@ -166,6 +166,10 @@ mod tests {
         assert_eq!(
             config.node_address,
             "c356876e7f4831476f99ea0593b0cd7a6053e4d3".to_string()
+        );
+        assert_eq!(
+            config.validator_address,
+            "a0781253f4e4ee3a0cee7a3db9d9772dc75d4fb76be3e9b465284d82b8061c61b18ff6256955f48c441db29d1b997a69".to_string()
         );
     }
 }

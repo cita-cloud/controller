@@ -110,7 +110,7 @@ impl Chain {
                     log::warn!("executor server not ready! Retrying.")
                 }
                 Err(e) => {
-                    panic!("init executor panic: {:?}", e);
+                    panic!("init executor panic: {e:?}");
                 }
             }
         }
@@ -462,7 +462,7 @@ impl Chain {
             .await
             .clear_file()
             .map_err(|e| {
-                panic!("exec_block({}) wal clear_file error: {}", block_height, e);
+                panic!("exec_block({block_height}) wal clear_file error: {e}");
             })
             .unwrap();
 
@@ -693,7 +693,7 @@ impl Chain {
             .await
             .save(height, ltype, msg)
             .map_err(|e| {
-                panic!("wal_save_message: failed: {}", e);
+                panic!("wal_save_message: failed: {e}");
             })
     }
 
@@ -732,7 +732,7 @@ impl Chain {
                     }
                 },
                 tp => {
-                    panic!("only LogType::FinalizeBlock for controller, get {:?}", tp);
+                    panic!("only LogType::FinalizeBlock for controller, get {tp:?}");
                 }
             }
         }
@@ -741,7 +741,7 @@ impl Chain {
             .await
             .clear_file()
             .map_err(|e| {
-                panic!("wal clear_file error: {}", e);
+                panic!("wal clear_file error: {e}");
             })
             .unwrap();
         None
