@@ -46,6 +46,7 @@ use cloud_util::{
     common::{get_tx_hash, h160_address_check},
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
+    wal::Wal,
 };
 use log::{debug, info, warn};
 use prost::Message;
@@ -144,7 +145,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn new(
+    pub async fn new(
         config: ControllerConfig,
         current_block_number: u64,
         current_block_hash: Vec<u8>,
@@ -187,7 +188,7 @@ impl Controller {
             pool.clone(),
             auth.clone(),
             genesis,
-            &config.wal_path,
+            Wal::create(&config.wal_path).await.unwrap(),
         )));
 
         Controller {
