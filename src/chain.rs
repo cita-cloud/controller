@@ -32,7 +32,6 @@ use cloud_util::{
     wal::{LogType, Wal},
 };
 use prost::Message;
-use std::path::Path;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
 
@@ -69,13 +68,8 @@ impl Chain {
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
-        wal_path: &str,
+        wal: Wal,
     ) -> Self {
-        // wal_path must be relative path
-        assert!(
-            !Path::new(wal_path).is_absolute(),
-            "wal_path must be relative path"
-        );
         Chain {
             block_number: current_block_number,
             block_hash: current_block_hash,
@@ -84,7 +78,7 @@ impl Chain {
             pool,
             auth,
             genesis,
-            wal_log: Arc::new(RwLock::new(Wal::create(wal_path).unwrap())),
+            wal_log: Arc::new(RwLock::new(wal)),
         }
     }
 
@@ -461,6 +455,7 @@ impl Chain {
             .write()
             .await
             .clear_file()
+            .await
             .map_err(|e| {
                 panic!("exec_block({block_height}) wal clear_file error: {e}");
             })
@@ -692,13 +687,14 @@ impl Chain {
             .write()
             .await
             .save(height, ltype, msg)
+            .await
             .map_err(|e| {
                 panic!("wal_save_message: failed: {e}");
             })
     }
 
     pub async fn load_wal_log(&mut self) -> Option<(ConsensusConfiguration, ChainStatus)> {
-        let vec_buf = self.wal_log.read().await.load();
+        let vec_buf = self.wal_log.write().await.load().await;
         if vec_buf.is_empty() {
             return None;
         }
@@ -740,6 +736,7 @@ impl Chain {
             .write()
             .await
             .clear_file()
+            .await
             .map_err(|e| {
                 panic!("wal clear_file error: {e}");
             })

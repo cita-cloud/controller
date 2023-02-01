@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fs;
+use std::{fs, path::Path};
 
 use cloud_util::common::read_toml;
 use serde_derive::Deserialize;
@@ -141,6 +141,11 @@ impl ControllerConfig {
         let mut config: ControllerConfig = read_toml(config_str, "controller");
         config.node_address = fs::read_to_string(config.node_address).unwrap();
         config.validator_address = fs::read_to_string(config.validator_address).unwrap();
+        // wal_path must be relative path
+        assert!(
+            !Path::new(&config.wal_path).is_absolute(),
+            "wal_path must be relative path"
+        );
         config
     }
 

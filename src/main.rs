@@ -643,6 +643,7 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
+    #[cfg(not(windows))]
     tokio::spawn(cloud_util::signal::handle_signals());
 
     // read consensus-config.toml
@@ -905,7 +906,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         genesis,
         task_sender,
         initial_sys_config,
-    );
+    )
+    .await;
 
     config.set_global();
     controller.init(current_block_number, sys_config).await;
