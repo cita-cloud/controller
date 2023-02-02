@@ -41,9 +41,9 @@ use cloud_util::{
     crypto::{hash_data, recover_signature},
     storage::load_data,
 };
-use log::warn;
 use prost::Message;
 use tokio::sync::OnceCell;
+use tracing::warn;
 
 pub static CONSENSUS_CLIENT: OnceCell<RetryClient<ConsensusServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
@@ -194,7 +194,7 @@ pub async fn assemble_proposal(mut block: Block, height: u64) -> Result<Vec<u8>,
 
     let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
     proposal.encode(&mut proposal_bytes).map_err(|_| {
-        log::warn!("encode proposal error");
+        warn!("encode proposal error");
         StatusCodeEnum::EncodeError
     })?;
 
@@ -548,7 +548,7 @@ macro_rules! impl_multicast {
             let mut handle_vec = Vec::new();
 
             for node in nodes {
-                log::debug!("multicast {} len: {} to {}", $name, buf.len(), node);
+                debug!("multicast {} len: {} to {}", $name, buf.len(), node);
 
                 let msg = cita_cloud_proto::network::NetworkMsg {
                     module: "controller".to_string(),
@@ -560,10 +560,10 @@ macro_rules! impl_multicast {
                 let handle = tokio::spawn(async move {
                     match $crate::util::network_client().send_msg(msg).await {
                         Ok(_) => {
-                            log::debug!("multicast {} ok", $name)
+                            debug!("multicast {} ok", $name)
                         }
                         Err(status) => {
-                            log::warn!("multicast {} to {} failed: {:?}", $name, node, status)
+                            warn!("multicast {} to {} failed: {:?}", $name, node, status)
                         }
                     }
                 });
@@ -587,7 +587,7 @@ macro_rules! impl_unicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::debug!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
+            debug!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -600,11 +600,9 @@ macro_rules! impl_unicast {
                 match $crate::util::network_client().send_msg(msg).await {
                     Ok(_) => {}
                     Err(status) => {
-                        log::warn!(
+                        warn!(
                             "unicast {} to origin[{}] failed: {:?}",
-                            $name,
-                            origin,
-                            status
+                            $name, origin, status
                         )
                     }
                 }
@@ -624,7 +622,7 @@ macro_rules! impl_broadcast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            log::debug!("broadcast {} buf len: {}", $name, buf.clone().len());
+            debug!("broadcast {} buf len: {}", $name, buf.clone().len());
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -637,7 +635,7 @@ macro_rules! impl_broadcast {
                 match $crate::util::network_client().broadcast(msg).await {
                     Ok(_) => {}
                     Err(status) => {
-                        log::warn!("broadcast {} failed: {:?}", $name, status)
+                        warn!("broadcast {} failed: {:?}", $name, status)
                     }
                 }
             })

@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use backtrace::Backtrace;
-use log::error;
 use std::{
     panic::{self, PanicInfo},
     process, thread,
 };
+use tracing::error;
 
 /// Set the panic hook
 pub fn set_panic_handler() {

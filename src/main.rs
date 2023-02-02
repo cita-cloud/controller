@@ -71,7 +71,6 @@ use cloud_util::{
 };
 use genesis::GenesisBlock;
 use health_check::HealthCheckServer;
-use log::{debug, error, info, warn};
 use prost::Message;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -79,6 +78,7 @@ use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::{sync::mpsc, time};
 use tonic::{transport::Server, Request, Response, Status};
+use tracing::{debug, error, info, warn};
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -656,10 +656,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let metrics_port = config.metrics_port;
     let metrics_buckets = config.metrics_buckets.clone();
 
-    // init log4rs
-    log4rs::init_file(&opts.log_file, Default::default())
-        .map_err(|e| println!("log init err: {e}"))
-        .unwrap();
+    // TODO init log
 
     init_grpc_client(&config);
 

@@ -26,6 +26,7 @@ use std::{
     collections::{HashMap, HashSet},
     iter::FromIterator,
 };
+use tracing::warn;
 
 #[derive(Clone)]
 pub struct Authentication {
@@ -188,7 +189,7 @@ impl Authentication {
                 if let Some(tx) = &normal_tx.transaction {
                     self.check_transaction(tx)?;
                     tx.encode(&mut tx_bytes).map_err(|_| {
-                        log::warn!("check_raw_tx: encode transaction failed");
+                        warn!("check_raw_tx: encode transaction failed");
                         StatusCodeEnum::EncodeError
                     })?;
                 } else {
@@ -224,7 +225,7 @@ impl Authentication {
                 if let Some(tx) = utxo_tx.transaction.as_ref() {
                     self.check_utxo_transaction(tx)?;
                     tx.encode(&mut tx_bytes).map_err(|_| {
-                        log::warn!("check_raw_tx: encode utxo failed");
+                        warn!("check_raw_tx: encode utxo failed");
                         StatusCodeEnum::EncodeError
                     })?;
                 } else {

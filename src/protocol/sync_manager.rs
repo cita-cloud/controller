@@ -14,9 +14,9 @@
 
 use crate::{config::ControllerConfig, node_manager::ChainStatus};
 use cita_cloud_proto::{blockchain::Block, common::Address};
-use log::info;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
+use tracing::info;
 
 #[derive(Clone)]
 pub struct SyncManager {
@@ -129,7 +129,7 @@ impl SyncManager {
             }
         }
         if !heights.is_empty() {
-            log::info!(
+            info!(
                 "sync: insert_blocks: heights = {:?} from node(0x{})",
                 heights,
                 hex::encode(&remote_address.address)
@@ -225,7 +225,7 @@ impl SyncManager {
             }
         };
 
-        log::info!(
+        info!(
             "SyncBlockRequest: start {}, end {}",
             current_height + 1,
             end_height

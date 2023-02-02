@@ -28,6 +28,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 #[derive(Debug)]
 pub struct ChainStatusWithFlag {
@@ -54,7 +55,7 @@ impl ChainStatus {
         h160_address_check(self.address.as_ref())?;
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
-            log::warn!(
+            warn!(
                 "ChainStatus check error: {:?}",
                 StatusCodeEnum::VersionOrIdCheckError
             );
@@ -71,7 +72,7 @@ impl ChainStatus {
             if get_block_hash(crypto_client(), compact_block.header.as_ref()).await?
                 != self.hash.clone().unwrap().hash
             {
-                log::warn!(
+                warn!(
                     "ChainStatus check_hash error: {:?}",
                     StatusCodeEnum::HashCheckError
                 );
@@ -102,7 +103,7 @@ impl ChainStatusInit {
 
         let mut chain_status_bytes = Vec::new();
         chain_status.encode(&mut chain_status_bytes).map_err(|_| {
-            log::warn!("ChainStatusInit: check: encode ChainStatus failed");
+            warn!("ChainStatusInit: check: encode ChainStatus failed");
             StatusCodeEnum::EncodeError
         })?;
 
@@ -230,7 +231,7 @@ impl NodeManager {
     }
 
     pub async fn delete_node(&self, na: &NodeAddress) -> Option<ChainStatus> {
-        log::info!("delete node: {}", na);
+        info!("delete node: {}", na);
         {
             let mut wr = self.nodes.write().await;
             wr.remove(na)
@@ -256,7 +257,7 @@ impl NodeManager {
         };
 
         if status.is_none() || status.unwrap().height < chain_status.height {
-            log::info!("update node: {}", na);
+            info!("update node: {}", na);
             let mut wr = self.nodes.write().await;
             Ok(wr.insert(*na, chain_status))
         } else {
@@ -318,7 +319,7 @@ impl NodeManager {
         &self,
         misbehavior_node: &NodeAddress,
     ) -> Option<MisbehaviorStatus> {
-        log::info!("delete misbehavior node: {}", misbehavior_node);
+        info!("delete misbehavior node: {}", misbehavior_node);
         {
             let mut wr = self.misbehavior_nodes.write().await;
             wr.remove(misbehavior_node)
@@ -334,11 +335,11 @@ impl NodeManager {
         }
 
         if self.in_ban_node(node).await {
-            log::warn!("set misbehavior node: the node have been banned");
+            warn!("set misbehavior node: the node have been banned");
             return Err(StatusCodeEnum::BannedNode);
         }
 
-        log::info!("set misbehavior node: {}", node);
+        info!("set misbehavior node: {}", node);
         if let Some(mis_status) = {
             let rd = self.misbehavior_nodes.read().await;
             rd.get(node).cloned()
@@ -358,7 +359,7 @@ impl NodeManager {
 
     #[allow(dead_code)]
     pub async fn delete_ban_node(&self, ban_node: &NodeAddress) -> bool {
-        log::info!("delete ban node: {}", ban_node);
+        info!("delete ban node: {}", ban_node);
         {
             let mut wr = self.ban_nodes.write().await;
             wr.remove(ban_node)
@@ -374,7 +375,7 @@ impl NodeManager {
             self.delete_misbehavior_node(node).await;
         }
 
-        log::info!("set ban node: {}", node);
+        info!("set ban node: {}", node);
         {
             let mut wr = self.ban_nodes.write().await;
             Ok(wr.insert(*node))
@@ -394,7 +395,7 @@ impl NodeManager {
             Ok(true)
         } else {
             let e = StatusCodeEnum::AddressOriginCheckError;
-            log::warn!("check_address_origin: node({}) {:?} ", node, e);
+            warn!("check_address_origin: node({}) {:?} ", node, e);
             Err(e)
         }
     }

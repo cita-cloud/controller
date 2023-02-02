@@ -49,13 +49,13 @@ use cloud_util::{
     unix_now,
     wal::Wal,
 };
-use log::{debug, info, warn};
 use prost::Message;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, RwLock},
     time,
 };
+use tracing::{debug, info, warn};
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
