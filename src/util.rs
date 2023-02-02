@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::config::{controller_config, ControllerConfig};
+use cita_cloud_proto::common::{proposal_enum, BftProposal, ProposalEnum};
 use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::{
     blockchain::{
@@ -162,6 +163,47 @@ pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCo
             StatusCodeEnum::ConsensusServerNotReady
         }
     }
+}
+
+pub async fn get_last_stateroot_proof(h: u64) -> Result<(Vec<u8>, Vec<u8>), StatusCodeEnum> {
+    let pre_h = h - 1;
+    let pre_height_bytes = pre_h.to_be_bytes().to_vec();
+
+    let state_root = load_data(
+        storage_client(),
+        i32::from(Regions::Result) as u32,
+        pre_height_bytes.clone(),
+    )
+    .await?;
+    let proof = load_data(
+        storage_client(),
+        i32::from(Regions::Proof) as u32,
+        pre_height_bytes.clone(),
+    )
+    .await?;
+
+    Ok((state_root, proof))
+}
+
+pub async fn assemble_proposal(mut block: Block, height: u64) -> Result<Vec<u8>, StatusCodeEnum> {
+    block.proof = Vec::new();
+    let (pre_state_root, pre_proof) = get_last_stateroot_proof(height).await?;
+
+    let proposal = ProposalEnum {
+        proposal: Some(proposal_enum::Proposal::BftProposal(BftProposal {
+            proposal: Some(block),
+            pre_state_root,
+            pre_proof,
+        })),
+    };
+
+    let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
+    proposal.encode(&mut proposal_bytes).map_err(|_| {
+        log::warn!("encode proposal error");
+        StatusCodeEnum::EncodeError
+    })?;
+
+    Ok(proposal_bytes)
 }
 
 pub async fn verify_tx_signature(
