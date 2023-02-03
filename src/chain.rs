@@ -93,7 +93,7 @@ impl Chain {
             interval.tick().await;
             // if init_block_number != 0, finalize genesis_block to test if executor is ready, in this case block_hash is wrong but doesn't matter
             match self
-                .finalize_block(self.genesis.genesis_block(), false)
+                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone(), false)
                 .await
             {
                 Ok(()) | Err(StatusCodeEnum::ReenterBlock) => {
@@ -213,7 +213,7 @@ impl Chain {
             self.candidates.insert(block_hash.clone());
 
             log::info!(
-                "add_proposal({}): block_hash 0x{} prevhash 0x{}",
+                "add_proposal({}): hash 0x{}, prevhash 0x{}",
                 height,
                 hex::encode(&block_hash),
                 hex::encode(&prevhash),
@@ -257,7 +257,12 @@ impl Chain {
     ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
     /// }
     /// ```
-    async fn finalize_block(&self, mut block: Block, wal_redo: bool) -> Result<(), StatusCodeEnum> {
+    async fn finalize_block(
+        &self,
+        mut block: Block,
+        block_hash: Vec<u8>,
+        wal_redo: bool,
+    ) -> Result<(), StatusCodeEnum> {
         let block_height = block
             .header
             .as_ref()
@@ -379,7 +384,11 @@ impl Chain {
             })
             .unwrap();
 
-        log::info!("finalize_block({}): success", block_height);
+        log::info!(
+            "finalize_block({}): success, hash: 0x{}",
+            block_height,
+            hex::encode(&block_hash)
+        );
 
         Ok(())
     }
@@ -442,7 +451,8 @@ impl Chain {
                 height,
                 hex::encode(&block_hash)
             );
-            self.finalize_block(full_block, false).await?;
+            self.finalize_block(full_block, block_hash.clone(), false)
+                .await?;
 
             self.block_number = height;
             self.block_hash = block_hash;
@@ -509,9 +519,7 @@ impl Chain {
         }
 
         if !wal_redo {
-            let mut block_for_check = block.clone();
-            block_for_check.state_root = vec![];
-            let proposal_bytes_for_check = assemble_proposal(block_for_check, height).await?;
+            let proposal_bytes_for_check = assemble_proposal(block.clone(), height).await?;
 
             let status = check_block(height, proposal_bytes_for_check, block.proof.clone()).await;
             if status != StatusCodeEnum::Success {
@@ -539,7 +547,8 @@ impl Chain {
             }
         }
 
-        self.finalize_block(block, wal_redo).await?;
+        self.finalize_block(block, block_hash.clone(), wal_redo)
+            .await?;
 
         self.block_number = height;
         self.block_hash = block_hash;

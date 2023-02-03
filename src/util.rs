@@ -165,7 +165,7 @@ pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCo
     }
 }
 
-pub async fn get_last_stateroot_proof(h: u64) -> Result<(Vec<u8>, Vec<u8>), StatusCodeEnum> {
+pub async fn get_last_stateroot(h: u64) -> Result<Vec<u8>, StatusCodeEnum> {
     let pre_h = h - 1;
     let pre_height_bytes = pre_h.to_be_bytes().to_vec();
 
@@ -175,25 +175,20 @@ pub async fn get_last_stateroot_proof(h: u64) -> Result<(Vec<u8>, Vec<u8>), Stat
         pre_height_bytes.clone(),
     )
     .await?;
-    let proof = load_data(
-        storage_client(),
-        i32::from(Regions::Proof) as u32,
-        pre_height_bytes.clone(),
-    )
-    .await?;
 
-    Ok((state_root, proof))
+    Ok(state_root)
 }
 
 pub async fn assemble_proposal(mut block: Block, height: u64) -> Result<Vec<u8>, StatusCodeEnum> {
-    block.proof = Vec::new();
-    let (pre_state_root, pre_proof) = get_last_stateroot_proof(height).await?;
+    block.proof.clear();
+    block.state_root.clear();
+    let pre_state_root = get_last_stateroot(height).await?;
 
     let proposal = ProposalEnum {
         proposal: Some(proposal_enum::Proposal::BftProposal(BftProposal {
             proposal: Some(block),
             pre_state_root,
-            pre_proof,
+            pre_proof: vec![],
         })),
     };
 

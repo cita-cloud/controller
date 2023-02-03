@@ -554,11 +554,17 @@ impl Controller {
             //if proposal is own, skip check_proposal
             if chain.is_own(&block_hash) && chain.is_candidate(&block_hash) {
                 info!(
-                    "chain_check_proposal({}): own proposal, skip check_proposal, hash: 0x{}",
+                    "chain_check_proposal({}): own proposal, skip check, hash: 0x{}",
                     block_height,
                     hex::encode(&block_hash)
                 );
                 return Ok(());
+            } else {
+                info!(
+                    "chain_check_proposal({}): remote proposal, hash: 0x{}",
+                    block_height,
+                    hex::encode(&block_hash)
+                );
             }
             //check height
             chain.check_proposal(block_height).await
@@ -569,7 +575,7 @@ impl Controller {
                 let sys_config = self.rpc_get_system_config().await?;
                 let pre_height_bytes = (block_height - 1).to_be_bytes().to_vec();
 
-                //check pre_state_root and pre_proof in proposal
+                //check pre_state_root in proposal
                 let pre_state_root = load_data(
                     storage_client(),
                     i32::from(Regions::Result) as u32,
@@ -584,31 +590,6 @@ impl Controller {
                             hex::encode(&pre_state_root),
                         );
                     return Err(StatusCodeEnum::ProposalCheckError);
-                }
-                let pre_proof = load_data(
-                    storage_client(),
-                    i32::from(Regions::Proof) as u32,
-                    pre_height_bytes.clone(),
-                )
-                .await?;
-                if bft_proposal.pre_proof != pre_proof {
-                    let pre_block = get_full_block(block_height - 1).await?;
-                    let pre_proposal = assemble_proposal(pre_block, block_height - 1).await?;
-                    let status = check_block(
-                        block_height - 1,
-                        pre_proposal,
-                        bft_proposal.pre_proof.clone(),
-                    )
-                    .await;
-                    if status != StatusCodeEnum::Success {
-                        warn!(
-                            "chain_check_proposal({}) failed!\npre_proof: 0x{}\nlocal pre_proof: 0x{}",
-                            block_height,
-                            hex::encode(&bft_proposal.pre_proof),
-                            hex::encode(&pre_proof),
-                        );
-                        return Err(StatusCodeEnum::ProposalCheckError);
-                    }
                 }
 
                 //check proposer in block header
