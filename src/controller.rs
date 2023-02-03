@@ -46,6 +46,7 @@ use cloud_util::{
     common::{get_tx_hash, h160_address_check},
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
+    unix_now,
     wal::Wal,
 };
 use log::{debug, info, warn};
@@ -285,11 +286,11 @@ impl Controller {
         };
         if res {
             if broadcast {
-                let mut f_polls = self.forward_pool.write().await;
-                f_polls.body.push(raw_tx);
-                if f_polls.body.len() > self.config.count_per_batch {
-                    self.broadcast_send_txs(f_polls.clone()).await;
-                    f_polls.body.clear();
+                let mut f_pool = self.forward_pool.write().await;
+                f_pool.body.push(raw_tx);
+                if f_pool.body.len() > self.config.count_per_batch {
+                    self.broadcast_send_txs(f_pool.clone()).await;
+                    f_pool.body.clear();
                 }
             }
             Ok(tx_hash)
@@ -526,75 +527,137 @@ impl Controller {
 
     pub async fn chain_check_proposal(
         &self,
-        height: u64,
+        proposal_height: u64,
         data: &[u8],
     ) -> Result<(), StatusCodeEnum> {
         let proposal_enum = ProposalEnum::decode(data).map_err(|_| {
             warn!("chain_check_proposal: decode ProposalEnum failed");
             StatusCodeEnum::DecodeError
         })?;
+        let Proposal::BftProposal(bft_proposal) =
+            proposal_enum.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
+        let block = &bft_proposal.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
+        let header = block
+            .header
+            .as_ref()
+            .ok_or(StatusCodeEnum::NoneBlockHeader)?;
+        let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
+        let block_height = header.height;
+
+        //check height is consistent
+        if block_height != proposal_height {
+            return Err(StatusCodeEnum::ProposalCheckError);
+        }
 
         let ret = {
             let chain = self.chain.read().await;
-            chain.check_proposal(height, proposal_enum.clone()).await
+            //if proposal is own, skip check_proposal
+            if chain.is_own(&block_hash) && chain.is_candidate(&block_hash) {
+                info!(
+                    "chain_check_proposal({}): own proposal, skip check, hash: 0x{}",
+                    block_height,
+                    hex::encode(&block_hash)
+                );
+                return Ok(());
+            } else {
+                info!(
+                    "chain_check_proposal({}): remote proposal, hash: 0x{}",
+                    block_height,
+                    hex::encode(&block_hash)
+                );
+            }
+            //check height
+            chain.check_proposal(block_height).await
         };
 
         match ret {
-            Ok(_) => match proposal_enum.proposal {
-                Some(Proposal::BftProposal(bft_proposal)) => {
-                    let sys_config = self.rpc_get_system_config().await?;
-                    let block = bft_proposal.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
+            Ok(_) => {
+                let sys_config = self.rpc_get_system_config().await?;
+                let pre_height_bytes = (block_height - 1).to_be_bytes().to_vec();
 
-                    //check proposer
-                    let proposer = &block
-                        .header
-                        .as_ref()
-                        .ok_or(StatusCodeEnum::NoneBlockHeader)?
-                        .proposer[..];
-                    if sys_config.validators.iter().all(|v| &v[..20] != proposer) {
-                        return Err(StatusCodeEnum::ProposalCheckError);
-                    }
-
-                    let mut total_quota = 0;
-                    for tx in &block
-                        .body
-                        .as_ref()
-                        .ok_or(StatusCodeEnum::NoneBlockBody)?
-                        .body
-                    {
-                        total_quota += get_tx_quota(tx)?;
-                        if total_quota > sys_config.quota_limit {
-                            return Err(StatusCodeEnum::QuotaUsedExceed);
-                        }
-                    }
-                    let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
-
-                    // todo re-enter check
-                    let res = {
-                        info!(
-                            "chain_check_proposal: add remote proposal(0x{})",
-                            hex::encode(&block_hash)
+                //check pre_state_root in proposal
+                let pre_state_root = load_data(
+                    storage_client(),
+                    i32::from(Regions::Result) as u32,
+                    pre_height_bytes.clone(),
+                )
+                .await?;
+                if bft_proposal.pre_state_root != pre_state_root {
+                    warn!(
+                            "chain_check_proposal({}) failed!\npre_state_root: 0x{}\nlocal pre_state_root: 0x{}",
+                            block_height,
+                            hex::encode(&bft_proposal.pre_state_root),
+                            hex::encode(&pre_state_root),
                         );
-                        let mut chain = self.chain.write().await;
-                        !chain.is_own(&block_hash)
-                            && chain
-                                .add_remote_proposal(&block_hash, block.clone())
-                                .await?
-                    };
-                    if res {
-                        self.batch_transactions(
-                            block.body.ok_or(StatusCodeEnum::NoneBlockBody)?,
-                            false,
-                        )
-                        .await?;
-
-                        info!("chain_check_proposal: finished");
-                    } else {
-                        info!("the proposal is own");
-                    }
+                    return Err(StatusCodeEnum::ProposalCheckError);
                 }
-                None => return Err(StatusCodeEnum::NoneProposal),
-            },
+
+                //check proposer in block header
+                let proposer = header.proposer.as_slice();
+                if sys_config.validators.iter().all(|v| &v[..20] != proposer) {
+                    return Err(StatusCodeEnum::ProposalCheckError);
+                }
+                //check timestamp in block header
+                let pre_compact_block_bytes = load_data(
+                    storage_client(),
+                    i32::from(Regions::CompactBlock) as u32,
+                    pre_height_bytes.clone(),
+                )
+                .await?;
+                let pre_header = CompactBlock::decode(pre_compact_block_bytes.as_slice())
+                    .map_err(|_| {
+                        warn!("get_compact_block: decode CompactBlock failed");
+                        StatusCodeEnum::DecodeError
+                    })?
+                    .header
+                    .ok_or(StatusCodeEnum::NoneBlockHeader)?;
+                let pre_timestamp = pre_header.timestamp;
+                let timestamp = header.timestamp;
+                if timestamp < pre_timestamp
+                    || timestamp > unix_now() + sys_config.block_interval as u64
+                {
+                    return Err(StatusCodeEnum::ProposalCheckError);
+                }
+
+                //check quota and transaction_root
+                let mut total_quota = 0;
+                let mut transantion_data = Vec::new();
+                for tx in &block
+                    .body
+                    .as_ref()
+                    .ok_or(StatusCodeEnum::NoneBlockBody)?
+                    .body
+                {
+                    total_quota += get_tx_quota(tx)?;
+                    if total_quota > sys_config.quota_limit {
+                        return Err(StatusCodeEnum::QuotaUsedExceed);
+                    }
+
+                    transantion_data.extend_from_slice(get_tx_hash(tx)?);
+                }
+                let transactions_root = hash_data(crypto_client(), &transantion_data).await?;
+                if transactions_root != header.transactions_root {
+                    return Err(StatusCodeEnum::ProposalCheckError);
+                }
+
+                //check transactions in block body
+                self.batch_transactions(
+                    block.body.to_owned().ok_or(StatusCodeEnum::NoneBlockBody)?,
+                    false,
+                )
+                .await?;
+
+                // add remote proposal
+                {
+                    let mut chain = self.chain.write().await;
+                    chain.add_remote_proposal(&block_hash).await;
+                }
+                info!(
+                    "chain_check_proposal({}): success, hash: 0x{}",
+                    block_height,
+                    hex::encode(&block_hash)
+                );
+            }
             Err(StatusCodeEnum::ProposalTooHigh) => {
                 self.broadcast_chain_status(self.get_status().await).await;
                 {

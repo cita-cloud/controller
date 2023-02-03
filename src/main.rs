@@ -531,7 +531,11 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
 
         match self.controller.chain_check_proposal(height, &data).await {
             Err(e) => {
-                warn!("rpc: check_proposal failed: {:?}", e.to_string());
+                warn!(
+                    "rpc: check_proposal({}) failed: {:?}",
+                    height,
+                    e.to_string()
+                );
                 Ok(Response::new(e.into()))
             }
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
@@ -560,7 +564,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 .await
                 .map_or_else(
                     |e| {
-                        warn!("rpc: commit_block failed: {:?}", e);
+                        warn!("rpc: commit_block({}) failed: {:?}", height, e);
 
                         let con_cfg = ConsensusConfiguration {
                             height,
@@ -997,12 +1001,12 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         loop {
             forward_interval.tick().await;
             {
-                let mut f_polls = controller_for_retransmission.forward_pool.write().await;
-                if !f_polls.body.is_empty() {
+                let mut f_pool = controller_for_retransmission.forward_pool.write().await;
+                if !f_pool.body.is_empty() {
                     controller_for_retransmission
-                        .broadcast_send_txs(f_polls.clone())
+                        .broadcast_send_txs(f_pool.clone())
                         .await;
-                    f_polls.body.clear();
+                    f_pool.body.clear();
                 }
             }
         }
