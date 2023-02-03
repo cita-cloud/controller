@@ -26,7 +26,6 @@ use std::{
     collections::{HashMap, HashSet},
     iter::FromIterator,
 };
-use tracing::warn;
 
 #[derive(Clone)]
 pub struct Authentication {

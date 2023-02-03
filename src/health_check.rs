@@ -20,7 +20,6 @@ use cita_cloud_proto::health_check::{
 use cloud_util::unix_now;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tonic::{Request, Response, Status};
-use tracing::info;
 
 // grpc server of Health Check
 pub struct HealthCheckServer {

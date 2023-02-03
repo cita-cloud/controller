@@ -16,7 +16,6 @@ use crate::{config::ControllerConfig, node_manager::ChainStatus};
 use cita_cloud_proto::{blockchain::Block, common::Address};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::info;
 
 #[derive(Clone)]
 pub struct SyncManager {

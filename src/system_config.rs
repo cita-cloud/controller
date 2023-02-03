@@ -24,7 +24,6 @@ use cloud_util::{clean_0x, common::read_toml, storage::load_data};
 use prost::Message;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
-use tracing::warn;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemConfigFile {

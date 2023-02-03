@@ -34,7 +34,6 @@ use cloud_util::{
 use prost::Message;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
-use tracing::{debug, info, instrument, warn};
 
 #[derive(Eq, PartialEq)]
 pub enum ChainStep {

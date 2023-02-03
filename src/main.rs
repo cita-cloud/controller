@@ -27,6 +27,9 @@ mod event;
 mod health_check;
 mod system_config;
 
+#[macro_use]
+extern crate tracing as logger;
+
 use crate::{
     chain::ChainStep,
     config::ControllerConfig,
@@ -78,7 +81,6 @@ use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::{sync::mpsc, time};
 use tonic::{transport::Server, Request, Response, Status};
-use tracing::{debug, error, info, instrument, warn};
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields

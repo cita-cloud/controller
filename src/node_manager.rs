@@ -28,7 +28,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
-use tracing::{info, warn};
 
 #[derive(Debug)]
 pub struct ChainStatusWithFlag {

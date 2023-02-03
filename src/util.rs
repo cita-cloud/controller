@@ -43,7 +43,6 @@ use cloud_util::{
 };
 use prost::Message;
 use tokio::sync::OnceCell;
-use tracing::warn;
 
 pub static CONSENSUS_CLIENT: OnceCell<RetryClient<ConsensusServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
