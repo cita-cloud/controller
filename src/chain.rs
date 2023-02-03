@@ -34,7 +34,7 @@ use cloud_util::{
 use prost::Message;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 #[derive(Eq, PartialEq)]
 pub enum ChainStep {
@@ -177,7 +177,7 @@ impl Chain {
 
             let tx_list = {
                 let mut pool = self.pool.write().await;
-                info!("add_proposal: tx poll len {}", pool.len());
+                info!("add_proposal({}): tx pool len: {}", height, pool.len());
                 pool.package(self.block_number + 1)
             };
 
@@ -214,7 +214,7 @@ impl Chain {
             self.candidates.insert(block_hash.clone());
 
             info!(
-                "proposal {} block_hash 0x{} prevhash 0x{}",
+                "add_proposal({}): hash 0x{}, prevhash 0x{}",
                 height,
                 hex::encode(&block_hash),
                 hex::encode(&prevhash),
@@ -256,6 +256,8 @@ impl Chain {
     ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
     /// }
     /// ```
+    ///
+    #[instrument(skip(self))]
     async fn finalize_block(
         &self,
         mut block: Block,
@@ -345,6 +347,7 @@ impl Chain {
             let mut pool = self.pool.write().await;
             auth.insert_tx_hash(block_height, tx_hash_list.clone());
             pool.update(&tx_hash_list);
+            info!("pool update");
         }
 
         // if state_root is empty record state_root to Block, else check it
@@ -372,6 +375,7 @@ impl Chain {
         )
         .await
         .is_success()?;
+        info!("store_data AllBlockData success");
 
         self.wal_log
             .write()
@@ -392,6 +396,7 @@ impl Chain {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub async fn commit_block(
         &mut self,
         height: u64,
@@ -599,6 +604,7 @@ impl Chain {
         self.own_proposal = None;
     }
 
+    #[instrument(skip(self))]
     async fn wal_save_message(
         &self,
         height: u64,

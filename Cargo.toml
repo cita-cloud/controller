@@ -20,10 +20,13 @@ hex = "0.4"
 backtrace = "0.3"
 tower = "0.4"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
-cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs.git" }
+cloud-util = { package = "cloud-util", branch = "tracer", git = "https://github.com/JLerxky/cloud-common-rs" }
+cita_cloud_proto = { package = "cita_cloud_proto", branch = "tracer", git = "https://github.com/JLerxky/cloud-common-rs" }
+
+[patch."https://github.com/cita-cloud/cloud-common-rs"]
+cloud-util = { package = "cloud-util", branch = "tracer", git = "https://github.com/JLerxky/cloud-common-rs" }
+cita_cloud_proto = { package = "cita_cloud_proto", branch = "tracer", git = "https://github.com/JLerxky/cloud-common-rs" }
 
 [build-dependencies]
 tonic-build = "0.8"

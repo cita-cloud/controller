@@ -55,7 +55,7 @@ use tokio::{
     sync::{mpsc, RwLock},
     time,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 #[derive(Debug)]
 pub enum ControllerMsgType {
@@ -672,6 +672,7 @@ impl Controller {
         ret
     }
 
+    #[instrument(skip(self))]
     pub async fn chain_commit_block(
         &self,
         height: u64,

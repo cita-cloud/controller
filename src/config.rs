@@ -14,7 +14,7 @@
 
 use std::{fs, path::Path};
 
-use cloud_util::common::read_toml;
+use cloud_util::{common::read_toml, tracer::LogConfig};
 use serde_derive::Deserialize;
 use tokio::sync::OnceCell;
 
@@ -94,6 +94,8 @@ pub struct ControllerConfig {
     pub buffer_duration: u64,
     /// danger mode
     pub is_danger: bool,
+    /// log config
+    pub log_config: LogConfig,
 }
 
 impl Default for ControllerConfig {
@@ -132,6 +134,7 @@ impl Default for ControllerConfig {
             count_per_batch: 1000,
             buffer_duration: 300,
             is_danger: false,
+            log_config: Default::default(),
         }
     }
 }

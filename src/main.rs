@@ -78,7 +78,7 @@ use std::net::AddrParseError;
 use std::time::Duration;
 use tokio::{sync::mpsc, time};
 use tonic::{transport::Server, Request, Response, Status};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 /// This doc string acts as a help message when the user runs '--help'
 /// as do all doc strings on fields
@@ -541,10 +541,12 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
         }
     }
+    #[instrument(skip(self))]
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
     ) -> Result<Response<ConsensusConfigurationResponse>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
@@ -656,7 +658,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let metrics_port = config.metrics_port;
     let metrics_buckets = config.metrics_buckets.clone();
 
-    // TODO init log
+    // init tracer
+    cloud_util::tracer::init_tracer(&config.node_address, &config.log_config)
+        .map_err(|e| println!("tracer init err: {e}"))
+        .unwrap();
 
     init_grpc_client(&config);
 
