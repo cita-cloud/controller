@@ -543,7 +543,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
         }
     }
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,

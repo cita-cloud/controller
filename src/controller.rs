@@ -671,7 +671,7 @@ impl Controller {
         ret
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn chain_commit_block(
         &self,
         height: u64,

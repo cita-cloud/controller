@@ -256,7 +256,7 @@ impl Chain {
     /// }
     /// ```
     ///
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn finalize_block(
         &self,
         mut block: Block,
@@ -395,7 +395,7 @@ impl Chain {
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     pub async fn commit_block(
         &mut self,
         height: u64,
@@ -603,7 +603,7 @@ impl Chain {
         self.own_proposal = None;
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn wal_save_message(
         &self,
         height: u64,
