@@ -10,6 +10,11 @@ node_address = 'example/node_address'
 storage_port = 50003
 validator_address = 'example/validator_address'
 
+[controller.log_config]
+rolling_file_path = "./logs"
+service_name = "controller"
+agent_endpoint = "127.0.0.1:6831"
+
 [genesis_block]
 timestamp = 123456
 prevhash = "0x010203040506"

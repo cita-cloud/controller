@@ -11,7 +11,7 @@ docker build -t citacloud/controller .
 
 ```shell
 $ controller -h
-controller 6.6.0
+controller 6.6.3
 Rivtower Technologies.
 This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
 
@@ -42,7 +42,6 @@ USAGE:
 OPTIONS:
     -c, --config <CONFIG_PATH>    Chain config path [default: config.toml]
     -h, --help                    Print help information
-    -l, --log <LOG_FILE>          log config path [default: controller-log4rs.yaml]
 ```
 
 参数：
@@ -61,6 +60,13 @@ OPTIONS:
     * `metrics_port` 是metrics信息的导出端口
     * `enable_metrics` 是metrics功能的开关
     * `node_address` 节点地址文件路径
+
+    其中`[controller.log_config]`段为微服务日志的配置：
+    * `max_level` 日志等级
+    * `filter` 日志过滤配置
+    * `service_name` 服务名称，用作日志文件名与日志采集的服务名称
+    * `rolling_file_path` 日志文件路径
+    * `agent_endpoint` jaeger 采集端地址
   
     其中`[genesis_block]`段配置创世块相关的信息：
     * `prevhash` 默认全0

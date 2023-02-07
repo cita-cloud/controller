@@ -104,9 +104,6 @@ struct RunOpts {
     /// Chain config path
     #[clap(short = 'c', long = "config", default_value = "config.toml")]
     config_path: String,
-    /// log config path
-    #[clap(short = 'l', long = "log", default_value = "controller-log4rs.yaml")]
-    log_file: String,
 }
 
 fn main() {
@@ -661,7 +658,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let metrics_buckets = config.metrics_buckets.clone();
 
     // init tracer
-    cloud_util::tracer::init_tracer(&config.node_address, &config.log_config)
+    cloud_util::tracer::init_tracer(config.node_address.clone(), &config.log_config)
         .map_err(|e| println!("tracer init err: {e}"))
         .unwrap();
 
