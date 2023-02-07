@@ -30,6 +30,8 @@ pub fn controller_config() -> &'static ControllerConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ControllerConfig {
+    /// domain
+    pub domain: String,
     /// controller service port
     pub controller_port: u16,
     /// network service port
@@ -101,6 +103,7 @@ pub struct ControllerConfig {
 impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
+            domain: Default::default(),
             controller_port: 50004,
             network_port: 50000,
             consensus_port: 50001,

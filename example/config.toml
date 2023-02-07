@@ -1,4 +1,5 @@
 [controller]
+domain = "test-chain-node1"
 consensus_port = 50001
 controller_port = 50004
 crypto_port = 50005

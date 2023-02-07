@@ -700,7 +700,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let metrics_buckets = config.metrics_buckets.clone();
 
     // init tracer
-    cloud_util::tracer::init_tracer(config.node_address.clone(), &config.log_config)
+    cloud_util::tracer::init_tracer(config.domain.clone(), &config.log_config)
         .map_err(|e| println!("tracer init err: {e}"))
         .unwrap();
 

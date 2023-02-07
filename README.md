@@ -50,6 +50,7 @@ OPTIONS:
     参见示例`example/config.toml`。
 
     其中`[controller]`段为微服务本身的配置：
+    * `domain` 节点的域名
     * `consensus_port` 共识微服务的gRPC端口
     * `controller_port` 控制器微服务的gRPC端口
     * `executor_port` 执行器微服务的gRPC端口
@@ -83,7 +84,7 @@ OPTIONS:
 
 
 ```shell
-$ controller run -c example/config.toml -l controller-log4rs.yaml
+$ controller run -c example/config.toml
 2022-03-09T11:53:21.015943+08:00 INFO controller - grpc port of this service: 50004
 2022-03-09T11:53:24.023215+08:00 INFO controller - register network msg handler success!
 2022-03-09T11:53:24.025524+08:00 INFO controller - crypto(sm) is ready!
