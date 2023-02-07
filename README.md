@@ -80,16 +80,7 @@ OPTIONS:
     * `version` 协议版本号
     * `block_limit` 交易查重历史区块上限
     * `quota_limit` 每个区块打包的交易`quota`上限
-  
 
-2. 日志配置文件。
-
-    参见示例`controller-log4rs.yaml`。
-
-    其中：
-
-    * `level` 为日志等级。可选项有：`Error`，`Warn`，`Info`，`Debug`，`Trace`，默认为`Info`。
-    * `appenders` 为输出选项，类型为一个数组。可选项有：标准输出(`stdout`)和滚动的日志文件（`journey-service`），默认为同时输出到两个地方。
 
 ```shell
 $ controller run -c example/config.toml -l controller-log4rs.yaml
