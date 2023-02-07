@@ -517,6 +517,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             },
         )
     }
+
     async fn check_proposal(
         &self,
         request: Request<Proposal>,
@@ -540,13 +541,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
         }
     }
-    #[instrument(skip_all)]
+
+    #[instrument(skip(self))]
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
     ) -> Result<Response<ConsensusConfigurationResponse>, Status> {
         cloud_util::tracer::set_parent(&request);
-        debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
         let proposal = proposal_with_proof.proposal.unwrap();
