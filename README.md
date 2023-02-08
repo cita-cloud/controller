@@ -10,21 +10,15 @@ docker build -t citacloud/controller .
 ## 使用方法
 
 ```shell
-$ controller -h
-controller 6.6.3
-Rivtower Technologies.
-This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
+$ controller run -h
+run this service
 
-USAGE:
-    controller <SUBCOMMAND>
+Usage: controller run [OPTIONS]
 
-OPTIONS:
-    -h, --help       Print help information
-    -V, --version    Print version information
+Options:
+  -c, --config <CONFIG_PATH>  Chain config path [default: config.toml]
+  -h, --help                  Print help
 
-SUBCOMMANDS:
-    help    Print this message or the help of the given subcommand(s)
-    run     run this service
 ```
 
 ### controller run
