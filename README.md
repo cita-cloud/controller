@@ -10,21 +10,15 @@ docker build -t citacloud/controller .
 ## 使用方法
 
 ```shell
-$ controller -h
-controller 6.6.0
-Rivtower Technologies.
-This doc string acts as a help message when the user runs '--help' as do all doc strings on fields
+$ controller run -h
+run this service
 
-USAGE:
-    controller <SUBCOMMAND>
+Usage: controller run [OPTIONS]
 
-OPTIONS:
-    -h, --help       Print help information
-    -V, --version    Print version information
+Options:
+  -c, --config <CONFIG_PATH>  Chain config path [default: config.toml]
+  -h, --help                  Print help
 
-SUBCOMMANDS:
-    help    Print this message or the help of the given subcommand(s)
-    run     run this service
 ```
 
 ### controller run
@@ -42,7 +36,6 @@ USAGE:
 OPTIONS:
     -c, --config <CONFIG_PATH>    Chain config path [default: config.toml]
     -h, --help                    Print help information
-    -l, --log <LOG_FILE>          log config path [default: controller-log4rs.yaml]
 ```
 
 参数：
@@ -51,6 +44,7 @@ OPTIONS:
     参见示例`example/config.toml`。
 
     其中`[controller]`段为微服务本身的配置：
+    * `domain` 节点的域名
     * `consensus_port` 共识微服务的gRPC端口
     * `controller_port` 控制器微服务的gRPC端口
     * `executor_port` 执行器微服务的gRPC端口
@@ -61,6 +55,13 @@ OPTIONS:
     * `metrics_port` 是metrics信息的导出端口
     * `enable_metrics` 是metrics功能的开关
     * `node_address` 节点地址文件路径
+
+    其中`[controller.log_config]`段为微服务日志的配置：
+    * `max_level` 日志等级
+    * `filter` 日志过滤配置
+    * `service_name` 服务名称，用作日志文件名与日志采集的服务名称
+    * `rolling_file_path` 日志文件路径
+    * `agent_endpoint` jaeger 采集端地址
   
     其中`[genesis_block]`段配置创世块相关的信息：
     * `prevhash` 默认全0
@@ -74,19 +75,10 @@ OPTIONS:
     * `version` 协议版本号
     * `block_limit` 交易查重历史区块上限
     * `quota_limit` 每个区块打包的交易`quota`上限
-  
 
-2. 日志配置文件。
-
-    参见示例`controller-log4rs.yaml`。
-
-    其中：
-
-    * `level` 为日志等级。可选项有：`Error`，`Warn`，`Info`，`Debug`，`Trace`，默认为`Info`。
-    * `appenders` 为输出选项，类型为一个数组。可选项有：标准输出(`stdout`)和滚动的日志文件（`journey-service`），默认为同时输出到两个地方。
 
 ```shell
-$ controller run -c example/config.toml -l controller-log4rs.yaml
+$ controller run -c example/config.toml
 2022-03-09T11:53:21.015943+08:00 INFO controller - grpc port of this service: 50004
 2022-03-09T11:53:24.023215+08:00 INFO controller - register network msg handler success!
 2022-03-09T11:53:24.025524+08:00 INFO controller - crypto(sm) is ready!

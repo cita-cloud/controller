@@ -18,7 +18,6 @@ use cita_cloud_proto::health_check::{
     HealthCheckResponse,
 };
 use cloud_util::unix_now;
-use log::info;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tonic::{Request, Response, Status};
 

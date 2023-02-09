@@ -27,6 +27,9 @@ mod event;
 mod health_check;
 mod system_config;
 
+#[macro_use]
+extern crate tracing as logger;
+
 use crate::{
     chain::ChainStep,
     config::ControllerConfig,
@@ -71,7 +74,6 @@ use cloud_util::{
 };
 use genesis::GenesisBlock;
 use health_check::HealthCheckServer;
-use log::{debug, error, info, warn};
 use prost::Message;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -102,9 +104,6 @@ struct RunOpts {
     /// Chain config path
     #[clap(short = 'c', long = "config", default_value = "config.toml")]
     config_path: String,
-    /// log config path
-    #[clap(short = 'l', long = "log", default_value = "controller-log4rs.yaml")]
-    log_file: String,
 }
 
 fn main() {
@@ -136,10 +135,12 @@ impl RPCServer {
 
 #[tonic::async_trait]
 impl RpcService for RPCServer {
+    #[instrument(skip_all)]
     async fn get_block_number(
         &self,
         request: Request<Flag>,
     ) -> Result<Response<BlockNumber>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_number request: {:?}", request);
 
         let flag = request.into_inner().flag;
@@ -155,10 +156,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn send_raw_transaction(
         &self,
         request: Request<RawTransaction>,
     ) -> Result<Response<Hash>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("send_raw_transaction request: {:?}", request);
 
         let raw_tx = request.into_inner();
@@ -175,10 +178,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn send_raw_transactions(
         &self,
         request: Request<RawTransactions>,
     ) -> Result<Response<Hashes>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("send_raw_transactions request: {:?}", request);
 
         let raw_txs = request.into_inner();
@@ -195,10 +200,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_block_by_hash(
         &self,
         request: Request<Hash>,
     ) -> Result<Response<CompactBlock>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_by_hash request: {:?}", request);
 
         let hash = request.into_inner();
@@ -215,10 +222,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_height_by_hash(
         &self,
         request: Request<Hash>,
     ) -> Result<Response<BlockNumber>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_height_by_hash request: {:?}", request);
 
         let hash = request.into_inner().hash;
@@ -235,10 +244,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_block_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<CompactBlock>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_by_number request: {:?}", request);
 
         let block_number = request.into_inner().block_number;
@@ -255,10 +266,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_state_root_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<StateRoot>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_state_root_by_number request: {:?}", request);
 
         let height: u64 = request.into_inner().block_number;
@@ -275,10 +288,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_proof_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<Proof>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_proof_by_number request: {:?}", request);
 
         let height: u64 = request.into_inner().block_number;
@@ -295,10 +310,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_block_detail_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<tonic::Response<Block>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_detail_by_number request: {:?}", request);
 
         let block_number = request.into_inner().block_number;
@@ -315,10 +332,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_transaction(
         &self,
         request: Request<Hash>,
     ) -> Result<tonic::Response<RawTransaction>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_by_number request: {:?}", request);
 
         let hash = request.into_inner();
@@ -335,10 +354,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_system_config(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<SystemConfig>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_system_config request: {:?}", request);
 
         self.controller.rpc_get_system_config().await.map_or_else(
@@ -350,10 +371,12 @@ impl RpcService for RPCServer {
         )
     }
 
+    #[instrument(skip_all)]
     async fn get_system_config_by_number(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<Response<SystemConfig>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_system_config_by_number request: {:?}", request);
 
         let height: u64 = request.into_inner().block_number;
@@ -389,10 +412,12 @@ impl RpcService for RPCServer {
         Ok(reply)
     }
 
+    #[instrument(skip_all)]
     async fn get_block_hash(
         &self,
         request: Request<BlockNumber>,
     ) -> Result<Response<Hash>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_block_hash request: {:?}", request);
 
         let block_number = request.into_inner().block_number;
@@ -409,10 +434,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_transaction_block_number(
         &self,
         request: Request<Hash>,
     ) -> Result<Response<BlockNumber>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_transaction_block_number request: {:?}", request);
 
         let tx_hash = request.into_inner().hash;
@@ -429,10 +456,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn get_transaction_index(
         &self,
         request: Request<Hash>,
     ) -> Result<Response<TransactionIndex>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_transaction_index request: {:?}", request);
 
         let tx_hash = request.into_inner();
@@ -449,10 +478,12 @@ impl RpcService for RPCServer {
             )
     }
 
+    #[instrument(skip_all)]
     async fn add_node(
         &self,
         request: Request<NodeNetInfo>,
     ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("add_node request: {:?}", request);
 
         let info = request.into_inner();
@@ -462,10 +493,12 @@ impl RpcService for RPCServer {
         Ok(reply)
     }
 
+    #[instrument(skip_all)]
     async fn get_node_status(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<NodeStatus>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_node_status request: {:?}", request);
 
         Ok(Response::new(
@@ -495,10 +528,12 @@ impl Consensus2ControllerServer {
 
 #[tonic::async_trait]
 impl Consensus2ControllerService for Consensus2ControllerServer {
+    #[instrument(skip_all)]
     async fn get_proposal(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<ProposalResponse>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
@@ -518,10 +553,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             },
         )
     }
+
+    #[instrument(skip_all)]
     async fn check_proposal(
         &self,
         request: Request<Proposal>,
     ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("check_proposal request: {:?}", request);
 
         let proposal = request.into_inner();
@@ -541,10 +579,13 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
         }
     }
+
+    #[instrument(skip_all)]
     async fn commit_block(
         &self,
         request: Request<ProposalWithProof>,
     ) -> Result<Response<ConsensusConfigurationResponse>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
@@ -617,10 +658,12 @@ impl ControllerNetworkMsgHandlerServer {
 
 #[tonic::async_trait]
 impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
+    #[instrument(skip_all)]
     async fn process_network_msg(
         &self,
         request: Request<NetworkMsg>,
     ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
+        cloud_util::tracer::set_parent(&request);
         debug!("process_network_msg request: {:?}", request);
 
         let msg = request.into_inner();
@@ -656,9 +699,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let metrics_port = config.metrics_port;
     let metrics_buckets = config.metrics_buckets.clone();
 
-    // init log4rs
-    log4rs::init_file(&opts.log_file, Default::default())
-        .map_err(|e| println!("log init err: {e}"))
+    // init tracer
+    cloud_util::tracer::init_tracer(config.domain.clone(), &config.log_config)
+        .map_err(|e| println!("tracer init err: {e}"))
         .unwrap();
 
     init_grpc_client(&config);

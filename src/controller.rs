@@ -49,7 +49,6 @@ use cloud_util::{
     unix_now,
     wal::Wal,
 };
-use log::{debug, info, warn};
 use prost::Message;
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -672,6 +671,7 @@ impl Controller {
         ret
     }
 
+    #[instrument(skip_all)]
     pub async fn chain_commit_block(
         &self,
         height: u64,

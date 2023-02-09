@@ -1,4 +1,5 @@
 [controller]
+domain = "test-chain-node1"
 consensus_port = 50001
 controller_port = 50004
 crypto_port = 50005
@@ -9,6 +10,13 @@ network_port = 50000
 node_address = 'example/node_address'
 storage_port = 50003
 validator_address = 'example/validator_address'
+
+[controller.log_config]
+max_level = "info"
+filter = "info"
+# rolling_file_path = "./logs"
+service_name = "controller"
+# agent_endpoint = "127.0.0.1:6831"
 
 [genesis_block]
 timestamp = 123456

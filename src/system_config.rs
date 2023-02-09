@@ -21,7 +21,6 @@ use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
 use cita_cloud_proto::status_code::StatusCodeEnum;
 use cita_cloud_proto::storage::Regions;
 use cloud_util::{clean_0x, common::read_toml, storage::load_data};
-use log::warn;
 use prost::Message;
 use serde_derive::Deserialize;
 use std::collections::HashMap;

@@ -14,7 +14,7 @@
 
 use std::{fs, path::Path};
 
-use cloud_util::common::read_toml;
+use cloud_util::{common::read_toml, tracer::LogConfig};
 use serde_derive::Deserialize;
 use tokio::sync::OnceCell;
 
@@ -30,6 +30,8 @@ pub fn controller_config() -> &'static ControllerConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ControllerConfig {
+    /// domain
+    pub domain: String,
     /// controller service port
     pub controller_port: u16,
     /// network service port
@@ -94,11 +96,14 @@ pub struct ControllerConfig {
     pub buffer_duration: u64,
     /// danger mode
     pub is_danger: bool,
+    /// log config
+    pub log_config: LogConfig,
 }
 
 impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
+            domain: Default::default(),
             controller_port: 50004,
             network_port: 50000,
             consensus_port: 50001,
@@ -132,6 +137,7 @@ impl Default for ControllerConfig {
             count_per_batch: 1000,
             buffer_duration: 300,
             is_danger: false,
+            log_config: Default::default(),
         }
     }
 }
