@@ -545,6 +545,10 @@ impl Controller {
 
         //check height is consistent
         if block_height != proposal_height {
+            warn!(
+                "chain_check_proposal({}) failed! proposal_height: {}, block_height: {}",
+                proposal_height, proposal_height, block_height,
+            );
             return Err(StatusCodeEnum::ProposalCheckError);
         }
 
@@ -583,7 +587,7 @@ impl Controller {
                 .await?;
                 if bft_proposal.pre_state_root != pre_state_root {
                     warn!(
-                            "chain_check_proposal({}) failed!\npre_state_root: 0x{}\nlocal pre_state_root: 0x{}",
+                            "chain_check_proposal({}) failed! pre_state_root: 0x{}, local pre_state_root: 0x{}",
                             block_height,
                             hex::encode(&bft_proposal.pre_state_root),
                             hex::encode(&pre_state_root),
@@ -594,6 +598,16 @@ impl Controller {
                 //check proposer in block header
                 let proposer = header.proposer.as_slice();
                 if sys_config.validators.iter().all(|v| &v[..20] != proposer) {
+                    warn!(
+                        "chain_check_proposal({}) failed! proposer: {} not in validators {:?}",
+                        block_height,
+                        hex::encode(proposer),
+                        sys_config
+                            .validators
+                            .iter()
+                            .map(hex::encode)
+                            .collect::<Vec<String>>(),
+                    );
                     return Err(StatusCodeEnum::ProposalCheckError);
                 }
                 //check timestamp in block header
@@ -610,11 +624,14 @@ impl Controller {
                     })?
                     .header
                     .ok_or(StatusCodeEnum::NoneBlockHeader)?;
-                let pre_timestamp = pre_header.timestamp;
                 let timestamp = header.timestamp;
-                if timestamp < pre_timestamp
-                    || timestamp > unix_now() + sys_config.block_interval as u64
-                {
+                let left_bounds = pre_header.timestamp;
+                let right_bounds = unix_now() + sys_config.block_interval as u64;
+                if timestamp < left_bounds || timestamp > right_bounds {
+                    warn!(
+                        "chain_check_proposal({}) failed! timestamp: {} must be in range of {} - {}",
+                        block_height, timestamp, left_bounds, right_bounds,
+                    );
                     return Err(StatusCodeEnum::ProposalCheckError);
                 }
 
@@ -636,6 +653,10 @@ impl Controller {
                 }
                 let transactions_root = hash_data(crypto_client(), &transantion_data).await?;
                 if transactions_root != header.transactions_root {
+                    warn!(
+                        "chain_check_proposal({}) failed! header transactions_root: {}, controller calculate: {}",
+                        block_height, hex::encode(&header.transactions_root), hex::encode(&transactions_root),
+                    );
                     return Err(StatusCodeEnum::ProposalCheckError);
                 }
 
@@ -652,7 +673,7 @@ impl Controller {
                     chain.add_remote_proposal(&block_hash).await;
                 }
                 info!(
-                    "chain_check_proposal({}): success, hash: 0x{}",
+                    "chain_check_proposal({}): success, block_hash: 0x{}",
                     block_height,
                     hex::encode(&block_hash)
                 );
