@@ -626,7 +626,7 @@ impl Controller {
                     .ok_or(StatusCodeEnum::NoneBlockHeader)?;
                 let timestamp = header.timestamp;
                 let left_bounds = pre_header.timestamp;
-                let right_bounds = unix_now() + sys_config.block_interval as u64;
+                let right_bounds = unix_now() + sys_config.block_interval as u64 * 1000;
                 if timestamp < left_bounds || timestamp > right_bounds {
                     warn!(
                         "chain_check_proposal({}) failed! timestamp: {} must be in range of {} - {}",
