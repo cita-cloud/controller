@@ -542,10 +542,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                     proposal: None,
                 }))
             },
-            |(height, data, status)| {
+            |(height, data)| {
                 let proposal = Proposal { height, data };
                 Ok(Response::new(ProposalResponse {
-                    status: Some(status.into()),
+                    status: Some(StatusCodeEnum::Success.into()),
                     proposal: Some(proposal),
                 }))
             },
