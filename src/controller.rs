@@ -507,9 +507,7 @@ impl Controller {
         Ok(node_status)
     }
 
-    pub async fn chain_get_proposal(
-        &self,
-    ) -> Result<(u64, Vec<u8>, StatusCodeEnum), StatusCodeEnum> {
+    pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCodeEnum> {
         if self.get_sync_state().await {
             return Err(StatusCodeEnum::NodeInSyncMode);
         }
@@ -555,7 +553,7 @@ impl Controller {
         let ret = {
             let chain = self.chain.read().await;
             //if proposal is own, skip check_proposal
-            if chain.is_own(&block_hash) && chain.is_candidate(&block_hash) {
+            if chain.is_own(data) && chain.is_candidate(&block_hash) {
                 info!(
                     "chain_check_proposal({}): own proposal, skip check, hash: 0x{}",
                     block_height,

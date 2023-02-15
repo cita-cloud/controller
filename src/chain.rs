@@ -50,7 +50,7 @@ pub struct Chain {
     // key is block_hash
     candidates: HashSet<Vec<u8>>,
 
-    own_proposal: Option<(u64, Vec<u8>, Block)>,
+    own_proposal: Option<(u64, Vec<u8>)>,
 
     pool: Arc<RwLock<Pool>>,
 
@@ -115,33 +115,9 @@ impl Chain {
         auth.init(init_block_number).await;
     }
 
-    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>, StatusCodeEnum), StatusCodeEnum> {
-        if let Some((h, _, block)) = self.own_proposal.clone() {
-            // check again avoid bad proposal
-            {
-                let auth = self.auth.read().await;
-                auth.check_transactions(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)
-                    .map_err(|e| {
-                        warn!("get_proposal: check_transactions failed: {:?}", e);
-                        e
-                    })?;
-            }
-
-            let status = {
-                if block
-                    .body
-                    .as_ref()
-                    .ok_or(StatusCodeEnum::NoneBlockBody)?
-                    .body
-                    .is_empty()
-                {
-                    StatusCodeEnum::NoTransaction
-                } else {
-                    StatusCodeEnum::Success
-                }
-            };
-
-            Ok((h, assemble_proposal(block, h).await?, status))
+    pub async fn get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCodeEnum> {
+        if let Some(proposal) = self.own_proposal.clone() {
+            Ok(proposal)
         } else {
             Err(StatusCodeEnum::NoCandidate)
         }
@@ -155,9 +131,9 @@ impl Chain {
         self.candidates.contains(block_hash)
     }
 
-    pub fn is_own(&self, block_hash: &[u8]) -> bool {
-        if let Some((_, hash, _)) = &self.own_proposal {
-            hash == block_hash
+    pub fn is_own(&self, proposal_to_check: &[u8]) -> bool {
+        if let Some((_, proposal_data)) = &self.own_proposal {
+            proposal_data == proposal_to_check
         } else {
             false
         }
@@ -170,6 +146,9 @@ impl Chain {
     ) -> Result<(), StatusCodeEnum> {
         if self.next_step(global_status).await == ChainStep::SyncStep {
             Err(StatusCodeEnum::NodeInSyncMode)
+        } else if self.own_proposal.is_some() {
+            // already have own proposal
+            Ok(())
         } else {
             let prevhash = self.block_hash.clone();
             let height = self.block_number + 1;
@@ -209,7 +188,8 @@ impl Chain {
 
             let block_hash = hash_data(crypto_client(), &block_header_bytes).await?;
 
-            self.own_proposal = Some((height, block_hash.clone(), full_block.clone()));
+            self.own_proposal =
+                Some((height, assemble_proposal(full_block.clone(), height).await?));
             self.candidates.insert(block_hash.clone());
 
             info!(
