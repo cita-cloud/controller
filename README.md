@@ -10,15 +10,19 @@ docker build -t citacloud/controller .
 ## 使用方法
 
 ```shell
-$ controller run -h
-run this service
+$ controller -h
+controller 6.6.3
+Rivtower Technologies <contact@rivtower.com>
 
-Usage: controller run [OPTIONS]
+Usage: controller <COMMAND>
+
+Commands:
+  run   run this service
+  help  Print this message or the help of the given subcommand(s)
 
 Options:
-  -c, --config <CONFIG_PATH>  Chain config path [default: config.toml]
-  -h, --help                  Print help
-
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 ### controller run
