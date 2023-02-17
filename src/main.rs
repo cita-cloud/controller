@@ -44,8 +44,8 @@ use crate::{
         LOCK_ID_VERSION,
     },
     util::{
-        crypto_client, get_full_block, get_hash_in_range, init_grpc_client, load_data_maybe_empty,
-        reconfigure, storage_client,
+        clap_about, crypto_client, get_full_block, get_hash_in_range, init_grpc_client,
+        load_data_maybe_empty, reconfigure, storage_client,
     },
 };
 use cita_cloud_proto::status_code::StatusCodeEnum;
@@ -82,10 +82,8 @@ use std::time::Duration;
 use tokio::{sync::mpsc, time};
 use tonic::{transport::Server, Request, Response, Status};
 
-/// This doc string acts as a help message when the user runs '--help'
-/// as do all doc strings on fields
 #[derive(Parser)]
-#[clap(version, author)]
+#[clap(version, about = clap_about())]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
