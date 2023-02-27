@@ -243,19 +243,6 @@ impl Chain {
         Ok(())
     }
 
-    /// ### ReenterBlock needs to be handled and can only be ignored if wal_redo is true
-    /// ```
-    /// match executed_block_status {
-    ///     StatusCodeEnum::Success => {}
-    ///     StatusCodeEnum::ReenterBlock => {
-    ///        if !wal_redo {
-    ///            return Err(StatusCodeEnum::ReenterBlock);
-    ///        }
-    ///    }
-    ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
-    /// }
-    /// ```
-    ///
     #[instrument(skip_all)]
     async fn finalize_block(
         &self,
@@ -333,10 +320,16 @@ impl Chain {
 
         match executed_blocks_status {
             StatusCodeEnum::Success => {}
+            StatusCodeEnum::ReenterBlock => {
+                warn!(
+                    "ReenterBlock({}): status: {}, state_root: 0x{}",
+                    block_height,
+                    executed_blocks_status,
+                    hex::encode(&executed_blocks_hash)
+                );
+            }
             status_code => {
-                if status_code != StatusCodeEnum::ReenterBlock || !wal_redo {
-                    return Err(status_code);
-                }
+                return Err(status_code);
             }
         }
 
