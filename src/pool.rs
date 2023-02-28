@@ -55,6 +55,7 @@ fn get_raw_tx_hash(raw_tx: &RawTransaction) -> &[u8] {
 
 pub struct Pool {
     txns: HashSet<Txn>,
+    pool_quota: u64,
     block_limit: u64,
     quota_limit: u64,
 }
@@ -63,22 +64,35 @@ impl Pool {
     pub fn new(block_limit: u64, quota_limit: u64) -> Self {
         Pool {
             txns: HashSet::new(),
+            pool_quota: 0,
             block_limit,
             quota_limit,
         }
     }
 
-    pub fn enqueue(&mut self, raw_tx: RawTransaction) -> bool {
-        self.txns.insert(Txn(raw_tx))
+    pub fn insert(&mut self, raw_tx: RawTransaction) -> bool {
+        let tx_quota = get_tx_quota(&raw_tx).unwrap();
+        let ret = self.txns.insert(Txn(raw_tx));
+        if ret {
+            self.pool_quota += tx_quota;
+        }
+        ret
     }
 
-    pub fn update(&mut self, tx_hash_list: &[Vec<u8>]) {
+    pub fn remove(&mut self, tx_hash_list: &[Vec<u8>]) {
         for tx_hash in tx_hash_list {
+            let tx_quota = self
+                .txns
+                .get(tx_hash.as_slice())
+                .map(|txn| get_tx_quota(&txn.0).unwrap());
+            if let Some(tx_quota) = tx_quota {
+                self.pool_quota -= tx_quota;
+            }
             self.txns.remove(tx_hash.as_slice());
         }
     }
 
-    pub fn package(&mut self, height: u64) -> Vec<RawTransaction> {
+    pub fn package(&mut self, height: u64) -> (Vec<RawTransaction>, u64) {
         let block_limit = self.block_limit;
         self.txns
             .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
@@ -95,11 +109,11 @@ impl Pool {
                 }
             }
         }
-        pack_tx
+        (pack_tx, self.quota_limit - quota_limit)
     }
 
-    pub fn len(&self) -> usize {
-        self.txns.len()
+    pub fn pool_status(&self) -> (usize, u64) {
+        (self.txns.len(), self.pool_quota)
     }
 
     pub fn pool_get_tx(&self, tx_hash: &[u8]) -> Option<RawTransaction> {

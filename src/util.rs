@@ -142,10 +142,14 @@ pub fn crypto_client() -> RetryClient<CryptoServiceClient<InterceptedSvc>> {
 }
 
 pub async fn reconfigure(consensus_config: ConsensusConfiguration) -> StatusCodeEnum {
-    match consensus_client().reconfigure(consensus_config).await {
+    let height = consensus_config.height;
+    match consensus_client()
+        .reconfigure(consensus_config.clone())
+        .await
+    {
         Ok(response) => StatusCodeEnum::from(response),
         Err(e) => {
-            warn!("reconfigure failed: {}", e.to_string());
+            warn!("reconfigure({}) failed: {}", height, e.to_string());
             StatusCodeEnum::ConsensusServerNotReady
         }
     }
@@ -158,7 +162,7 @@ pub async fn check_block(height: u64, data: Vec<u8>, proof: Vec<u8>) -> StatusCo
     match consensus_client().check_block(pp).await {
         Ok(code) => StatusCodeEnum::from(code),
         Err(e) => {
-            warn!("check_block failed: {}", e.to_string());
+            warn!("check block({}) failed: {}", height, e.to_string());
             StatusCodeEnum::ConsensusServerNotReady
         }
     }
@@ -193,7 +197,7 @@ pub async fn assemble_proposal(mut block: Block, height: u64) -> Result<Vec<u8>,
 
     let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
     proposal.encode(&mut proposal_bytes).map_err(|_| {
-        warn!("encode proposal error");
+        warn!("encode proposal({}) failed: buffer not sufficient", height);
         StatusCodeEnum::EncodeError
     })?;
 
@@ -207,9 +211,10 @@ pub async fn verify_tx_signature(
     let config = controller_config();
     if signature.len() != config.signature_len as usize {
         warn!(
-            "signature len is not correct, item len: {}, correct len: {}",
+            "verify signature failed: get signature len: {}, correct len: {}. hash: 0x{}",
             signature.len(),
-            config.signature_len
+            config.signature_len,
+            hex::encode(tx_hash),
         );
         Err(StatusCodeEnum::SigLenError)
     } else {
@@ -221,18 +226,19 @@ pub async fn verify_tx_hash(tx_hash: &[u8], tx_bytes: &[u8]) -> Result<(), Statu
     let config = controller_config();
     if tx_hash.len() != config.hash_len as usize {
         warn!(
-            "tx_hash len is not correct, item len: {}, correct len: {}",
+            "verify tx hash failed: get hash len: {}, correct len: {}. hash: 0x{}",
             tx_hash.len(),
-            config.hash_len
+            config.hash_len,
+            hex::encode(tx_hash),
         );
         Err(StatusCodeEnum::HashLenError)
     } else {
         let computed_hash = hash_data(crypto_client(), tx_bytes).await?;
         if tx_hash != computed_hash {
             warn!(
-                "tx_hash is not consistent, item hash: {}, computed hash: {}",
+                "verify tx hash failed: get hash: 0x{}, correct hash: 0x{}",
                 hex::encode(tx_hash),
-                hex::encode(hash_data(crypto_client(), tx_bytes).await?)
+                hex::encode(computed_hash)
             );
             Err(StatusCodeEnum::HashCheckError)
         } else {
@@ -247,7 +253,11 @@ pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>,
         .await
         .map_or_else(
             |e| {
-                warn!("load_data_maybe_empty failed: {:?}", e);
+                warn!(
+                    "load data maybe empty failed: {:?}. region: {}",
+                    e.to_string(),
+                    region
+                );
                 Err(StatusCodeEnum::StorageServerNotReady)
             },
             |value| match StatusCodeEnum::from(value.status.ok_or(StatusCodeEnum::NoneStatusCode)?)
@@ -270,7 +280,7 @@ pub async fn get_full_block(height: u64) -> Result<Block, StatusCodeEnum> {
     .await?;
 
     Block::decode(block_bytes.as_slice()).map_err(|_| {
-        warn!("get_full_block: decode Block failed");
+        warn!("get full block failed: decode Block failed");
         StatusCodeEnum::DecodeError
     })
 }
@@ -289,7 +299,7 @@ pub async fn exec_block(block: Block) -> (StatusCodeEnum, Vec<u8>) {
                 .hash,
         ),
         Err(e) => {
-            warn!("exec_block failed: {}", e.to_string());
+            warn!("execute block failed: {}", e.to_string());
             (StatusCodeEnum::ExecuteServerNotReady, vec![])
         }
     }
@@ -300,7 +310,7 @@ pub async fn get_network_status() -> Result<NetworkStatusResponse, StatusCodeEnu
         .get_network_status(Empty {})
         .await
         .map_err(|e| {
-            warn!("get_network_status failed: {}", e.to_string());
+            warn!("get network status failed: {}", e.to_string());
             StatusCodeEnum::NetworkServerNotReady
         })?;
     Ok(network_status_response)
@@ -311,7 +321,7 @@ pub async fn get_peers_info() -> Result<TotalNodeNetInfo, StatusCodeEnum> {
         .get_peers_net_info(Empty {})
         .await
         .map_err(|e| {
-            warn!("get_network_status failed: {}", e.to_string());
+            warn!("get peers status failed: {}", e.to_string());
             StatusCodeEnum::NetworkServerNotReady
         })?;
     Ok(peers_info)
@@ -328,15 +338,18 @@ pub async fn db_get_tx(tx_hash: &[u8]) -> Result<RawTransaction, StatusCodeEnum>
     .await
     .map_err(|e| {
         warn!(
-            "load tx(0x{} failed, error: {})",
+            "db get tx failed: {}. hash: 0x{}",
+            e.to_string(),
             hex::encode(tx_hash),
-            e.to_string()
         );
         StatusCodeEnum::NoTransaction
     })?;
 
     let raw_tx = RawTransaction::decode(tx_bytes.as_slice()).map_err(|_| {
-        warn!("db_get_tx: decode RawTransaction failed");
+        warn!(
+            "db get tx failed: decode RawTransaction failed. hash: 0x{}",
+            hex::encode(tx_hash)
+        );
         StatusCodeEnum::DecodeError
     })?;
 
@@ -362,9 +375,9 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCodeEnum> 
     .await
     .map_err(|e| {
         warn!(
-            "load tx(0x{}) block height failed, error: {}",
+            "load tx height failed: {}. hash: 0x{}",
+            e.to_string(),
             hex::encode(tx_hash),
-            e.to_string()
         );
         StatusCodeEnum::NoTxHeight
     })?;
@@ -377,20 +390,15 @@ pub async fn load_tx_info(tx_hash: &[u8]) -> Result<(u64, u64), StatusCodeEnum> 
     .await
     .map_err(|e| {
         warn!(
-            "load tx(0x{}) index failed, error: {}",
+            "load tx index failed: {}. hash: 0x{}",
+            e.to_string(),
             hex::encode(tx_hash),
-            e.to_string()
         );
         StatusCodeEnum::NoTxIndex
     })?;
 
-    let mut buf: [u8; 8] = [0; 8];
-
-    buf.clone_from_slice(&height_bytes[..8]);
-    let block_height = u64::from_be_bytes(buf);
-
-    buf.clone_from_slice(&tx_index_bytes[..8]);
-    let tx_index = u64::from_be_bytes(buf);
+    let block_height = u64_decode(height_bytes);
+    let tx_index = u64_decode(tx_index_bytes);
 
     Ok((block_height, tx_index))
 }
@@ -404,17 +412,13 @@ pub async fn get_height_by_block_hash(hash: Vec<u8>) -> Result<BlockNumber, Stat
     .await
     .map_err(|e| {
         warn!(
-            "get_height_by_block_hash({}) error: {}",
+            "get height by block hash failed: {}. hash: 0x{}",
+            e.to_string(),
             hex::encode(hash),
-            e.to_string()
         );
         StatusCodeEnum::NoBlockHeight
     })
-    .map(|v| {
-        let mut bytes: [u8; 8] = [0; 8];
-        bytes.clone_from_slice(&v[..8]);
-        u64::from_be_bytes(bytes)
-    })?;
+    .map(u64_decode)?;
     Ok(BlockNumber { block_number })
 }
 
@@ -428,12 +432,15 @@ pub async fn get_compact_block(height: u64) -> Result<CompactBlock, StatusCodeEn
     )
     .await
     .map_err(|e| {
-        warn!("get compact_block({}) error: {}", height, e.to_string());
+        warn!("get compact block({}) failed: {}", height, e.to_string());
         StatusCodeEnum::NoBlock
     })?;
 
     let compact_block = CompactBlock::decode(compact_block_bytes.as_slice()).map_err(|_| {
-        warn!("get_compact_block: decode CompactBlock failed");
+        warn!(
+            "get compact block({}) failed: decode CompactBlock failed",
+            height
+        );
         StatusCodeEnum::DecodeError
     })?;
 
@@ -450,7 +457,7 @@ pub async fn get_proof(height: u64) -> Result<Proof, StatusCodeEnum> {
     )
     .await
     .map_err(|e| {
-        warn!("get proof({}) error: {}", height, e.to_string());
+        warn!("get proof({}) failed: {}", height, e.to_string());
         StatusCodeEnum::NoProof
     })?;
 
@@ -467,7 +474,7 @@ pub async fn get_state_root(height: u64) -> Result<StateRoot, StatusCodeEnum> {
     )
     .await
     .map_err(|e| {
-        warn!("get state_root({}) error: {}", height, e.to_string());
+        warn!("get state_root({}) failed: {}", height, e.to_string());
         StatusCodeEnum::NoStateRoot
     })?;
 
@@ -482,9 +489,7 @@ pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>
     )
     .await
     .unwrap();
-    let mut buf: [u8; 8] = [0; 8];
-    buf.clone_from_slice(&height_bytes[..8]);
-    let mut tx_height = u64::from_be_bytes(buf);
+    let mut tx_height = u64_decode(height_bytes);
     while tx_height >= height {
         hash = match load_data(
             storage_client(),
@@ -502,14 +507,18 @@ pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>
                     tx.transaction.unwrap().pre_tx_hash
                 } else {
                     warn!(
-                        "tx from utxo_tx_hash{:?} is not utxo_tx",
+                        "load utxo_tx failed: not utxo_tx. hash: 0x{}",
                         hex::encode(&hash)
                     );
                     return Err(StatusCodeEnum::NoneUtxo);
                 }
             }
             Err(status) => {
-                warn!("load utxo_tx failed: {}", status);
+                warn!(
+                    "load utxo_tx failed: {}. hash: 0x{}",
+                    status,
+                    hex::encode(&hash)
+                );
                 return Err(StatusCodeEnum::NoTransaction);
             }
         };
@@ -521,14 +530,19 @@ pub async fn get_hash_in_range(mut hash: Vec<u8>, height: u64) -> Result<Vec<u8>
                 i32::from(Regions::TransactionHash2blockHeight) as u32,
                 hash.clone(),
             )
-            .await
-            .unwrap();
-            let mut buf: [u8; 8] = [0; 8];
-            buf.clone_from_slice(&height_bytes[..8]);
-            tx_height = u64::from_be_bytes(buf);
+            .await?;
+            tx_height = u64_decode(height_bytes);
         };
     }
     Ok(hash)
+}
+
+pub fn u32_decode(data: Vec<u8>) -> u32 {
+    u32::from_be_bytes(data.try_into().unwrap())
+}
+
+pub fn u64_decode(data: Vec<u8>) -> u64 {
+    u64::from_be_bytes(data.try_into().unwrap())
 }
 
 #[macro_export]
@@ -547,7 +561,7 @@ macro_rules! impl_multicast {
             let mut handle_vec = Vec::new();
 
             for node in nodes {
-                debug!("multicast {} len: {} to {}", $name, buf.len(), node);
+                debug!("multicast {} to {}: len: {}", $name, node, buf.len());
 
                 let msg = cita_cloud_proto::network::NetworkMsg {
                     module: "controller".to_string(),
@@ -559,7 +573,7 @@ macro_rules! impl_multicast {
                 let handle = tokio::spawn(async move {
                     match $crate::util::network_client().send_msg(msg).await {
                         Ok(_) => {
-                            debug!("multicast {} ok", $name)
+                            debug!("multicast {} success", $name)
                         }
                         Err(status) => {
                             warn!("multicast {} to {} failed: {:?}", $name, node, status)
@@ -586,7 +600,12 @@ macro_rules! impl_unicast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            debug!("unicast {} len: {} to origin[{}]", $name, buf.len(), origin);
+            debug!(
+                "unicast {} to origin({}): len: {}",
+                $name,
+                origin,
+                buf.len()
+            );
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -600,7 +619,7 @@ macro_rules! impl_unicast {
                     Ok(_) => {}
                     Err(status) => {
                         warn!(
-                            "unicast {} to origin[{}] failed: {:?}",
+                            "unicast {} to origin({}) failed: {:?}",
                             $name, origin, status
                         )
                     }
@@ -621,7 +640,7 @@ macro_rules! impl_broadcast {
             item.encode(&mut buf)
                 .expect(&($name.to_string() + " encode failed"));
 
-            debug!("broadcast {} buf len: {}", $name, buf.clone().len());
+            debug!("broadcast {}: len: {}", $name, buf.len());
 
             let msg = cita_cloud_proto::network::NetworkMsg {
                 module: "controller".to_string(),
@@ -655,13 +674,13 @@ pub fn get_tx_quota(raw_tx: &RawTransaction) -> Result<u64, StatusCodeEnum> {
         Some(Tx::NormalTx(normal_tx)) => match normal_tx.transaction {
             Some(ref tx) => Ok(tx.quota),
             None => {
-                warn!("tx_quota: found NoneTransaction");
+                warn!("get tx quota failed: NoneTransaction");
                 Err(StatusCodeEnum::NoneTransaction)
             }
         },
         Some(Tx::UtxoTx(_)) => Ok(0),
         None => {
-            warn!("tx_quota: found NoneRawTx");
+            warn!("get tx quota failed: NoneRawTx");
             Err(StatusCodeEnum::NoneRawTx)
         }
     }

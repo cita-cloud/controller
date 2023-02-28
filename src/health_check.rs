@@ -56,14 +56,14 @@ impl Health for HealthCheckServer {
             self.height.store(height, Ordering::Relaxed);
             self.timestamp.store(timestamp, Ordering::Relaxed);
             info!(
-                "healthcheck: block increase {} {} {}",
+                "healthcheck: block increase: {} - {}, timestamp: {}",
                 old_height, height, timestamp
             );
             ServingStatus::Serving.into()
         } else {
-            // block number not increase for a long time
+            // height not increase for a long time
             info!(
-                "healthcheck: block not increase {} {} {}",
+                "healthcheck: block not increase: {}, timestamp: {} - {}",
                 height, old_timestamp, timestamp
             );
             if timestamp - old_timestamp > self.timeout * 1000 {

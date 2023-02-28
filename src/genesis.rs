@@ -33,7 +33,7 @@ impl GenesisBlock {
 
     pub fn genesis_block(&self) -> Block {
         let prev_hash =
-            hex::decode(clean_0x(&self.prevhash)).expect("parsing prevhash in genesis failed!");
+            hex::decode(clean_0x(&self.prevhash)).expect("parse genesis prevhash failed");
         let header = BlockHeader {
             prevhash: prev_hash,
             timestamp: self.timestamp,

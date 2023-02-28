@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::config::ControllerConfig;
-use crate::util::storage_client;
+use crate::util::{storage_client, u32_decode, u64_decode};
 use cita_cloud_proto::blockchain::{
     raw_transaction::Tx::UtxoTx, RawTransaction, UnverifiedUtxoTransaction,
 };
@@ -113,11 +113,14 @@ impl SystemConfig {
                         self.chain_id = data;
                         true
                     } else {
-                        warn!("Invalid chain id");
+                        warn!(
+                            "match data failed: get chain_id len: {}, correct len: 32",
+                            data.len()
+                        );
                         false
                     }
                 } else {
-                    warn!("attempt to change chain_id when not init");
+                    warn!("match data failed: can't change chain_id");
                     false
                 }
             }
@@ -130,7 +133,10 @@ impl SystemConfig {
                     self.admin = data;
                     true
                 } else {
-                    warn!("Invalid admin");
+                    warn!(
+                        "match data failed: get admin len: {}, correct len: 20",
+                        data.len()
+                    );
                     false
                 }
             }
@@ -148,7 +154,7 @@ impl SystemConfig {
                     self.validators = validators;
                     true
                 } else {
-                    warn!("Invalid validators");
+                    warn!("match data failed: invalid validators input");
                     false
                 }
             }
@@ -161,7 +167,7 @@ impl SystemConfig {
                     self.block_limit = u64_decode(data);
                     true
                 } else {
-                    warn!("attempt to change block_limit when not init");
+                    warn!("match data failed: can't change block_limit");
                     false
                 }
             }
@@ -170,7 +176,7 @@ impl SystemConfig {
                 true
             }
             _ => {
-                warn!("Invalid lock_id:{}", lock_id);
+                warn!("match data failed: unknown lock_id: {}", lock_id);
                 false
             }
         }
@@ -221,14 +227,18 @@ impl SystemConfig {
                     }
                 } else {
                     warn!(
-                        "tx from utxo_tx_hash{:?} is not utxo_tx",
+                        "load utxo_tx failed: not utxo_tx. hash: 0x{}",
                         hex::encode(&utxo_hash)
                     );
                     StatusCodeEnum::NoneUtxo
                 }
             }
             Err(e) => {
-                warn!("load utxo_tx failed: {}", e);
+                warn!(
+                    "load utxo_tx failed: {}. hash: 0x{}",
+                    e,
+                    hex::encode(&utxo_hash)
+                );
                 StatusCodeEnum::NoTransaction
             }
         }
@@ -282,18 +292,6 @@ impl SystemConfig {
                 .to_owned(),
         }
     }
-}
-
-fn u32_decode(data: Vec<u8>) -> u32 {
-    let mut bytes: [u8; 4] = [0; 4];
-    bytes[..4].clone_from_slice(&data[..4]);
-    u32::from_be_bytes(bytes)
-}
-
-fn u64_decode(data: Vec<u8>) -> u64 {
-    let mut bytes: [u8; 8] = [0; 8];
-    bytes[..8].clone_from_slice(&data[..8]);
-    u64::from_be_bytes(bytes)
 }
 
 #[cfg(test)]
