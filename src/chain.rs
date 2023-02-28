@@ -243,19 +243,6 @@ impl Chain {
         Ok(())
     }
 
-    /// ### ReenterBlock needs to be handled and can only be ignored if wal_redo is true
-    /// ```
-    /// match executed_block_status {
-    ///     StatusCodeEnum::Success => {}
-    ///     StatusCodeEnum::ReenterBlock => {
-    ///        if !wal_redo {
-    ///            return Err(StatusCodeEnum::ReenterBlock);
-    ///        }
-    ///    }
-    ///    status_code => panic!("finalize_block: exec_block panic: {:?}", status_code),
-    /// }
-    /// ```
-    ///
     #[instrument(skip_all)]
     async fn finalize_block(
         &self,
@@ -333,20 +320,17 @@ impl Chain {
 
         match executed_blocks_status {
             StatusCodeEnum::Success => {}
-            status_code => {
-                if status_code != StatusCodeEnum::ReenterBlock || !wal_redo {
-                    return Err(status_code);
-                }
+            StatusCodeEnum::ReenterBlock => {
+                warn!(
+                    "ReenterBlock({}): status: {}, state_root: 0x{}",
+                    block_height,
+                    executed_blocks_status,
+                    hex::encode(&executed_blocks_hash)
+                );
             }
-        }
-
-        // update auth and pool after block is executed
-        {
-            let mut auth = self.auth.write().await;
-            let mut pool = self.pool.write().await;
-            auth.insert_tx_hash(block_height, tx_hash_list.clone());
-            pool.update(&tx_hash_list);
-            info!("pool update");
+            status_code => {
+                return Err(status_code);
+            }
         }
 
         // if state_root is empty record state_root to Block, else check it
@@ -375,6 +359,15 @@ impl Chain {
         .await
         .is_success()?;
         info!("store_data AllBlockData success");
+
+        // update auth and pool after block is persisted
+        {
+            let mut auth = self.auth.write().await;
+            let mut pool = self.pool.write().await;
+            auth.insert_tx_hash(block_height, tx_hash_list.clone());
+            pool.update(&tx_hash_list);
+            info!("pool update");
+        }
 
         self.wal_log
             .write()
