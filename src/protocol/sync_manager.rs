@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{config::ControllerConfig, node_manager::ChainStatus};
+use crate::{
+    config::ControllerConfig,
+    node_manager::{ChainStatus, NodeAddress},
+};
 use cita_cloud_proto::{blockchain::Block, common::Address};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -129,16 +132,16 @@ impl SyncManager {
         }
         if !heights.is_empty() {
             info!(
-                "sync: insert_blocks: heights = {:?} from node(0x{})",
+                "sync_manager get block: from origin: {}, heights: {:?}",
+                NodeAddress::from(&remote_address),
                 heights,
-                hex::encode(&remote_address.address)
             );
         }
 
         heights.len()
     }
 
-    pub async fn pop_block(&self, height: u64) -> Option<(Address, Block)> {
+    pub async fn remove_block(&self, height: u64) -> Option<(Address, Block)> {
         let mut wr = self.syncing_block_list.write().await;
         wr.remove(&height)
     }
@@ -181,12 +184,22 @@ impl SyncManager {
                 } else if start != u64::MAX && eazy {
                     eazy = false;
                     range_vec.push((start, end));
-                    info!("clear_node_block: push range_vec: ({}, {})", start, end);
+                    info!(
+                        "sync_manager clear node block: origin: {}, height: {} - {}",
+                        NodeAddress::from(node),
+                        start,
+                        end
+                    );
                 }
             }
             if start != u64::MAX && end != u64::MAX {
                 range_vec.push((start, end));
-                info!("clear_node_block: push range_vec: ({}, {})", start, end);
+                info!(
+                    "sync_manager clear node block: origin: {}, height: {} - {}",
+                    NodeAddress::from(node),
+                    start,
+                    end
+                );
             }
         }
 
@@ -223,9 +236,9 @@ impl SyncManager {
                 global_status.height
             }
         };
-
         info!(
-            "SyncBlockRequest: start {}, end {}",
+            "send SyncBlockRequest: to origin: {}, height: {} - {}",
+            NodeAddress::from(global_status.address.as_ref().unwrap()),
             current_height + 1,
             end_height
         );

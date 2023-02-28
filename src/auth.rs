@@ -58,7 +58,7 @@ impl Authentication {
             1u64
         };
 
-        for h in begin_block_number..(init_block_number + 1) {
+        for h in begin_block_number..=init_block_number {
             let block = get_compact_block(h).await.unwrap();
             let block_body = block.body.unwrap();
             self.history_hashes
@@ -188,7 +188,7 @@ impl Authentication {
                 if let Some(tx) = &normal_tx.transaction {
                     self.check_transaction(tx)?;
                     tx.encode(&mut tx_bytes).map_err(|_| {
-                        warn!("check_raw_tx: encode transaction failed");
+                        warn!("check raw_tx failed: encode Transaction failed");
                         StatusCodeEnum::EncodeError
                     })?;
                 } else {
@@ -224,7 +224,7 @@ impl Authentication {
                 if let Some(tx) = utxo_tx.transaction.as_ref() {
                     self.check_utxo_transaction(tx)?;
                     tx.encode(&mut tx_bytes).map_err(|_| {
-                        warn!("check_raw_tx: encode utxo failed");
+                        warn!("check raw_tx failed: encode UtxoTransaction failed");
                         StatusCodeEnum::EncodeError
                     })?;
                 } else {

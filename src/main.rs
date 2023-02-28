@@ -45,7 +45,7 @@ use crate::{
     },
     util::{
         clap_about, crypto_client, get_full_block, get_hash_in_range, init_grpc_client,
-        load_data_maybe_empty, reconfigure, storage_client,
+        load_data_maybe_empty, reconfigure, storage_client, u64_decode,
     },
 };
 use cita_cloud_proto::status_code::StatusCodeEnum;
@@ -115,7 +115,7 @@ fn main() {
     match opts.subcmd {
         SubCommand::Run(opts) => {
             let fin = run(opts);
-            warn!("Should not reach here {:?}", fin);
+            warn!("unreachable: {:?}", fin);
         }
     }
 }
@@ -535,10 +535,10 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         debug!("get_proposal request: {:?}", request);
 
         self.controller.chain_get_proposal().await.map_or_else(
-            |status| {
-                warn!("rpc: get_proposal failed: {:?}", status);
+            |e| {
+                warn!("rpc get proposal failed: {}", e.to_string());
                 Ok(Response::new(ProposalResponse {
-                    status: Some(status.into()),
+                    status: Some(e.into()),
                     proposal: None,
                 }))
             },
@@ -567,11 +567,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
 
         match self.controller.chain_check_proposal(height, &data).await {
             Err(e) => {
-                warn!(
-                    "rpc: check_proposal({}) failed: {:?}",
-                    height,
-                    e.to_string()
-                );
+                warn!("rpc check proposal({}) failed: {}", height, e.to_string());
                 Ok(Response::new(e.into()))
             }
             Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
@@ -603,7 +599,7 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
                 .await
                 .map_or_else(
                     |e| {
-                        warn!("rpc: commit_block({}) failed: {:?}", height, e);
+                        warn!("rpc commit block({}) failed: {}", height, e.to_string());
 
                         let con_cfg = ConsensusConfiguration {
                             height,
@@ -671,14 +667,16 @@ impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
             let msg_type = msg.r#type.clone();
             let msg_origin = msg.origin;
             self.controller.process_network_msg(msg).await.map_or_else(
-                |status| {
-                    if status != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
+                |e| {
+                    if e != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
                         warn!(
-                            "rpc: process_network_msg({} from {:x}) failed: {}",
-                            msg_type, msg_origin, status
+                            "rpc process network msg failed: {}. from: {:x}, type: {}",
+                            e.to_string(),
+                            msg_origin,
+                            msg_type
                         );
                     }
-                    Ok(Response::new(status.into()))
+                    Ok(Response::new(e.into()))
                 },
                 |_| Ok(Response::new(StatusCodeEnum::Success.into())),
             )
@@ -706,7 +704,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     let grpc_port = config.controller_port.to_string();
 
-    info!("grpc port of controller: {}", grpc_port);
+    info!("controller grpc port: {}", grpc_port);
 
     let health_check_timeout = config.health_check_timeout;
 
@@ -730,12 +728,12 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
         match register_network_msg_handler(network_client(), request).await {
             StatusCodeEnum::Success => {
-                info!("register network msg handler success!");
+                info!("network service ready");
                 break;
             }
             status => warn!(
-                "register network msg handler failed({:?})! Retrying",
-                status
+                "network service not ready: {}. retrying...",
+                status.to_string()
             ),
         }
     }
@@ -753,19 +751,19 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                             config.hash_len = crypto_info.hash_len;
                             config.signature_len = crypto_info.signature_len;
                             config.address_len = crypto_info.address_len;
-                            info!("crypto({}) is ready!", &crypto_info.name);
+                            info!("crypto_{} service ready", &crypto_info.name);
                             break;
                         }
-                        status => warn!("get get_crypto_info failed: {:?}", status),
+                        status => warn!("get crypto info failed: {:?}", status.to_string()),
                     }
                 }
             }
         }
-        warn!("crypto not ready! Retrying");
+        warn!("crypto service not ready: retrying...");
     }
 
     // load sys_config
-    info!("load sys_config");
+    info!("load system config");
     let genesis = GenesisBlock::new(&opts.config_path);
     let current_block_number;
     let current_block_hash;
@@ -781,16 +779,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             .await
             {
                 Ok(current_block_number_bytes) => {
-                    info!("get current block number success!");
+                    info!("storage service ready, get current height success");
                     if current_block_number_bytes.is_empty() {
-                        info!("this is a new chain!");
+                        info!("this is a new chain");
                         current_block_number = 0u64;
                         current_block_hash = genesis.genesis_block_hash().await;
                     } else {
-                        info!("this is an old chain!");
-                        let mut bytes: [u8; 8] = [0; 8];
-                        bytes[..8].clone_from_slice(&current_block_number_bytes[..8]);
-                        current_block_number = u64::from_be_bytes(bytes);
+                        info!("this is an old chain");
+                        current_block_number = u64_decode(current_block_number_bytes);
                         current_block_hash = load_data(
                             storage_client(),
                             i32::from(Regions::Global) as u32,
@@ -801,13 +797,13 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                     }
                     break;
                 }
-                Err(e) => warn!("{}", e.to_string()),
+                Err(e) => warn!("get current height failed: {}", e.to_string()),
             }
         }
-        warn!("get current block number failed! Retrying");
+        warn!("storage service not ready: retrying...");
     }
     info!(
-        "current block number: {}, current block hash: 0x{}",
+        "init height: {}, init block hash: 0x{}",
         current_block_number,
         hex::encode(&current_block_hash)
     );
@@ -828,23 +824,28 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 // region 1: tx_hash - tx
                 if data_or_tx_hash.len() == config.hash_len as usize && lock_id != LOCK_ID_CHAIN_ID
                 {
+                    info!(
+                        "update system config by utxo_tx hash: lock_id: {}, utxo_tx hash: 0x{}",
+                        lock_id,
+                        hex::encode(data_or_tx_hash.clone())
+                    );
                     if sys_config
                         .modify_sys_config_by_utxotx_hash(data_or_tx_hash.clone())
                         .await
                         != StatusCodeEnum::Success
                     {
-                        panic!("modify_sys_config_by_utxotx_hash failed in lockid: {}, with utxo hash: {:?}", lock_id, hex::encode(data_or_tx_hash))
+                        panic!("update system config by utxo_tx hash failed: lock_id: {}, utxo_tx hash: 0x{}", lock_id, hex::encode(data_or_tx_hash))
                     }
                 } else {
-                    info!("lock_id: {} stored data", lock_id);
+                    info!("update system config by data: lock_id: {}", lock_id);
                     if !sys_config.match_data(lock_id, data_or_tx_hash, true) {
-                        panic!("match data lock_id: {lock_id} stored failed");
+                        panic!("match data failed: lock_id: {lock_id}");
                     }
                 }
             }
             Err(StatusCodeEnum::NotFound) => {
                 //this lock_id is empty in local, store data from sys_config to local
-                info!("lock_id: {} empty, store from config to local", lock_id);
+                info!("update system config by file: lock_id: {}", lock_id);
                 match lock_id {
                     LOCK_ID_VERSION => {
                         store_data(
@@ -931,14 +932,16 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                         .is_success()?;
                     }
                     _ => {
-                        warn!("Invalid lock_id: {}", lock_id);
+                        warn!(
+                            "update system config by file failed: unexpected lock_id: {}",
+                            lock_id
+                        );
                     }
                 };
             }
-            Err(e) => panic!("load_data lock_id: {lock_id} failed: {e}"),
+            Err(e) => panic!("load data failed: {e}. lock_id: {lock_id}"),
         }
     }
-    info!("load sys_config complete");
 
     // todo config
     let (task_sender, mut task_receiver) = mpsc::channel(64);
@@ -1004,7 +1007,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                     && tick >= retry_limit
                 {
                     info!(
-                        "inner healthy check: broadcast csi h: {} the {}th time",
+                        "inner healthy check: broadcast csi: height: {}, {}th time",
                         current_height, tick
                     );
                     if controller_for_healthy.get_global_status().await.1.height > current_height {
@@ -1066,7 +1069,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                         if let Ok(block) = get_full_block(h).await {
                             block_vec.push(block);
                         } else {
-                            warn!("handle sync_block error: not get block(h: {})", h);
+                            warn!("handle SyncBlockReq failed: get block({}) failed", h);
                             break;
                         }
                     }
@@ -1082,8 +1085,8 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                             .await;
                     } else {
                         info!(
-                            "send sync_block_res: {}-{}",
-                            req.start_height, req.end_height
+                            "send SyncBlockRespond: to origin: {:x}, height: {} - {}",
+                            origin, req.start_height, req.end_height
                         );
                         let sync_block = SyncBlocks {
                             address: Some(controller_for_task.local_address.clone()),
@@ -1098,7 +1101,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                     }
                 }
                 EventTask::SyncBlock => {
-                    debug!("receive sync block event");
+                    debug!("receive SyncBlock event");
                     let (global_address, global_status) =
                         controller_for_task.get_global_status().await;
                     let mut own_status = controller_for_task.get_status().await;
@@ -1115,7 +1118,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                                     let mut chain = controller_for_task.chain.write().await;
                                     while let Some((addr, block)) = controller_for_task
                                         .sync_manager
-                                        .pop_block(own_status.height + 1)
+                                        .remove_block(own_status.height + 1)
                                         .await
                                     {
                                         chain.clear_candidate();
@@ -1145,10 +1148,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                                             }
                                             Err(e) => {
                                                 if (e as u64) % 100 == 0 {
-                                                    warn!("sync block error: {}", e);
+                                                    warn!("sync block failed: {}", e.to_string());
                                                     continue;
                                                 }
-                                                warn!("sync block error: {}, node: 0x{} been misbehavior_node", e.to_string(), hex::encode(&addr.address));
+                                                warn!("sync block failed: {}. set remote misbehavior. origin: {}", NodeAddress::from(&addr), e.to_string());
                                                 let del_node_addr = NodeAddress::from(&addr);
                                                 let _ = controller_for_task
                                                     .node_manager
@@ -1212,14 +1215,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                     }
                 }
                 EventTask::BroadCastCSI => {
-                    info!("receive BroadCastCSI event task");
+                    info!("receive BroadCastCSI event");
                     let status = controller_for_task.get_status().await;
 
                     let mut chain_status_bytes = Vec::new();
                     status
                         .encode(&mut chain_status_bytes)
                         .map_err(|_| {
-                            warn!("process_network_msg: encode ChainStatus failed");
+                            warn!("process BroadCastCSI failed: encode ChainStatus failed");
                             StatusCodeEnum::EncodeError
                         })
                         .unwrap();
@@ -1244,10 +1247,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                             match old_cs.height.cmp(&current_cs.height) {
                                 Ordering::Greater => {
                                     error!(
-                                        "node({}) is a misbehave node, old height: {}, current height: {}",
-                                        &na,
+                                        "node status rollbacked: old height: {}, current height: {}. set it misbehavior. origin: {}",
                                         old_cs.height,
-                                        current_cs.height
+                                        current_cs.height,
+                                        &na
                                     );
                                     let _ = controller_for_task
                                         .node_manager
@@ -1255,7 +1258,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                                         .await;
                                 }
                                 Ordering::Equal => {
-                                    warn!("node({}) is stale node, height: {}", &na, old_cs.height);
+                                    warn!(
+                                        "node status stale: height: {}. delete it. origin: {}",
+                                        old_cs.height, &na
+                                    );
                                     if controller_for_task.node_manager.in_node(na).await {
                                         controller_for_task.node_manager.delete_node(na).await;
                                     }
@@ -1276,7 +1282,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     let addr_str = format!("0.0.0.0:{grpc_port}");
     let addr = addr_str.parse().map_err(|e: AddrParseError| {
-        warn!("grpc listen addr parse failed: {} ", e.to_string());
+        warn!("parse grpc listen address failed: {} ", e.to_string());
         StatusCodeEnum::FatalError
     })?;
 
@@ -1294,14 +1300,13 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         None
     };
 
-    info!("start controller grpc server!");
-    if layer.is_some() {
-        info!("metrics on");
+    info!("start controller grpc server");
+    if let Some(layer) = layer {
         Server::builder()
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
             .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
-            .layer(layer.unwrap())
+            .layer(layer)
             .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
             .add_service(Consensus2ControllerServiceServer::new(
                 Consensus2ControllerServer::new(controller.clone()),
@@ -1320,7 +1325,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 StatusCodeEnum::FatalError
             })?;
     } else {
-        info!("metrics off");
         Server::builder()
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))

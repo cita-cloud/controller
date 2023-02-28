@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{check_sig, crypto_client, get_compact_block};
+use crate::util::{check_sig, crypto_client, get_compact_block, u64_decode};
 use cita_cloud_proto::common::{Address, Hash};
 use cita_cloud_proto::status_code::StatusCodeEnum;
 use cloud_util::{
@@ -55,7 +55,7 @@ impl ChainStatus {
 
         if self.chain_id != own_status.chain_id || self.version != own_status.version {
             warn!(
-                "ChainStatus check error: {:?}",
+                "check ChainStatus failed: {:?}",
                 StatusCodeEnum::VersionOrIdCheckError
             );
             Err(StatusCodeEnum::VersionOrIdCheckError)
@@ -72,7 +72,7 @@ impl ChainStatus {
                 != self.hash.clone().unwrap().hash
             {
                 warn!(
-                    "ChainStatus check_hash error: {:?}",
+                    "check ChainStatus hash failed: {:?}",
                     StatusCodeEnum::HashCheckError
                 );
                 Err(StatusCodeEnum::HashCheckError)
@@ -102,7 +102,7 @@ impl ChainStatusInit {
 
         let mut chain_status_bytes = Vec::new();
         chain_status.encode(&mut chain_status_bytes).map_err(|_| {
-            warn!("ChainStatusInit: check: encode ChainStatus failed");
+            warn!("check ChainStatusInit failed: encode ChainStatus failed");
             StatusCodeEnum::EncodeError
         })?;
 
@@ -193,14 +193,14 @@ pub struct NodeAddress(pub u64);
 
 impl Display for NodeAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("NodeAddress({:x})", self.0))
+        f.write_fmt(format_args!("{:x}", self.0))
     }
 }
 
 impl From<&Address> for NodeAddress {
     fn from(address: &Address) -> Self {
         let tmp = &address.address[0..8];
-        NodeAddress(u64::from_be_bytes(tmp.try_into().unwrap()))
+        NodeAddress(u64_decode(tmp.to_owned()))
     }
 }
 
@@ -208,7 +208,7 @@ impl From<&Address> for NodeAddress {
 fn test_node_address_display() {
     assert_eq!(
         &format!("{}", NodeAddress(8585939877295017053)),
-        "NodeAddress(772762d40107cc5d)"
+        "772762d40107cc5d"
     );
 }
 
@@ -230,17 +230,25 @@ impl NodeManager {
     }
 
     pub async fn delete_node(&self, na: &NodeAddress) -> Option<ChainStatus> {
-        info!("delete node: {}", na);
-        {
+        let status = {
             let mut wr = self.nodes.write().await;
             wr.remove(na)
+        };
+        if let Some(chain_status) = status.clone() {
+            info!(
+                "delete node: origin: {}, height: {}, hash: 0x{}",
+                na,
+                chain_status.height,
+                hex::encode(chain_status.hash.unwrap().hash)
+            );
         }
+        status
     }
 
     pub async fn set_node(
         &self,
         na: &NodeAddress,
-        chain_status: ChainStatus,
+        new_status: ChainStatus,
     ) -> Result<Option<ChainStatus>, StatusCodeEnum> {
         if self.in_ban_node(na).await {
             return Err(StatusCodeEnum::BannedNode);
@@ -250,15 +258,22 @@ impl NodeManager {
             return Err(StatusCodeEnum::MisbehaveNode);
         }
 
-        let status = {
+        let current_height = {
             let rd = self.nodes.read().await;
-            rd.get(na).cloned()
+            rd.get(na).map(|cs| cs.height)
         };
 
-        if status.is_none() || status.unwrap().height < chain_status.height {
-            info!("update node: {}", na);
+        if current_height.is_none() || new_status.height > current_height.unwrap() {
+            info!(
+                "update node status: origin: {}, height: {}, hash: 0x{}",
+                na,
+                new_status.height,
+                hex::encode(new_status.hash.clone().unwrap().hash)
+            );
             let mut wr = self.nodes.write().await;
-            Ok(wr.insert(*na, chain_status))
+            Ok(wr.insert(*na, new_status))
+        } else if new_status.height == current_height.unwrap() {
+            Ok(Some(new_status))
         } else {
             Err(StatusCodeEnum::EarlyStatus)
         }
@@ -334,7 +349,10 @@ impl NodeManager {
         }
 
         if self.in_ban_node(node).await {
-            warn!("set misbehavior node: the node have been banned");
+            warn!(
+                "set misbehavior node failed: the node have been banned. origin: {}",
+                node
+            );
             return Err(StatusCodeEnum::BannedNode);
         }
 
@@ -393,9 +411,11 @@ impl NodeManager {
         if node == &origin {
             Ok(true)
         } else {
-            let e = StatusCodeEnum::AddressOriginCheckError;
-            warn!("check_address_origin: node({}) {:?} ", node, e);
-            Err(e)
+            warn!(
+                "check origin failed: ChainStatus origin: {}, msg origin: {}",
+                node, origin
+            );
+            Err(StatusCodeEnum::AddressOriginCheckError)
         }
     }
 }

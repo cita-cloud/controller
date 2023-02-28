@@ -83,29 +83,29 @@ OPTIONS:
 
 ```shell
 $ controller run -c example/config.toml
-2022-03-09T11:53:21.015943+08:00 INFO controller - grpc port of this service: 50004
-2022-03-09T11:53:24.023215+08:00 INFO controller - register network msg handler success!
-2022-03-09T11:53:24.025524+08:00 INFO controller - crypto(sm) is ready!
-2022-03-09T11:53:24.025583+08:00 INFO controller - load sys_config
-2022-03-09T11:53:24.028314+08:00 INFO controller - get current block number success!
-2022-03-09T11:53:24.028346+08:00 INFO controller - this is a new chain!
-2022-03-09T11:53:24.028927+08:00 INFO controller - current block number: 0, current block hash: ...
-2022-03-09T11:53:24.029761+08:00 INFO controller - lock_id: 1000 empty, store from config to local
-2022-03-09T11:53:24.030727+08:00 INFO controller - lock_id: 1001 empty, store from config to local
-2022-03-09T11:53:24.031320+08:00 INFO controller - lock_id: 1002 empty, store from config to local
-2022-03-09T11:53:24.031872+08:00 INFO controller - lock_id: 1003 empty, store from config to local
-2022-03-09T11:53:24.032435+08:00 INFO controller - lock_id: 1004 empty, store from config to local
-2022-03-09T11:53:24.033142+08:00 INFO controller - lock_id: 1005 empty, store from config to local
-2022-03-09T11:53:24.033722+08:00 INFO controller - lock_id: 1006 empty, store from config to local
-2022-03-09T11:53:24.034156+08:00 INFO controller - load sys_config complete
-2022-03-09T11:53:24.034186+08:00 INFO controller::controller - node address: ...
-2022-03-09T11:53:24.034560+08:00 INFO controller::chain - finalize genesis block
-2022-03-09T11:53:24.038520+08:00 INFO controller::chain - exec_block(0): status: Success, executed_block_hash: [...]
-2022-03-09T11:53:24.040881+08:00 INFO controller::chain - finalize_block: 0, block_hash: ...
-2022-03-09T11:53:24.040900+08:00 INFO controller::chain - executor is ready!
-2022-03-09T11:53:24.041611+08:00 INFO controller::controller - init_block_number: 0
-2022-03-09T11:53:24.043737+08:00 INFO controller::controller - reconfigure consensus success!
-2022-03-09T11:53:24.043782+08:00 INFO controller - start grpc server!
+2023-02-22T13:57:22.59095273+08:00  INFO controller: controller grpc port: 50004
+2023-02-22T13:57:22.591016492+08:00  INFO controller: health check timeout: 300
+2023-02-22T13:57:22.693847752+08:00  INFO controller: network service ready
+2023-02-22T13:57:22.695732764+08:00  INFO controller: crypto_sm service ready
+2023-02-22T13:57:22.695771017+08:00  INFO controller: load system config
+2023-02-22T13:57:23.124056936+08:00  INFO controller: storage service ready, get current height success
+2023-02-22T13:57:23.124097583+08:00  INFO controller: this is a new chain
+2023-02-22T13:57:23.124812206+08:00  INFO controller: init height: 0, init block hash: 0x123
+2023-02-22T13:57:23.126118419+08:00  INFO controller: update system config by file: lock_id: 1000
+2023-02-22T13:57:23.126878598+08:00  INFO controller: update system config by file: lock_id: 1001
+2023-02-22T13:57:23.127386789+08:00  INFO controller: update system config by file: lock_id: 1002
+2023-02-22T13:57:23.127991302+08:00  INFO controller: update system config by file: lock_id: 1003
+2023-02-22T13:57:23.128675016+08:00  INFO controller: update system config by file: lock_id: 1004
+2023-02-22T13:57:23.129325438+08:00  INFO controller: update system config by file: lock_id: 1005
+2023-02-22T13:57:23.130118259+08:00  INFO controller: update system config by file: lock_id: 1006
+2023-02-22T13:57:23.130783639+08:00  INFO controller: update system config by file: lock_id: 1007
+2023-02-22T13:57:23.131130741+08:00  INFO controller::controller: node address: 0ef9ac94edc6fa717fd0595296acab6af8264951
+2023-02-22T13:57:23.131149938+08:00  INFO controller::controller: validator address: 9401ed0969b83bf31a9ca1a302e6f2fb49c6bc69
+2023-02-22T13:57:23.248322425+08:00  INFO finalize_block: controller::chain: execute block(0) Success: state_root: 0x123. hash: 0x123
+2023-02-22T13:57:23.249649918+08:00  INFO finalize_block: controller::chain: store AllBlockData(0) success: hash: 0x123
+2023-02-22T13:57:23.249851923+08:00  INFO finalize_block: controller::chain: finalize block(0) success: pool len: 0, pool quota: 0. hash: 0x123
+2023-02-22T13:57:23.24987652+08:00  INFO controller::chain: executor service ready
+2023-02-22T13:57:23.250538914+08:00  INFO controller: start controller grpc server
 ...
 ```
 
