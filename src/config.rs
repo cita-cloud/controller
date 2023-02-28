@@ -126,9 +126,9 @@ impl Default for ControllerConfig {
             wal_path: "./data/wal_chain".to_string(),
             send_chain_status_interval_sync: 1000,
             health_check_timeout: 300,
-            http2_keepalive_interval: 60,
-            http2_keepalive_timeout: 20,
-            tcp_keepalive: 60,
+            http2_keepalive_interval: 300,
+            http2_keepalive_timeout: 10,
+            tcp_keepalive: 600,
             enable_metrics: true,
             metrics_port: 60004,
             metrics_buckets: vec![
