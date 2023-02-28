@@ -333,15 +333,6 @@ impl Chain {
             }
         }
 
-        // update auth and pool after block is executed
-        {
-            let mut auth = self.auth.write().await;
-            let mut pool = self.pool.write().await;
-            auth.insert_tx_hash(block_height, tx_hash_list.clone());
-            pool.update(&tx_hash_list);
-            info!("pool update");
-        }
-
         // if state_root is empty record state_root to Block, else check it
         if block.state_root.is_empty() {
             block.state_root = executed_blocks_hash;
@@ -368,6 +359,15 @@ impl Chain {
         .await
         .is_success()?;
         info!("store_data AllBlockData success");
+
+        // update auth and pool after block is persisted
+        {
+            let mut auth = self.auth.write().await;
+            let mut pool = self.pool.write().await;
+            auth.insert_tx_hash(block_height, tx_hash_list.clone());
+            pool.update(&tx_hash_list);
+            info!("pool update");
+        }
 
         self.wal_log
             .write()
