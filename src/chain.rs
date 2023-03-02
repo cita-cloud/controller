@@ -333,6 +333,10 @@ impl Chain {
                     executed_blocks_status,
                     hex::encode(&executed_blocks_hash)
                 );
+                // The genesis block does not allow reenter
+                if block_height == 0 {
+                    return Err(StatusCodeEnum::ReenterBlock);
+                }
             }
             status_code => {
                 return Err(status_code);
