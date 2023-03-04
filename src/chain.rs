@@ -277,39 +277,6 @@ impl Chain {
                 .await?;
         }
 
-        // region 1: tx_hash - tx
-        if let Some(raw_txs) = block.body.clone() {
-            for raw_tx in raw_txs.body {
-                if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
-                    let res = {
-                        let mut auth = self.auth.write().await;
-                        auth.update_system_config(&utxo_tx)
-                    };
-                    if res {
-                        // if sys_config changed, store utxo tx hash into global region
-                        let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            utxo_tx.transaction_hash,
-                        )
-                        .await
-                        .is_success()?;
-                        match lock_id {
-                            LOCK_ID_BLOCK_LIMIT | LOCK_ID_QUOTA_LIMIT => {
-                                let sys_config = self.get_system_config().await;
-                                let mut pool = self.pool.write().await;
-                                pool.set_block_limit(sys_config.block_limit);
-                                pool.set_quota_limit(sys_config.quota_limit);
-                            }
-                            _ => {}
-                        }
-                    }
-                };
-            }
-        }
-
         let tx_hash_list =
             get_tx_hash_list(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?;
 
@@ -374,14 +341,45 @@ impl Chain {
             hex::encode(&block_hash)
         );
 
-        // update auth and pool after block is persisted
-        let (pool_len, pool_quota) = {
+        // update auth pool and systemconfig
+        if !tx_hash_list.is_empty() {
             let mut auth = self.auth.write().await;
             let mut pool = self.pool.write().await;
+
+            if let Some(raw_txs) = block.body.clone() {
+                for raw_tx in raw_txs.body {
+                    if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
+                        if auth.update_system_config(&utxo_tx) {
+                            // if sys_config changed, store utxo tx hash into global region
+                            let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                utxo_tx.transaction_hash,
+                            )
+                            .await
+                            .is_success()?;
+                            match lock_id {
+                                LOCK_ID_BLOCK_LIMIT | LOCK_ID_QUOTA_LIMIT => {
+                                    let sys_config = self.get_system_config().await;
+                                    pool.set_block_limit(sys_config.block_limit);
+                                    pool.set_quota_limit(sys_config.quota_limit);
+                                }
+                                _ => {}
+                            }
+                        }
+                    };
+                }
+            }
+
             auth.insert_tx_hash(block_height, tx_hash_list.clone());
             pool.remove(&tx_hash_list);
-            pool.pool_status()
-        };
+            info!(
+                "update auth and pool, tx_hash_list len {}",
+                tx_hash_list.len()
+            );
+        }
 
         self.wal_log
             .write()
@@ -392,6 +390,8 @@ impl Chain {
                 panic!("execute block({block_height}) error: wal clear_file error: {e}");
             })
             .unwrap();
+
+        let (pool_len, pool_quota) = self.pool.read().await.pool_status();
 
         info!(
             "finalize block({}) success: pool len: {}, pool quota: {}. hash: 0x{}",
