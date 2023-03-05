@@ -342,7 +342,8 @@ impl Chain {
         );
 
         // update auth pool and systemconfig
-        if !tx_hash_list.is_empty() {
+        // even empty block, we also need update current height of auth
+        {
             let mut auth = self.auth.write().await;
             let mut pool = self.pool.write().await;
 
