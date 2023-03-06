@@ -344,13 +344,14 @@ impl Chain {
         // update auth pool and systemconfig
         // even empty block, we also need update current height of auth
         {
-            let mut auth = self.auth.write().await;
-            let mut pool = self.pool.write().await;
-
             if let Some(raw_txs) = block.body.clone() {
                 for raw_tx in raw_txs.body {
                     if let Some(Tx::UtxoTx(utxo_tx)) = raw_tx.tx.clone() {
-                        if auth.update_system_config(&utxo_tx) {
+                        let res = {
+                            let mut auth = self.auth.write().await;
+                            auth.update_system_config(&utxo_tx)
+                        };
+                        if res {
                             // if sys_config changed, store utxo tx hash into global region
                             let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
                             store_data(
@@ -364,6 +365,7 @@ impl Chain {
                             match lock_id {
                                 LOCK_ID_BLOCK_LIMIT | LOCK_ID_QUOTA_LIMIT => {
                                     let sys_config = self.get_system_config().await;
+                                    let mut pool = self.pool.write().await;
                                     pool.set_block_limit(sys_config.block_limit);
                                     pool.set_quota_limit(sys_config.quota_limit);
                                 }
@@ -374,8 +376,11 @@ impl Chain {
                 }
             }
 
-            auth.insert_tx_hash(block_height, tx_hash_list.clone());
-            pool.remove(&tx_hash_list);
+            self.auth
+                .write()
+                .await
+                .insert_tx_hash(block_height, tx_hash_list.clone());
+            self.pool.write().await.remove(&tx_hash_list);
             info!(
                 "update auth and pool, tx_hash_list len {}",
                 tx_hash_list.len()
