@@ -142,6 +142,8 @@ pub struct Controller {
     pub(crate) forward_pool: Arc<RwLock<RawTransactions>>,
 
     pub initial_sys_config: SystemConfig,
+
+    pub init_block_number: u64,
 }
 
 impl Controller {
@@ -211,6 +213,7 @@ impl Controller {
             is_sync: Arc::new(RwLock::new(false)),
             forward_pool: Arc::new(RwLock::new(RawTransactions { body: vec![] })),
             initial_sys_config,
+            init_block_number: current_block_number,
         }
     }
 
@@ -502,6 +505,7 @@ impl Controller {
             peers_count,
             peers_status,
             is_danger: self.config.is_danger,
+            init_block_number: self.init_block_number,
         };
         Ok(node_status)
     }
