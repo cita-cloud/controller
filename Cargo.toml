@@ -1,6 +1,6 @@
 [package]
 name = "controller"
-version = "6.6.4"
+version = "6.6.5"
 authors = ["Rivtower Technologies <contact@rivtower.com>"]
 license = "Apache-2.0"
 edition = "2021"
@@ -8,10 +8,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.1", features = ["derive"] }
-tonic = "0.8"
+clap = { version = "4.2", features = ["derive"] }
+tonic = "0.9"
 prost = "0.11"
-tokio = { version = "1.26", features = ["full"] }
+tokio = { version = "1.27", features = ["full"] }
 rand = "0.8"
 toml = "0.7"
 serde = "1.0"
@@ -25,7 +25,7 @@ cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/clou
 cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs" }
 
 [build-dependencies]
-tonic-build = "0.8"
+tonic-build = "0.9"
 
 [profile.release.package."*"]
 # Set the default for dependencies.
