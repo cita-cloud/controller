@@ -18,7 +18,6 @@ mod config;
 mod controller;
 mod genesis;
 mod node_manager;
-mod panic_hook;
 mod pool;
 mod protocol;
 #[macro_use]
@@ -36,7 +35,6 @@ use crate::{
     controller::Controller,
     event::EventTask,
     node_manager::{ChainStatusInit, NodeAddress},
-    panic_hook::set_panic_handler,
     protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
     system_config::{
         LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
@@ -70,6 +68,7 @@ use cloud_util::{
     crypto::{hash_data, sign_message},
     metrics::{run_metrics_exporter, MiddlewareLayer},
     network::register_network_msg_handler,
+    panic_hook::set_panic_handler,
     storage::{load_data, store_data},
 };
 use genesis::GenesisBlock;
