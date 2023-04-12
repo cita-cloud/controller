@@ -1281,7 +1281,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     let addr_str = format!("0.0.0.0:{grpc_port}");
     let addr = addr_str.parse().map_err(|e: AddrParseError| {
-        warn!("parse grpc listen address failed: {} ", e.to_string());
+        warn!("parse grpc listen address failed: {:?} ", e);
         StatusCodeEnum::FatalError
     })?;
 
@@ -1320,7 +1320,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             .serve(addr)
             .await
             .map_err(|e| {
-                warn!("start controller grpc server failed: {} ", e.to_string());
+                warn!("start controller grpc server failed: {:?} ", e);
                 StatusCodeEnum::FatalError
             })?;
     } else {
@@ -1342,7 +1342,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             .serve(addr)
             .await
             .map_err(|e| {
-                warn!("start controller grpc server failed: {} ", e.to_string());
+                warn!("start controller grpc server failed: {:?} ", e);
                 StatusCodeEnum::FatalError
             })?;
     }
