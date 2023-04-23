@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fs, path::Path};
+use std::fs;
 
 use cloud_util::{common::read_toml, tracer::LogConfig};
 use serde_derive::Deserialize;
@@ -70,8 +70,6 @@ pub struct ControllerConfig {
     pub sync_req: u64,
     /// the height epoch to force send sync
     pub force_sync_epoch: u64,
-    /// WAL log path
-    pub wal_path: String,
     /// multi-send chain status interval, counted by block number
     /// recommend: n < origin_node_reconnect_interval / block_interval
     pub send_chain_status_interval_sync: u64,
@@ -123,7 +121,6 @@ impl Default for ControllerConfig {
             sync_interval: 10,
             sync_req: 5,
             force_sync_epoch: 100,
-            wal_path: "./data/wal_chain".to_string(),
             send_chain_status_interval_sync: 1000,
             health_check_timeout: 300,
             http2_keepalive_interval: 300,
@@ -147,11 +144,6 @@ impl ControllerConfig {
         let mut config: ControllerConfig = read_toml(config_str, "controller");
         config.node_address = fs::read_to_string(config.node_address).unwrap();
         config.validator_address = fs::read_to_string(config.validator_address).unwrap();
-        // wal_path must be relative path
-        assert!(
-            !Path::new(&config.wal_path).is_absolute(),
-            "wal_path must be relative path"
-        );
         config
     }
 

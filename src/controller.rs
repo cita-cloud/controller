@@ -47,7 +47,6 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
     unix_now,
-    wal::Wal,
 };
 use prost::Message;
 use std::{sync::Arc, time::Duration};
@@ -190,7 +189,6 @@ impl Controller {
             pool.clone(),
             auth.clone(),
             genesis,
-            Wal::create(&config.wal_path).await.unwrap(),
         )));
 
         Controller {
@@ -219,27 +217,17 @@ impl Controller {
 
     pub async fn init(&self, init_block_number: u64, sys_config: SystemConfig) {
         let sys_config_clone = sys_config.clone();
-        let mut consensus_config = ConsensusConfiguration {
+        let consensus_config = ConsensusConfiguration {
             height: init_block_number,
             block_interval: sys_config_clone.block_interval,
             validators: sys_config_clone.validators,
         };
-        if let Some((new_consensus_config, status)) = {
-            let mut chain = self.chain.write().await;
+        {
+            let chain = self.chain.read().await;
             chain
                 .init(init_block_number, self.config.server_retry_interval)
                 .await;
             chain.init_auth(init_block_number).await;
-            chain.load_wal_log().await
-        } {
-            self.set_status(status.clone()).await;
-            consensus_config = new_consensus_config;
-            info!(
-                "wal redo success: height: {}, hash: 0x{}",
-                status.height,
-                hex::encode(status.hash.unwrap().hash)
-            );
-        } else {
             let status = self
                 .init_status(init_block_number, sys_config)
                 .await

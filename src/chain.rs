@@ -29,7 +29,6 @@ use cloud_util::{
     crypto::{get_block_hash, hash_data},
     storage::store_data,
     unix_now,
-    wal::{LogType, Wal},
 };
 use prost::Message;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -57,8 +56,6 @@ pub struct Chain {
     auth: Arc<RwLock<Authentication>>,
 
     genesis: GenesisBlock,
-
-    wal_log: Arc<RwLock<Wal>>,
 }
 
 impl Chain {
@@ -68,7 +65,6 @@ impl Chain {
         pool: Arc<RwLock<Pool>>,
         auth: Arc<RwLock<Authentication>>,
         genesis: GenesisBlock,
-        wal: Wal,
     ) -> Self {
         Chain {
             block_number: current_block_number,
@@ -78,7 +74,6 @@ impl Chain {
             pool,
             auth,
             genesis,
-            wal_log: Arc::new(RwLock::new(wal)),
         }
     }
 
@@ -88,7 +83,7 @@ impl Chain {
             interval.tick().await;
             // if height != 0 block_hash is wrong but doesn't matter
             match self
-                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone(), false)
+                .finalize_block(self.genesis.genesis_block(), self.block_hash.clone())
                 .await
             {
                 Ok(()) | Err(StatusCodeEnum::ReenterBlock) => {
@@ -229,7 +224,6 @@ impl Chain {
         &self,
         mut block: Block,
         block_hash: Vec<u8>,
-        wal_redo: bool,
     ) -> Result<(), StatusCodeEnum> {
         let block_height = block
             .header
@@ -237,85 +231,71 @@ impl Chain {
             .ok_or(StatusCodeEnum::NoneBlockHeader)?
             .height;
 
-        let block_height_bytes = block_height.to_be_bytes().to_vec();
-
-        let block_bytes = {
-            let mut buf = Vec::with_capacity(block.encoded_len());
-            block.encode(&mut buf).map_err(|_| {
-                warn!("finalize block failed: encode Block failed");
-                StatusCodeEnum::EncodeError
-            })?;
-            buf
-        };
-
-        if block_height > 0 && !wal_redo {
-            self.wal_save_message(block_height, LogType::FinalizeBlock, &block_bytes)
-                .await?;
-        }
-
-        let tx_hash_list =
-            get_tx_hash_list(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?;
-
         // execute block, executed_blocks_hash == state_root
-        let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
+        {
+            let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
 
-        info!(
-            "execute block({}) {}: state_root: 0x{}. hash: 0x{}",
-            block_height,
-            executed_blocks_status,
-            hex::encode(&executed_blocks_hash),
-            hex::encode(&block_hash),
-        );
+            info!(
+                "execute block({}) {}: state_root: 0x{}. hash: 0x{}",
+                block_height,
+                executed_blocks_status,
+                hex::encode(&executed_blocks_hash),
+                hex::encode(&block_hash),
+            );
 
-        match executed_blocks_status {
-            StatusCodeEnum::Success => {}
-            StatusCodeEnum::ReenterBlock => {
-                warn!(
-                    "ReenterBlock({}): status: {}, state_root: 0x{}",
-                    block_height,
-                    executed_blocks_status,
-                    hex::encode(&executed_blocks_hash)
-                );
-                // The genesis block does not allow reenter
-                if block_height == 0 {
-                    return Err(StatusCodeEnum::ReenterBlock);
+            match executed_blocks_status {
+                StatusCodeEnum::Success => {}
+                StatusCodeEnum::ReenterBlock => {
+                    warn!(
+                        "ReenterBlock({}): status: {}, state_root: 0x{}",
+                        block_height,
+                        executed_blocks_status,
+                        hex::encode(&executed_blocks_hash)
+                    );
+                    // The genesis block does not allow reenter
+                    if block_height == 0 {
+                        return Err(StatusCodeEnum::ReenterBlock);
+                    }
+                }
+                status_code => {
+                    return Err(status_code);
                 }
             }
-            status_code => {
-                return Err(status_code);
+
+            // if state_root is not empty should verify it
+            if block.state_root.is_empty() {
+                block.state_root = executed_blocks_hash;
+            } else if block.state_root != executed_blocks_hash {
+                warn!("finalize block failed: check state_root error");
+                return Err(StatusCodeEnum::StateRootCheckError);
             }
         }
 
-        // if state_root is not empty should verify it
-        if block.state_root.is_empty() {
-            block.state_root = executed_blocks_hash;
-        } else if block.state_root != executed_blocks_hash {
-            warn!("finalize block failed: check state_root error");
-            return Err(StatusCodeEnum::StateRootCheckError);
+        // persistence to storage
+        {
+            let block_with_stateroot_bytes = {
+                let mut buf = Vec::with_capacity(block.encoded_len());
+                block.encode(&mut buf).map_err(|_| {
+                    warn!("finalize block failed: encode Block failed");
+                    StatusCodeEnum::EncodeError
+                })?;
+                buf
+            };
+
+            store_data(
+                storage_client(),
+                i32::from(Regions::AllBlockData) as u32,
+                block_height.to_be_bytes().to_vec(),
+                block_with_stateroot_bytes,
+            )
+            .await
+            .is_success()?;
+            info!(
+                "store AllBlockData({}) success: hash: 0x{}",
+                block_height,
+                hex::encode(&block_hash)
+            );
         }
-
-        let block_with_stateroot_bytes = {
-            let mut buf = Vec::with_capacity(block.encoded_len());
-            block.encode(&mut buf).map_err(|_| {
-                warn!("finalize block failed: encode Block failed");
-                StatusCodeEnum::EncodeError
-            })?;
-            buf
-        };
-
-        store_data(
-            storage_client(),
-            i32::from(Regions::AllBlockData) as u32,
-            block_height_bytes.clone(),
-            block_with_stateroot_bytes,
-        )
-        .await
-        .is_success()?;
-        info!(
-            "store AllBlockData({}) success: hash: 0x{}",
-            block_height,
-            hex::encode(&block_hash)
-        );
 
         // update auth pool and systemconfig
         // even empty block, we also need update current height of auth
@@ -352,6 +332,8 @@ impl Chain {
                 }
             }
 
+            let tx_hash_list =
+                get_tx_hash_list(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?;
             self.auth
                 .write()
                 .await
@@ -363,25 +345,17 @@ impl Chain {
             );
         }
 
-        self.wal_log
-            .write()
-            .await
-            .clear_file()
-            .await
-            .map_err(|e| {
-                panic!("execute block({block_height}) error: wal clear_file error: {e}");
-            })
-            .unwrap();
-
-        let (pool_len, pool_quota) = self.pool.read().await.pool_status();
-
-        info!(
-            "finalize block({}) success: pool len: {}, pool quota: {}. hash: 0x{}",
-            block_height,
-            pool_len,
-            pool_quota,
-            hex::encode(&block_hash)
-        );
+        // success and print pool status
+        {
+            let (pool_len, pool_quota) = self.pool.read().await.pool_status();
+            info!(
+                "finalize block({}) success: pool len: {}, pool quota: {}. hash: 0x{}",
+                block_height,
+                pool_len,
+                pool_quota,
+                hex::encode(&block_hash)
+            );
+        }
 
         Ok(())
     }
@@ -448,8 +422,7 @@ impl Chain {
                 height,
                 hex::encode(&block_hash)
             );
-            self.finalize_block(full_block, block_hash.clone(), false)
-                .await?;
+            self.finalize_block(full_block, block_hash.clone()).await?;
 
             self.block_number = height;
             self.block_hash = block_hash;
@@ -483,7 +456,6 @@ impl Chain {
     pub async fn process_block(
         &mut self,
         block: Block,
-        wal_redo: bool,
     ) -> Result<(ConsensusConfiguration, ChainStatus), StatusCodeEnum> {
         let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
         let header = block.header.clone().unwrap();
@@ -515,38 +487,35 @@ impl Chain {
             return Err(StatusCodeEnum::BlockCheckError);
         }
 
-        if !wal_redo {
-            let proposal_bytes_for_check = assemble_proposal(block.clone(), height).await?;
+        let proposal_bytes_for_check = assemble_proposal(block.clone(), height).await?;
 
-            let status = check_block(height, proposal_bytes_for_check, block.proof.clone()).await;
-            if status != StatusCodeEnum::Success {
-                return Err(status);
-            }
+        let status = check_block(height, proposal_bytes_for_check, block.proof.clone()).await;
+        if status != StatusCodeEnum::Success {
+            return Err(status);
+        }
 
-            {
-                let auth = self.auth.read().await;
-                auth.check_transactions(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?
-            }
+        {
+            let auth = self.auth.read().await;
+            auth.check_transactions(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?
+        }
 
-            match crypto_client()
-                .check_transactions(block.body.clone().ok_or(StatusCodeEnum::NoneBlockBody)?)
-                .await
-            {
-                Ok(code) => StatusCodeEnum::from(code).is_success()?,
-                Err(e) => {
-                    warn!(
-                        "process block({}) failed: check transactions failed: {}. hash: 0x{}",
-                        height,
-                        e.to_string(),
-                        hex::encode(&block_hash),
-                    );
-                    return Err(StatusCodeEnum::CryptoServerNotReady);
-                }
+        match crypto_client()
+            .check_transactions(block.body.clone().ok_or(StatusCodeEnum::NoneBlockBody)?)
+            .await
+        {
+            Ok(code) => StatusCodeEnum::from(code).is_success()?,
+            Err(e) => {
+                warn!(
+                    "process block({}) failed: check transactions failed: {}. hash: 0x{}",
+                    height,
+                    e.to_string(),
+                    hex::encode(&block_hash),
+                );
+                return Err(StatusCodeEnum::CryptoServerNotReady);
             }
         }
 
-        self.finalize_block(block, block_hash.clone(), wal_redo)
-            .await?;
+        self.finalize_block(block, block_hash.clone()).await?;
 
         self.block_number = height;
         self.block_hash = block_hash;
@@ -600,82 +569,5 @@ impl Chain {
     pub fn clear_candidate(&mut self) {
         self.candidates.clear();
         self.own_proposal = None;
-    }
-
-    #[instrument(skip_all)]
-    async fn wal_save_message(
-        &self,
-        height: u64,
-        ltype: LogType,
-        msg: &[u8],
-    ) -> Result<u64, StatusCodeEnum> {
-        self.wal_log
-            .write()
-            .await
-            .save(height, ltype, msg)
-            .await
-            .map_err(|e| {
-                panic!("wal save message failed: {e}");
-            })
-    }
-
-    pub async fn load_wal_log(&mut self) -> Option<(ConsensusConfiguration, ChainStatus)> {
-        let vec_buf = self.wal_log.write().await.load().await;
-        if vec_buf.is_empty() {
-            return None;
-        }
-        for (mtype, block_bytes) in vec_buf {
-            let log_type: LogType = mtype.into();
-            info!("load wal log: type {:?}", log_type);
-            match log_type {
-                LogType::FinalizeBlock => match Block::decode(block_bytes.as_slice()) {
-                    Ok(block) => match get_block_hash(crypto_client(), block.header.as_ref()).await
-                    {
-                        Ok(block_hash) => {
-                            let header = block.header.clone().unwrap();
-                            let height = header.height;
-                            if height == self.block_number && block_hash == self.block_hash {
-                                info!(
-                                    "wal get commited block({}): ignore it. hash: 0x{}",
-                                    height,
-                                    hex::encode(&block_hash)
-                                );
-                            } else {
-                                info!(
-                                    "wal redo block({}): hash: 0x{}",
-                                    height,
-                                    hex::encode(&block_hash)
-                                );
-                                match self.process_block(block, true).await {
-                                    Ok(config) => return Some(config),
-                                    Err(e) => {
-                                        warn!("wal redo failed: {}", e.to_string());
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("wal get block hash failed: {}", e.to_string());
-                        }
-                    },
-                    Err(e) => {
-                        warn!("wal decode Block failed: {}", e);
-                    }
-                },
-                tp => {
-                    panic!("load wal log error: get type: {tp:?}, correct type: LogType::FinalizeBlock");
-                }
-            }
-        }
-        self.wal_log
-            .write()
-            .await
-            .clear_file()
-            .await
-            .map_err(|e| {
-                panic!("wal clear file error: {e}");
-            })
-            .unwrap();
-        None
     }
 }

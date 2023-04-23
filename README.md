@@ -179,7 +179,3 @@ Controller ->> storage: store_data()
 Controller -->> Consensue: reconfigure(status)
 Consensue ->> Consensue: store()
 ```
-
-> 其中还实现了 WAl(Write Ahead Log 预写日志) 来保障出块过程的原子性：
-> 每次进行最终化区块(chain-finalize_block)的操作时会先将相关信息写入wal(chain-wal_save_message)，在完成最终化之后再将相关信息清除(wal-clean_file)，这样如果在操作过程中发生异常情况导致操作中断，操作的相关信息仍然保留在wal中，再次启动controller时(controller-init)会读取wal中的内容(chain-load_wal_log)，若读到其中有finalize_block操作证明上次程序在最终化区块过程中发生异常导致操作中断，则根据wal中的相关信息继续完成操作，若未读到则正常启动。
-
