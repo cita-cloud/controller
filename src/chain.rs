@@ -232,43 +232,46 @@ impl Chain {
             .height;
 
         // execute block, executed_blocks_hash == state_root
-        let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
+        {
+            let (executed_blocks_status, executed_blocks_hash) = exec_block(block.clone()).await;
 
-        info!(
-            "execute block({}) {}: state_root: 0x{}. hash: 0x{}",
-            block_height,
-            executed_blocks_status,
-            hex::encode(&executed_blocks_hash),
-            hex::encode(&block_hash),
-        );
+            info!(
+                "execute block({}) {}: state_root: 0x{}. hash: 0x{}",
+                block_height,
+                executed_blocks_status,
+                hex::encode(&executed_blocks_hash),
+                hex::encode(&block_hash),
+            );
 
-        match executed_blocks_status {
-            StatusCodeEnum::Success => {}
-            StatusCodeEnum::ReenterBlock => {
-                warn!(
-                    "ReenterBlock({}): status: {}, state_root: 0x{}",
-                    block_height,
-                    executed_blocks_status,
-                    hex::encode(&executed_blocks_hash)
-                );
-                // The genesis block does not allow reenter
-                if block_height == 0 {
-                    return Err(StatusCodeEnum::ReenterBlock);
+            match executed_blocks_status {
+                StatusCodeEnum::Success => {}
+                StatusCodeEnum::ReenterBlock => {
+                    warn!(
+                        "ReenterBlock({}): status: {}, state_root: 0x{}",
+                        block_height,
+                        executed_blocks_status,
+                        hex::encode(&executed_blocks_hash)
+                    );
+                    // The genesis block does not allow reenter
+                    if block_height == 0 {
+                        return Err(StatusCodeEnum::ReenterBlock);
+                    }
+                }
+                status_code => {
+                    return Err(status_code);
                 }
             }
-            status_code => {
-                return Err(status_code);
+
+            // if state_root is not empty should verify it
+            if block.state_root.is_empty() {
+                block.state_root = executed_blocks_hash;
+            } else if block.state_root != executed_blocks_hash {
+                warn!("finalize block failed: check state_root error");
+                return Err(StatusCodeEnum::StateRootCheckError);
             }
         }
 
-        // if state_root is not empty should verify it
-        if block.state_root.is_empty() {
-            block.state_root = executed_blocks_hash;
-        } else if block.state_root != executed_blocks_hash {
-            warn!("finalize block failed: check state_root error");
-            return Err(StatusCodeEnum::StateRootCheckError);
-        }
-
+        // persistence to storage
         {
             let block_with_stateroot_bytes = {
                 let mut buf = Vec::with_capacity(block.encoded_len());
@@ -342,6 +345,7 @@ impl Chain {
             );
         }
 
+        // success and print pool status
         {
             let (pool_len, pool_quota) = self.pool.read().await.pool_status();
             info!(
