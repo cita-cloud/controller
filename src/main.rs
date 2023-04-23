@@ -1121,7 +1121,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                                         .await
                                     {
                                         chain.clear_candidate();
-                                        match chain.process_block(block, false).await {
+                                        match chain.process_block(block).await {
                                             Ok((consensus_config, mut status)) => {
                                                 reconfigure(consensus_config)
                                                     .await
