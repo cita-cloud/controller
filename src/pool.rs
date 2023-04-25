@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::get_tx_quota;
-use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
 use std::{
     borrow::Borrow,
     cmp::{Eq, PartialEq},
     collections::HashSet,
     hash::{Hash, Hasher},
 };
+
+use cita_cloud_proto::blockchain::{raw_transaction::Tx, RawTransaction};
+
+use crate::util::get_tx_quota;
 
 // wrapper type for Hash
 #[derive(Clone)]

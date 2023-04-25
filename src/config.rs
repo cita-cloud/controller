@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use serde_derive::Deserialize;
 use std::fs;
+use tokio::sync::OnceCell;
 
 use cloud_util::{common::read_toml, tracer::LogConfig};
-use serde_derive::Deserialize;
-use tokio::sync::OnceCell;
 
 pub static CONFIG: OnceCell<ControllerConfig> = OnceCell::const_new();
 

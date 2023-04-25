@@ -12,27 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::system_config::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT};
-use crate::{
-    auth::Authentication, node_manager::ChainStatus, pool::Pool, system_config::SystemConfig,
-    util::*, GenesisBlock,
-};
-use cita_cloud_proto::status_code::StatusCodeEnum;
+use prost::Message;
+use std::{collections::HashSet, sync::Arc, time::Duration};
+use tokio::{sync::RwLock, time};
+
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx, Block, BlockHeader, RawTransaction, RawTransactions},
     client::CryptoClientTrait,
     common::{proposal_enum::Proposal, ConsensusConfiguration, Hash, ProposalEnum},
+    status_code::StatusCodeEnum,
     storage::Regions,
 };
 use cloud_util::{
     common::get_tx_hash,
     crypto::{get_block_hash, hash_data},
-    storage::store_data,
     unix_now,
 };
-use prost::Message;
-use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio::{sync::RwLock, time};
+
+use crate::{
+    auth::Authentication,
+    grpc_client::{
+        consensus::check_block,
+        crypto_client,
+        executor::exec_block,
+        storage::{assemble_proposal, db_get_tx, store_data},
+    },
+    node_manager::ChainStatus,
+    pool::Pool,
+    system_config::SystemConfig,
+    system_config::{LOCK_ID_BLOCK_LIMIT, LOCK_ID_QUOTA_LIMIT},
+    util::*,
+    GenesisBlock,
+};
 
 #[derive(Eq, PartialEq)]
 pub enum ChainStep {
@@ -283,7 +294,6 @@ impl Chain {
             };
 
             store_data(
-                storage_client(),
                 i32::from(Regions::AllBlockData) as u32,
                 block_height.to_be_bytes().to_vec(),
                 block_with_stateroot_bytes,
@@ -311,7 +321,6 @@ impl Chain {
                             // if sys_config changed, store utxo tx hash into global region
                             let lock_id = utxo_tx.transaction.as_ref().unwrap().lock_id;
                             store_data(
-                                storage_client(),
                                 i32::from(Regions::Global) as u32,
                                 lock_id.to_be_bytes().to_vec(),
                                 utxo_tx.transaction_hash,

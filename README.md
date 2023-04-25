@@ -3,6 +3,7 @@
 `CITA-Cloud`中[controller微服务](https://github.com/cita-cloud/cita_cloud_proto/blob/master/protos/controller.proto)的实现。
 
 ## 编译docker镜像
+
 ```
 docker build -t citacloud/controller .
 ```
@@ -43,11 +44,12 @@ OPTIONS:
 ```
 
 参数：
+
 1. 微服务配置文件。
 
-    参见示例`example/config.toml`。
+   参见示例`example/config.toml`。
 
-    其中`[controller]`段为微服务本身的配置：
+   其中`[controller]`段为微服务本身的配置：
     * `domain` 节点的域名
     * `consensus_port` 共识微服务的gRPC端口
     * `controller_port` 控制器微服务的gRPC端口
@@ -60,18 +62,18 @@ OPTIONS:
     * `enable_metrics` 是metrics功能的开关
     * `node_address` 节点地址文件路径
 
-    其中`[controller.log_config]`段为微服务日志的配置：
+   其中`[controller.log_config]`段为微服务日志的配置：
     * `max_level` 日志等级
     * `filter` 日志过滤配置
     * `service_name` 服务名称，用作日志文件名与日志采集的服务名称
     * `rolling_file_path` 日志文件路径
     * `agent_endpoint` jaeger 采集端地址
-  
-    其中`[genesis_block]`段配置创世块相关的信息：
+
+   其中`[genesis_block]`段配置创世块相关的信息：
     * `prevhash` 默认全0
     * `timestamp` 创世块的时间戳
 
-    其中`[system_config]`配置初始的系统配置信息：
+   其中`[system_config]`配置初始的系统配置信息：
     * `admin` 管理员账户地址
     * `block_interval` 出块间隔
     * `chain_id` 链的唯一标识
@@ -79,7 +81,6 @@ OPTIONS:
     * `version` 协议版本号
     * `block_limit` 交易查重历史区块上限
     * `quota_limit` 每个区块打包的交易`quota`上限
-
 
 ```shell
 $ controller run -c example/config.toml
@@ -122,11 +123,13 @@ $ controller run -c example/config.toml
 ### 主要模块介绍
 
 #### genesis
+
 创世块本质是一个配置文件，里面配置了高度为0的创世块的内容。创世块里只有timestamp和prevhash两项内容，其它配置有另外单独的配置文件。
 
 初始化的时候会读取配置文件，然后生成相应的块结构。
 
 #### system_config
+
 本实现的区块链系统同时支持account和utxo两种类型的交易。但是utxo类型的交易只用于系统配置管理。
 
 初始化时需要一个单独的初始系统配置，给系统配置项赋予初值。

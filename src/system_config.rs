@@ -12,18 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::ControllerConfig;
-use crate::util::{storage_client, u32_decode, u64_decode};
-use cita_cloud_proto::blockchain::{
-    raw_transaction::Tx::UtxoTx, RawTransaction, UnverifiedUtxoTransaction,
-};
-use cita_cloud_proto::controller::SystemConfig as ProtoSystemConfig;
-use cita_cloud_proto::status_code::StatusCodeEnum;
-use cita_cloud_proto::storage::Regions;
-use cloud_util::{clean_0x, common::read_toml, storage::load_data};
 use prost::Message;
 use serde_derive::Deserialize;
 use std::collections::HashMap;
+
+use cita_cloud_proto::{
+    blockchain::{raw_transaction::Tx::UtxoTx, RawTransaction, UnverifiedUtxoTransaction},
+    controller::SystemConfig as ProtoSystemConfig,
+    status_code::StatusCodeEnum,
+    storage::Regions,
+};
+use cloud_util::{clean_0x, common::read_toml, storage::load_data};
+
+use crate::{
+    config::ControllerConfig,
+    grpc_client::storage_client,
+    util::{u32_decode, u64_decode},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SystemConfigFile {

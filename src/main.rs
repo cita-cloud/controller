@@ -23,47 +23,27 @@ mod protocol;
 #[macro_use]
 mod util;
 mod event;
+mod grpc_client;
+mod grpc_server;
 mod health_check;
 mod system_config;
 
 #[macro_use]
 extern crate tracing as logger;
 
-use crate::{
-    chain::ChainStep,
-    config::ControllerConfig,
-    controller::Controller,
-    event::EventTask,
-    node_manager::{ChainStatusInit, NodeAddress},
-    protocol::sync_manager::{SyncBlockRespond, SyncBlocks},
-    system_config::{
-        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
-        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_QUOTA_LIMIT, LOCK_ID_VALIDATORS,
-        LOCK_ID_VERSION,
-    },
-    util::{
-        clap_about, crypto_client, get_full_block, get_hash_in_range, init_grpc_client,
-        load_data_maybe_empty, reconfigure, storage_client, u64_decode,
-    },
-};
-use cita_cloud_proto::status_code::StatusCodeEnum;
-use cita_cloud_proto::{
-    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
-    client::CryptoClientTrait,
-    common::{
-        ConsensusConfiguration, ConsensusConfigurationResponse, Empty, Hash, Hashes, NodeNetInfo,
-        NodeStatus, Proof, Proposal, ProposalResponse, ProposalWithProof, StateRoot,
-    },
-    controller::SystemConfig,
-    controller::{
-        rpc_service_server::RpcService, rpc_service_server::RpcServiceServer, BlockNumber, Flag,
-        TransactionIndex,
-    },
-    health_check::health_server::HealthServer,
-    network::RegisterInfo,
-    storage::Regions,
-};
 use clap::Parser;
+use prost::Message;
+use std::{cmp::Ordering, collections::HashMap, net::AddrParseError, time::Duration};
+use tokio::{sync::mpsc, time};
+use tonic::transport::Server;
+
+use cita_cloud_proto::{
+    client::CryptoClientTrait, common::Empty,
+    controller::consensus2_controller_service_server::Consensus2ControllerServiceServer,
+    controller::rpc_service_server::RpcServiceServer, health_check::health_server::HealthServer,
+    network::network_msg_handler_service_server::NetworkMsgHandlerServiceServer,
+    network::RegisterInfo, status_code::StatusCodeEnum, storage::Regions,
+};
 use cloud_util::{
     crypto::{hash_data, sign_message},
     metrics::{run_metrics_exporter, MiddlewareLayer},
@@ -71,15 +51,33 @@ use cloud_util::{
     panic_hook::set_panic_handler,
     storage::{load_data, store_data},
 };
-use genesis::GenesisBlock;
-use health_check::HealthCheckServer;
-use prost::Message;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::net::AddrParseError;
-use std::time::Duration;
-use tokio::{sync::mpsc, time};
-use tonic::{transport::Server, Request, Response, Status};
+
+use crate::{
+    chain::ChainStep,
+    config::ControllerConfig,
+    controller::Controller,
+    event::EventTask,
+    genesis::GenesisBlock,
+    grpc_client::{
+        consensus::reconfigure,
+        crypto_client, init_grpc_client, network_client,
+        storage::{get_full_block, load_data_maybe_empty},
+        storage_client,
+    },
+    grpc_server::{
+        consensus_server::Consensus2ControllerServer, network_server::NetworkMsgHandlerServer,
+        rpc_server::RPCServer,
+    },
+    health_check::HealthCheckServer,
+    node_manager::{ChainStatus, ChainStatusInit, NodeAddress},
+    protocol::sync_manager::{sync_block_respond::Respond, SyncBlockRespond, SyncBlocks},
+    system_config::{
+        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
+        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_QUOTA_LIMIT, LOCK_ID_VALIDATORS,
+        LOCK_ID_VERSION,
+    },
+    util::{clap_about, u64_decode},
+};
 
 #[derive(Parser)]
 #[clap(version, about = clap_about())]
@@ -119,570 +117,6 @@ fn main() {
     }
 }
 
-// grpc server of RPC
-pub struct RPCServer {
-    controller: Controller,
-}
-
-impl RPCServer {
-    fn new(controller: Controller) -> Self {
-        RPCServer { controller }
-    }
-}
-
-#[tonic::async_trait]
-impl RpcService for RPCServer {
-    #[instrument(skip_all)]
-    async fn get_block_number(
-        &self,
-        request: Request<Flag>,
-    ) -> Result<Response<BlockNumber>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_number request: {:?}", request);
-
-        let flag = request.into_inner().flag;
-        self.controller
-            .rpc_get_block_number(flag)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e)),
-                |block_number| {
-                    let reply = Response::new(BlockNumber { block_number });
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn send_raw_transaction(
-        &self,
-        request: Request<RawTransaction>,
-    ) -> Result<Response<Hash>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("send_raw_transaction request: {:?}", request);
-
-        let raw_tx = request.into_inner();
-
-        self.controller
-            .rpc_send_raw_transaction(raw_tx, self.controller.config.enable_forward)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |tx_hash| {
-                    let reply = Response::new(Hash { hash: tx_hash });
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn send_raw_transactions(
-        &self,
-        request: Request<RawTransactions>,
-    ) -> Result<Response<Hashes>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("send_raw_transactions request: {:?}", request);
-
-        let raw_txs = request.into_inner();
-
-        self.controller
-            .batch_transactions(raw_txs, self.controller.config.enable_forward)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |hashes| {
-                    let reply = Response::new(hashes);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_block_by_hash(
-        &self,
-        request: Request<Hash>,
-    ) -> Result<Response<CompactBlock>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_by_hash request: {:?}", request);
-
-        let hash = request.into_inner();
-
-        self.controller
-            .rpc_get_block_by_hash(hash.hash)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |block| {
-                    let reply = Response::new(block);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_height_by_hash(
-        &self,
-        request: Request<Hash>,
-    ) -> Result<Response<BlockNumber>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_height_by_hash request: {:?}", request);
-
-        let hash = request.into_inner().hash;
-
-        self.controller
-            .rpc_get_height_by_hash(hash)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |height| {
-                    let reply = Response::new(height);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_block_by_number(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<tonic::Response<CompactBlock>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_by_number request: {:?}", request);
-
-        let block_number = request.into_inner().block_number;
-
-        self.controller
-            .rpc_get_block_by_number(block_number)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |block| {
-                    let reply = Response::new(block);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_state_root_by_number(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<tonic::Response<StateRoot>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_state_root_by_number request: {:?}", request);
-
-        let height: u64 = request.into_inner().block_number;
-
-        self.controller
-            .rpc_get_state_root_by_number(height)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |state_root| {
-                    let reply = Response::new(state_root);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_proof_by_number(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<tonic::Response<Proof>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_proof_by_number request: {:?}", request);
-
-        let height: u64 = request.into_inner().block_number;
-
-        self.controller
-            .rpc_get_proof_by_number(height)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |proof| {
-                    let reply = Response::new(proof);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_block_detail_by_number(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<tonic::Response<Block>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_detail_by_number request: {:?}", request);
-
-        let block_number = request.into_inner().block_number;
-
-        self.controller
-            .rpc_get_block_detail_by_number(block_number)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |block| {
-                    let reply = Response::new(block);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_transaction(
-        &self,
-        request: Request<Hash>,
-    ) -> Result<tonic::Response<RawTransaction>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_by_number request: {:?}", request);
-
-        let hash = request.into_inner();
-
-        self.controller
-            .rpc_get_transaction(hash.hash)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |raw_tx| {
-                    let reply = Response::new(raw_tx);
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_system_config(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<SystemConfig>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_system_config request: {:?}", request);
-
-        self.controller.rpc_get_system_config().await.map_or_else(
-            |e| Err(Status::invalid_argument(e.to_string())),
-            |sys_config| {
-                let reply = Response::new(sys_config.generate_proto_sys_config());
-                Ok(reply)
-            },
-        )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_system_config_by_number(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<Response<SystemConfig>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_system_config_by_number request: {:?}", request);
-
-        let height: u64 = request.into_inner().block_number;
-
-        let mut initial_sys_config = self.controller.initial_sys_config.clone();
-        let utxo_tx_hashes = self
-            .controller
-            .rpc_get_system_config()
-            .await
-            .unwrap()
-            .utxo_tx_hashes;
-
-        for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
-            let hash = utxo_tx_hashes.get(&lock_id).unwrap().to_owned();
-            if hash != vec![0u8; 33] {
-                let hash_in_range = get_hash_in_range(hash, height)
-                    .await
-                    .map_err(|e| Status::invalid_argument(e.to_string()))?;
-                if hash_in_range != vec![0u8; 33] {
-                    //modify sys_config by utxo_tx
-                    let res = initial_sys_config
-                        .modify_sys_config_by_utxotx_hash(hash_in_range)
-                        .await;
-                    if res != StatusCodeEnum::Success {
-                        return Err(Status::invalid_argument(res.to_string()));
-                    }
-                }
-            }
-        }
-
-        let reply = Response::new(initial_sys_config.generate_proto_sys_config());
-
-        Ok(reply)
-    }
-
-    #[instrument(skip_all)]
-    async fn get_block_hash(
-        &self,
-        request: Request<BlockNumber>,
-    ) -> Result<Response<Hash>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_block_hash request: {:?}", request);
-
-        let block_number = request.into_inner().block_number;
-
-        self.controller
-            .rpc_get_block_hash(block_number)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |block_hash| {
-                    let reply = Response::new(Hash { hash: block_hash });
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_transaction_block_number(
-        &self,
-        request: Request<Hash>,
-    ) -> Result<Response<BlockNumber>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_transaction_block_number request: {:?}", request);
-
-        let tx_hash = request.into_inner().hash;
-
-        self.controller
-            .rpc_get_tx_block_number(tx_hash)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |block_number| {
-                    let reply = Response::new(BlockNumber { block_number });
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn get_transaction_index(
-        &self,
-        request: Request<Hash>,
-    ) -> Result<Response<TransactionIndex>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_transaction_index request: {:?}", request);
-
-        let tx_hash = request.into_inner();
-
-        self.controller
-            .rpc_get_tx_index(tx_hash.hash)
-            .await
-            .map_or_else(
-                |e| Err(Status::invalid_argument(e.to_string())),
-                |tx_index| {
-                    let reply = Response::new(TransactionIndex { tx_index });
-                    Ok(reply)
-                },
-            )
-    }
-
-    #[instrument(skip_all)]
-    async fn add_node(
-        &self,
-        request: Request<NodeNetInfo>,
-    ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("add_node request: {:?}", request);
-
-        let info = request.into_inner();
-
-        let reply = Response::new(self.controller.rpc_add_node(info).await);
-
-        Ok(reply)
-    }
-
-    #[instrument(skip_all)]
-    async fn get_node_status(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<NodeStatus>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_node_status request: {:?}", request);
-
-        Ok(Response::new(
-            self.controller
-                .rpc_get_node_status(request.into_inner())
-                .await
-                .map_err(|e| Status::invalid_argument(e.to_string()))?,
-        ))
-    }
-}
-
-use cita_cloud_proto::controller::{
-    consensus2_controller_service_server::Consensus2ControllerService,
-    consensus2_controller_service_server::Consensus2ControllerServiceServer,
-};
-
-//grpc server for Consensus2ControllerService
-pub struct Consensus2ControllerServer {
-    controller: Controller,
-}
-
-impl Consensus2ControllerServer {
-    fn new(controller: Controller) -> Self {
-        Consensus2ControllerServer { controller }
-    }
-}
-
-#[tonic::async_trait]
-impl Consensus2ControllerService for Consensus2ControllerServer {
-    #[instrument(skip_all)]
-    async fn get_proposal(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<ProposalResponse>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("get_proposal request: {:?}", request);
-
-        self.controller.chain_get_proposal().await.map_or_else(
-            |e| {
-                warn!("rpc get proposal failed: {}", e.to_string());
-                Ok(Response::new(ProposalResponse {
-                    status: Some(e.into()),
-                    proposal: None,
-                }))
-            },
-            |(height, data)| {
-                let proposal = Proposal { height, data };
-                Ok(Response::new(ProposalResponse {
-                    status: Some(StatusCodeEnum::Success.into()),
-                    proposal: Some(proposal),
-                }))
-            },
-        )
-    }
-
-    #[instrument(skip_all)]
-    async fn check_proposal(
-        &self,
-        request: Request<Proposal>,
-    ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("check_proposal request: {:?}", request);
-
-        let proposal = request.into_inner();
-
-        let height = proposal.height;
-        let data = proposal.data;
-
-        match self.controller.chain_check_proposal(height, &data).await {
-            Err(e) => {
-                warn!("rpc check proposal({}) failed: {}", height, e.to_string());
-                Ok(Response::new(e.into()))
-            }
-            Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
-        }
-    }
-
-    #[instrument(skip_all)]
-    async fn commit_block(
-        &self,
-        request: Request<ProposalWithProof>,
-    ) -> Result<Response<ConsensusConfigurationResponse>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("commit_block request: {:?}", request);
-
-        let proposal_with_proof = request.into_inner();
-        let proposal = proposal_with_proof.proposal.unwrap();
-        let height = proposal.height;
-        let data = proposal.data;
-        let proof = proposal_with_proof.proof;
-
-        let config = {
-            let rd = self.controller.auth.read().await;
-            rd.get_system_config()
-        };
-
-        if height != u64::MAX {
-            self.controller
-                .chain_commit_block(height, &data, &proof)
-                .await
-                .map_or_else(
-                    |e| {
-                        warn!("rpc commit block({}) failed: {}", height, e.to_string());
-
-                        let con_cfg = ConsensusConfiguration {
-                            height,
-                            block_interval: config.block_interval,
-                            validators: config.validators,
-                        };
-                        Ok(Response::new(ConsensusConfigurationResponse {
-                            status: Some(e.into()),
-                            config: Some(con_cfg),
-                        }))
-                    },
-                    |r| {
-                        Ok(Response::new(ConsensusConfigurationResponse {
-                            status: Some(StatusCodeEnum::Success.into()),
-                            config: Some(r),
-                        }))
-                    },
-                )
-        } else {
-            let con_cfg = ConsensusConfiguration {
-                height: self.controller.get_status().await.height,
-                block_interval: config.block_interval,
-                validators: config.validators,
-            };
-            Ok(Response::new(ConsensusConfigurationResponse {
-                status: Some(StatusCodeEnum::Success.into()),
-                config: Some(con_cfg),
-            }))
-        }
-    }
-}
-
-use crate::node_manager::ChainStatus;
-use cita_cloud_proto::network::{
-    network_msg_handler_service_server::NetworkMsgHandlerService,
-    network_msg_handler_service_server::NetworkMsgHandlerServiceServer, NetworkMsg,
-};
-use util::network_client;
-
-// grpc server of network msg handler
-pub struct ControllerNetworkMsgHandlerServer {
-    controller: Controller,
-}
-
-impl ControllerNetworkMsgHandlerServer {
-    fn new(controller: Controller) -> Self {
-        ControllerNetworkMsgHandlerServer { controller }
-    }
-}
-
-#[tonic::async_trait]
-impl NetworkMsgHandlerService for ControllerNetworkMsgHandlerServer {
-    #[instrument(skip_all)]
-    async fn process_network_msg(
-        &self,
-        request: Request<NetworkMsg>,
-    ) -> Result<Response<cita_cloud_proto::common::StatusCode>, Status> {
-        cloud_util::tracer::set_parent(&request);
-        debug!("process_network_msg request: {:?}", request);
-
-        let msg = request.into_inner();
-        if msg.module != "controller" {
-            Ok(Response::new(StatusCodeEnum::ModuleNotController.into()))
-        } else {
-            let msg_type = msg.r#type.clone();
-            let msg_origin = msg.origin;
-            self.controller.process_network_msg(msg).await.map_or_else(
-                |e| {
-                    if e != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
-                        warn!(
-                            "rpc process network msg failed: {}. from: {:x}, type: {}",
-                            e.to_string(),
-                            msg_origin,
-                            msg_type
-                        );
-                    }
-                    Ok(Response::new(e.into()))
-                },
-                |_| Ok(Response::new(StatusCodeEnum::Success.into())),
-            )
-        }
-    }
-}
-
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     #[cfg(not(windows))]
@@ -690,9 +124,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     // read consensus-config.toml
     let mut config = ControllerConfig::new(&opts.config_path);
-    let enable_metrics = config.enable_metrics;
-    let metrics_port = config.metrics_port;
-    let metrics_buckets = config.metrics_buckets.clone();
 
     // init tracer
     cloud_util::tracer::init_tracer(config.domain.clone(), &config.log_config)
@@ -705,13 +136,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     info!("controller grpc port: {}", grpc_port);
 
-    let health_check_timeout = config.health_check_timeout;
-
-    info!("health check timeout: {}", health_check_timeout);
-
-    let http2_keepalive_interval = config.http2_keepalive_interval;
-    let http2_keepalive_timeout = config.http2_keepalive_timeout;
-    let tcp_keepalive = config.tcp_keepalive;
+    info!("health check timeout: {}", config.health_check_timeout);
 
     let mut server_retry_interval =
         time::interval(Duration::from_secs(config.server_retry_interval));
@@ -956,7 +381,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     )
     .await;
 
-    config.set_global();
+    config.clone().set_global();
     controller.init(current_block_number, sys_config).await;
 
     let controller_for_reconnect = controller.clone();
@@ -1061,7 +486,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         while let Some(event_task) = task_receiver.recv().await {
             match event_task {
                 EventTask::SyncBlockReq(req, origin) => {
-                    use crate::protocol::sync_manager::sync_block_respond::Respond;
                     let mut block_vec = Vec::new();
 
                     for h in req.start_height..=req.end_height {
@@ -1285,14 +709,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         StatusCodeEnum::FatalError
     })?;
 
-    let layer = if enable_metrics {
+    let layer = if config.enable_metrics {
         tokio::spawn(async move {
-            run_metrics_exporter(metrics_port).await.unwrap();
+            run_metrics_exporter(config.metrics_port).await.unwrap();
         });
 
         Some(
             tower::ServiceBuilder::new()
-                .layer(MiddlewareLayer::new(metrics_buckets))
+                .layer(MiddlewareLayer::new(config.metrics_buckets))
                 .into_inner(),
         )
     } else {
@@ -1300,6 +724,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     };
 
     info!("start controller grpc server");
+    let http2_keepalive_interval = config.http2_keepalive_interval;
+    let http2_keepalive_timeout = config.http2_keepalive_timeout;
+    let tcp_keepalive = config.tcp_keepalive;
     if let Some(layer) = layer {
         Server::builder()
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
@@ -1311,11 +738,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 Consensus2ControllerServer::new(controller.clone()),
             ))
             .add_service(NetworkMsgHandlerServiceServer::new(
-                ControllerNetworkMsgHandlerServer::new(controller.clone()),
+                NetworkMsgHandlerServer::new(controller.clone()),
             ))
             .add_service(HealthServer::new(HealthCheckServer::new(
                 controller,
-                health_check_timeout,
+                config.health_check_timeout,
             )))
             .serve(addr)
             .await
@@ -1333,11 +760,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 Consensus2ControllerServer::new(controller.clone()),
             ))
             .add_service(NetworkMsgHandlerServiceServer::new(
-                ControllerNetworkMsgHandlerServer::new(controller.clone()),
+                NetworkMsgHandlerServer::new(controller.clone()),
             ))
             .add_service(HealthServer::new(HealthCheckServer::new(
                 controller,
-                health_check_timeout,
+                config.health_check_timeout,
             )))
             .serve(addr)
             .await

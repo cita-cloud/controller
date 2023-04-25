@@ -12,11 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use prost::Message;
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, RwLock},
+    time,
+};
+
+use cita_cloud_proto::{
+    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
+    client::{CryptoClientTrait, NetworkClientTrait},
+    common::{
+        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo,
+        NodeStatus, PeerStatus, Proof, ProposalEnum, StateRoot,
+    },
+    controller::BlockNumber,
+    network::NetworkMsg,
+    status_code::StatusCodeEnum,
+    storage::Regions,
+};
+use cloud_util::{
+    clean_0x,
+    common::{get_tx_hash, h160_address_check},
+    crypto::{get_block_hash, hash_data, sign_message},
+    storage::load_data,
+    unix_now,
+};
+
 use crate::{
     auth::Authentication,
     chain::{Chain, ChainStep},
     config::ControllerConfig,
     event::EventTask,
+    grpc_client::{
+        consensus::reconfigure,
+        crypto_client,
+        network::{get_network_status, get_peers_info},
+        network_client,
+        storage::{
+            db_get_tx, get_compact_block, get_full_block, get_height_by_block_hash, get_proof,
+            get_state_root, load_tx_info,
+        },
+        storage_client,
+    },
     node_manager::{
         chain_status_respond::Respond, ChainStatus, ChainStatusInit, ChainStatusRespond,
         NodeAddress, NodeManager,
@@ -28,31 +66,6 @@ use crate::{
     system_config::SystemConfig,
     util::*,
     GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
-};
-use cita_cloud_proto::status_code::StatusCodeEnum;
-use cita_cloud_proto::{
-    blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
-    client::{CryptoClientTrait, NetworkClientTrait},
-    common::{
-        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo,
-        NodeStatus, PeerStatus, Proof, ProposalEnum, StateRoot,
-    },
-    controller::BlockNumber,
-    network::NetworkMsg,
-    storage::Regions,
-};
-use cloud_util::{
-    clean_0x,
-    common::{get_tx_hash, h160_address_check},
-    crypto::{get_block_hash, hash_data, sign_message},
-    storage::load_data,
-    unix_now,
-};
-use prost::Message;
-use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::{mpsc, RwLock},
-    time,
 };
 
 #[derive(Debug)]

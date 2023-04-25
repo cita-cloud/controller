@@ -12,13 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::{check_sig, crypto_client, get_compact_block, u64_decode};
-use cita_cloud_proto::common::{Address, Hash};
-use cita_cloud_proto::status_code::StatusCodeEnum;
-use cloud_util::{
-    common::h160_address_check,
-    crypto::{get_block_hash, hash_data},
-};
 use prost::Message;
 use rand::{seq::SliceRandom, thread_rng};
 use std::{
@@ -28,6 +21,20 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+
+use cita_cloud_proto::{
+    common::{Address, Hash},
+    status_code::StatusCodeEnum,
+};
+use cloud_util::{
+    common::h160_address_check,
+    crypto::{get_block_hash, hash_data},
+};
+
+use crate::{
+    grpc_client::{crypto::check_sig, crypto_client, storage::get_compact_block},
+    util::u64_decode,
+};
 
 #[derive(Debug)]
 pub struct ChainStatusWithFlag {
@@ -135,7 +142,6 @@ pub struct ChainStatusRespond {
 
 /// Nested message and enum types in `ChainStatusRespond`.
 pub mod chain_status_respond {
-
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Respond {
         #[prost(message, tag = "1")]

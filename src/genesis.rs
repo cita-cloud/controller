@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util::crypto_client;
-use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
-use cloud_util::{clean_0x, common::read_toml, crypto::hash_data};
 use prost::Message;
 use serde_derive::Deserialize;
+
+use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
+use cloud_util::{clean_0x, common::read_toml, crypto::hash_data};
+
+use crate::grpc_client::crypto_client;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
