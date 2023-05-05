@@ -94,7 +94,7 @@ impl Pool {
         }
     }
 
-    pub fn package(&mut self, height: u64) -> (Vec<RawTransaction>, u64) {
+    pub fn package(&mut self, height: u64) -> (Vec<Vec<u8>>, u64) {
         let block_limit = self.block_limit;
         self.txns
             .retain(|txn| tx_is_valid(&txn.0, height, block_limit));
@@ -103,7 +103,7 @@ impl Pool {
         for txn in self.txns.iter().cloned() {
             let tx_quota = get_tx_quota(&txn.0).unwrap();
             if quota_limit >= tx_quota {
-                pack_tx.push(txn.0);
+                pack_tx.push(get_raw_tx_hash(&txn.0).to_vec());
                 quota_limit -= tx_quota;
                 // 21000 is a basic tx quota, but the utxo's quota spend is 0
                 if quota_limit < 21000 {

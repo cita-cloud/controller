@@ -23,8 +23,8 @@ use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     client::{CryptoClientTrait, NetworkClientTrait},
     common::{
-        proposal_enum::Proposal, Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo,
-        NodeStatus, PeerStatus, Proof, ProposalEnum, StateRoot,
+        Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo, NodeStatus, PeerStatus,
+        Proof, ProposalInner, StateRoot,
     },
     controller::BlockNumber,
     network::NetworkMsg,
@@ -531,13 +531,14 @@ impl Controller {
         proposal_height: u64,
         data: &[u8],
     ) -> Result<(), StatusCodeEnum> {
-        let proposal_enum = ProposalEnum::decode(data).map_err(|_| {
-            warn!("check proposal failed: decode ProposalEnum failed");
+        let proposal_inner = ProposalInner::decode(data).map_err(|_| {
+            warn!("check proposal failed: decode ProposalInner failed");
             StatusCodeEnum::DecodeError
         })?;
-        let Proposal::BftProposal(bft_proposal) =
-            proposal_enum.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
-        let block = &bft_proposal.proposal.ok_or(StatusCodeEnum::NoneProposal)?;
+
+        let block = &proposal_inner
+            .proposal
+            .ok_or(StatusCodeEnum::NoneProposal)?;
         let header = block
             .header
             .as_ref()
@@ -587,11 +588,11 @@ impl Controller {
                     pre_height_bytes.clone(),
                 )
                 .await?;
-                if bft_proposal.pre_state_root != pre_state_root {
+                if proposal_inner.pre_state_root != pre_state_root {
                     warn!(
                             "check proposal({}) failed: pre_state_root: 0x{}, local pre_state_root: 0x{}",
                             block_height,
-                            hex::encode(&bft_proposal.pre_state_root),
+                            hex::encode(&proposal_inner.pre_state_root),
                             hex::encode(&pre_state_root),
                         );
                     return Err(StatusCodeEnum::ProposalCheckError);
@@ -642,20 +643,23 @@ impl Controller {
 
                 //check quota and transaction_root
                 let mut total_quota = 0;
-                let mut transantion_data = Vec::new();
-                let body = &block
+                let tx_hashes = &block
                     .body
                     .as_ref()
                     .ok_or(StatusCodeEnum::NoneBlockBody)?
-                    .body;
-                let tx_count = body.len();
-                for tx in body {
-                    total_quota += get_tx_quota(tx)?;
-                    if total_quota > sys_config.quota_limit {
-                        return Err(StatusCodeEnum::QuotaUsedExceed);
+                    .tx_hashes;
+                let tx_count = tx_hashes.len();
+                let mut transantion_data = Vec::new();
+                for tx_hash in tx_hashes {
+                    if let Some(tx) = self.pool.read().await.pool_get_tx(tx_hash) {
+                        total_quota += get_tx_quota(&tx)?;
+                        if total_quota > sys_config.quota_limit {
+                            return Err(StatusCodeEnum::QuotaUsedExceed);
+                        }
+                        transantion_data.extend_from_slice(tx_hash);
+                    } else {
+                        return Err(StatusCodeEnum::NoneRawTx);
                     }
-
-                    transantion_data.extend_from_slice(get_tx_hash(tx)?);
                 }
                 let transactions_root = hash_data(crypto_client(), &transantion_data).await?;
                 if transactions_root != header.transactions_root {
@@ -665,13 +669,6 @@ impl Controller {
                     );
                     return Err(StatusCodeEnum::ProposalCheckError);
                 }
-
-                //check transactions in block body
-                self.batch_transactions(
-                    block.body.to_owned().ok_or(StatusCodeEnum::NoneBlockBody)?,
-                    false,
-                )
-                .await?;
 
                 // add remote proposal
                 {

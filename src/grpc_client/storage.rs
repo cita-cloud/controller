@@ -17,7 +17,7 @@ use prost::Message;
 use cita_cloud_proto::{
     blockchain::{raw_transaction::Tx::UtxoTx, Block, CompactBlock, RawTransaction},
     client::StorageClientTrait,
-    common::{proposal_enum, BftProposal, Proof, ProposalEnum, StateRoot},
+    common::{Proof, ProposalInner, StateRoot},
     controller::BlockNumber,
     status_code::StatusCodeEnum,
     storage::{ExtKey, Regions},
@@ -32,17 +32,15 @@ pub async fn store_data(region: u32, key: Vec<u8>, value: Vec<u8>) -> StatusCode
     cloud_util::storage::store_data(storage_client(), region, key, value).await
 }
 
-pub async fn assemble_proposal(mut block: Block, height: u64) -> Result<Vec<u8>, StatusCodeEnum> {
-    block.proof.clear();
-    block.state_root.clear();
+pub async fn assemble_proposal(
+    block: &CompactBlock,
+    height: u64,
+) -> Result<Vec<u8>, StatusCodeEnum> {
     let pre_state_root = get_last_stateroot(height).await?;
 
-    let proposal = ProposalEnum {
-        proposal: Some(proposal_enum::Proposal::BftProposal(BftProposal {
-            proposal: Some(block),
-            pre_state_root,
-            pre_proof: vec![],
-        })),
+    let proposal = ProposalInner {
+        proposal: Some(block.clone()),
+        pre_state_root,
     };
 
     let mut proposal_bytes = Vec::with_capacity(proposal.encoded_len());
