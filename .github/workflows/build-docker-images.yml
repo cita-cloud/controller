@@ -1,4 +1,3 @@
-
 name: Build Docker Images
 
 on:
@@ -11,7 +10,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, Linux, alibaba-cloud]
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
     defaults:
       run:
         shell: bash

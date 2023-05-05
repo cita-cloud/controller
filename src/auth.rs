@@ -12,19 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    system_config::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
-    util::{get_compact_block, verify_tx_hash, verify_tx_signature},
-};
-use cita_cloud_proto::blockchain::{
-    raw_transaction::Tx::{NormalTx, UtxoTx},
-    RawTransaction, RawTransactions, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
-};
-use cita_cloud_proto::status_code::StatusCodeEnum;
 use prost::Message;
 use std::{
     collections::{HashMap, HashSet},
     iter::FromIterator,
+};
+
+use cita_cloud_proto::{
+    blockchain::{
+        raw_transaction::Tx::{NormalTx, UtxoTx},
+        RawTransaction, RawTransactions, Transaction, UnverifiedUtxoTransaction, UtxoTransaction,
+    },
+    status_code::StatusCodeEnum,
+};
+
+use crate::{
+    grpc_client::{
+        crypto::{verify_tx_hash, verify_tx_signature},
+        storage::get_compact_block,
+    },
+    system_config::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
 };
 
 #[derive(Clone)]

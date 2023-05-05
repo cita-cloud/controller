@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::controller::Controller;
+use cloud_util::unix_now;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tonic::{Request, Response, Status};
+
 use cita_cloud_proto::health_check::{
     health_check_response::ServingStatus, health_server::Health, HealthCheckRequest,
     HealthCheckResponse,
 };
-use cloud_util::unix_now;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tonic::{Request, Response, Status};
+
+use crate::controller::Controller;
 
 // grpc server of Health Check
 pub struct HealthCheckServer {

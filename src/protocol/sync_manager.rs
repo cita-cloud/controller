@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{collections::BTreeMap, sync::Arc};
+use tokio::sync::RwLock;
+
+use cita_cloud_proto::{blockchain::Block, common::Address};
+
 use crate::{
     config::ControllerConfig,
     node_manager::{ChainStatus, NodeAddress},
 };
-use cita_cloud_proto::{blockchain::Block, common::Address};
-use std::{collections::BTreeMap, sync::Arc};
-use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct SyncManager {
