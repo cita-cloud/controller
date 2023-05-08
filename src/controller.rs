@@ -650,6 +650,7 @@ impl Controller {
                     .tx_hashes;
                 let tx_count = tx_hashes.len();
                 let mut transantion_data = Vec::new();
+                let mut miss_tx_hash_list = Vec::new();
                 for tx_hash in tx_hashes {
                     if let Some(tx) = self.pool.read().await.pool_get_tx(tx_hash) {
                         total_quota += get_tx_quota(&tx)?;
@@ -658,9 +659,27 @@ impl Controller {
                         }
                         transantion_data.extend_from_slice(tx_hash);
                     } else {
-                        return Err(StatusCodeEnum::NoneRawTx);
+                        miss_tx_hash_list.push(tx_hash);
                     }
                 }
+
+                if !miss_tx_hash_list.is_empty() {
+                    let addr = Address {
+                        address: proposer.to_vec(),
+                    };
+                    let origin = NodeAddress::from(&addr).0;
+                    for tx_hash in miss_tx_hash_list {
+                        self.unicast_sync_tx(
+                            origin,
+                            SyncTxRequest {
+                                tx_hash: tx_hash.to_vec(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Err(StatusCodeEnum::NoneRawTx);
+                }
+
                 let transactions_root = hash_data(crypto_client(), &transantion_data).await?;
                 if transactions_root != header.transactions_root {
                     warn!(
@@ -1105,6 +1124,7 @@ impl Controller {
         SyncBlockRespond,
         "sync_block_respond"
     );
+    impl_unicast!(unicast_sync_tx, SyncTxRequest, "sync_tx");
     impl_unicast!(unicast_sync_tx_respond, SyncTxRespond, "sync_tx_respond");
     impl_unicast!(
         unicast_chain_status_respond,
