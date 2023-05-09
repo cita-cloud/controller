@@ -16,9 +16,9 @@ use prost::Message;
 use serde_derive::Deserialize;
 
 use cita_cloud_proto::blockchain::{Block, BlockHeader, RawTransactions};
-use cloud_util::{clean_0x, common::read_toml, crypto::hash_data};
+use cloud_util::{clean_0x, common::read_toml};
 
-use crate::grpc_client::crypto_client;
+use crate::crypto::hash_data;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisBlock {
@@ -61,9 +61,7 @@ impl GenesisBlock {
             .encode(&mut block_header_bytes)
             .expect("encode block header failed");
 
-        hash_data(crypto_client(), &block_header_bytes)
-            .await
-            .unwrap()
+        hash_data(&block_header_bytes)
     }
 }
 

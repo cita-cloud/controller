@@ -26,13 +26,11 @@ use cita_cloud_proto::{
     common::{Address, Hash},
     status_code::StatusCodeEnum,
 };
-use cloud_util::{
-    common::h160_address_check,
-    crypto::{get_block_hash, hash_data},
-};
+use cloud_util::common::h160_address_check;
 
 use crate::{
-    grpc_client::{crypto::check_sig, crypto_client, storage::get_compact_block},
+    crypto::{check_sig, get_block_hash, hash_data},
+    grpc_client::storage::get_compact_block,
     util::u64_decode,
 };
 
@@ -75,9 +73,7 @@ impl ChainStatus {
     pub async fn check_hash(&self, own_status: &ChainStatus) -> Result<(), StatusCodeEnum> {
         if own_status.height >= self.height {
             let compact_block = get_compact_block(self.height).await?;
-            if get_block_hash(crypto_client(), compact_block.header.as_ref()).await?
-                != self.hash.clone().unwrap().hash
-            {
+            if get_block_hash(compact_block.header.as_ref())? != self.hash.clone().unwrap().hash {
                 warn!(
                     "check ChainStatus hash failed: {:?}",
                     StatusCodeEnum::HashCheckError
@@ -113,7 +109,7 @@ impl ChainStatusInit {
             StatusCodeEnum::EncodeError
         })?;
 
-        let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;
+        let msg_hash = hash_data(&chain_status_bytes);
         check_sig(
             &self.signature,
             &msg_hash,
@@ -125,8 +121,7 @@ impl ChainStatusInit {
                 .as_ref()
                 .ok_or(StatusCodeEnum::NoProvideAddress)?
                 .address,
-        )
-        .await?;
+        )?;
 
         chain_status.check(own_status).await?;
 

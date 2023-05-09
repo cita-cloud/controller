@@ -22,6 +22,7 @@ mod pool;
 mod protocol;
 #[macro_use]
 mod util;
+mod crypto;
 mod event;
 mod grpc_client;
 mod grpc_server;
@@ -38,14 +39,12 @@ use tokio::{sync::mpsc, time};
 use tonic::transport::Server;
 
 use cita_cloud_proto::{
-    client::CryptoClientTrait, common::Empty,
     controller::consensus2_controller_service_server::Consensus2ControllerServiceServer,
     controller::rpc_service_server::RpcServiceServer, health_check::health_server::HealthServer,
     network::network_msg_handler_service_server::NetworkMsgHandlerServiceServer,
     network::RegisterInfo, status_code::StatusCodeEnum, storage::Regions,
 };
 use cloud_util::{
-    crypto::{hash_data, sign_message},
     metrics::{run_metrics_exporter, MiddlewareLayer},
     network::register_network_msg_handler,
     panic_hook::set_panic_handler,
@@ -56,11 +55,12 @@ use crate::{
     chain::ChainStep,
     config::ControllerConfig,
     controller::Controller,
+    crypto::hash_data,
     event::EventTask,
     genesis::GenesisBlock,
     grpc_client::{
         consensus::reconfigure,
-        crypto_client, init_grpc_client, network_client,
+        init_grpc_client, network_client,
         storage::{get_full_block, load_data_maybe_empty},
         storage_client,
     },
@@ -99,6 +99,9 @@ struct RunOpts {
     /// Chain config path
     #[clap(short = 'c', long = "config", default_value = "config.toml")]
     config_path: String,
+    /// private key path
+    #[clap(short = 'p', long = "private_key_path", default_value = "private_key")]
+    private_key_path: String,
 }
 
 fn main() {
@@ -123,7 +126,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     tokio::spawn(cloud_util::signal::handle_signals());
 
     // read consensus-config.toml
-    let mut config = ControllerConfig::new(&opts.config_path);
+    let config = ControllerConfig::new(&opts.config_path);
 
     // init tracer
     cloud_util::tracer::init_tracer(config.domain.clone(), &config.log_config)
@@ -160,30 +163,6 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 status.to_string()
             ),
         }
-    }
-
-    let mut server_retry_interval =
-        time::interval(Duration::from_secs(config.server_retry_interval));
-    loop {
-        server_retry_interval.tick().await;
-        // register endpoint
-        {
-            if let Ok(crypto_info) = crypto_client().get_crypto_info(Empty {}).await {
-                if crypto_info.status.is_some() {
-                    match StatusCodeEnum::from(crypto_info.status.unwrap()) {
-                        StatusCodeEnum::Success => {
-                            config.hash_len = crypto_info.hash_len;
-                            config.signature_len = crypto_info.signature_len;
-                            config.address_len = crypto_info.address_len;
-                            info!("crypto_{} service ready", &crypto_info.name);
-                            break;
-                        }
-                        status => warn!("get crypto info failed: {:?}", status.to_string()),
-                    }
-                }
-            }
-        }
-        warn!("crypto service not ready: retrying...");
     }
 
     // load sys_config
@@ -378,6 +357,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         genesis,
         task_sender,
         initial_sys_config,
+        opts.private_key_path.clone(),
     )
     .await;
 
@@ -649,10 +629,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                             StatusCodeEnum::EncodeError
                         })
                         .unwrap();
-                    let msg_hash = hash_data(crypto_client(), &chain_status_bytes)
-                        .await
-                        .unwrap();
-                    let signature = sign_message(crypto_client(), &msg_hash).await.unwrap();
+                    let msg_hash = hash_data(&chain_status_bytes);
+
+                    #[cfg(feature = "sm")]
+                    let crypto = crypto_sm::crypto::Crypto::new(&opts.private_key_path);
+                    #[cfg(feature = "eth")]
+                    let crypto = crypto_eth::crypto::Crypto::new(&opts.private_key_path);
+
+                    let signature = crypto.sign_message(&msg_hash).unwrap();
 
                     controller_for_task
                         .broadcast_chain_status_init(ChainStatusInit {
