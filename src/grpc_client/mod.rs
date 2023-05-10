@@ -13,7 +13,6 @@
 // limitations under the License.
 
 pub(crate) mod consensus;
-pub(crate) mod crypto;
 pub(crate) mod executor;
 pub(crate) mod network;
 pub(crate) mod storage;
@@ -123,8 +122,4 @@ pub fn executor_client() -> RetryClient<ExecutorServiceClient<InterceptedSvc>> {
 
 pub fn network_client() -> RetryClient<NetworkServiceClient<InterceptedSvc>> {
     NETWORK_CLIENT.get().cloned().unwrap()
-}
-
-pub fn crypto_client() -> RetryClient<CryptoServiceClient<InterceptedSvc>> {
-    CRYPTO_CLIENT.get().cloned().unwrap()
 }

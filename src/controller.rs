@@ -21,7 +21,7 @@ use tokio::{
 
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
-    client::{CryptoClientTrait, NetworkClientTrait},
+    client::NetworkClientTrait,
     common::{
         Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo, NodeStatus, PeerStatus,
         Proof, ProposalInner, StateRoot,
@@ -34,7 +34,6 @@ use cita_cloud_proto::{
 use cloud_util::{
     clean_0x,
     common::{get_tx_hash, h160_address_check},
-    crypto::{get_block_hash, hash_data, sign_message},
     storage::load_data,
     unix_now,
 };
@@ -43,10 +42,10 @@ use crate::{
     auth::Authentication,
     chain::{Chain, ChainStep},
     config::ControllerConfig,
+    crypto::{check_transactions, get_block_hash, hash_data},
     event::EventTask,
     grpc_client::{
         consensus::reconfigure,
-        crypto_client,
         network::{get_network_status, get_peers_info},
         network_client,
         storage::{
@@ -156,9 +155,12 @@ pub struct Controller {
     pub initial_sys_config: SystemConfig,
 
     pub init_block_number: u64,
+
+    pub private_key_path: String,
 }
 
 impl Controller {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         config: ControllerConfig,
         current_block_number: u64,
@@ -167,6 +169,7 @@ impl Controller {
         genesis: GenesisBlock,
         task_sender: mpsc::Sender<EventTask>,
         initial_sys_config: SystemConfig,
+        private_key_path: String,
     ) -> Self {
         let node_address = hex::decode(clean_0x(&config.node_address)).unwrap();
         info!("node address: {}", &config.node_address);
@@ -225,6 +228,7 @@ impl Controller {
             forward_pool: Arc::new(RwLock::new(RawTransactions { body: vec![] })),
             initial_sys_config,
             init_block_number: current_block_number,
+            private_key_path,
         }
     }
 
@@ -314,16 +318,7 @@ impl Controller {
         raw_txs: RawTransactions,
         broadcast: bool,
     ) -> Result<Hashes, StatusCodeEnum> {
-        match crypto_client().check_transactions(raw_txs.clone()).await {
-            Ok(code) => StatusCodeEnum::from(code).is_success()?,
-            Err(e) => {
-                warn!(
-                    "batch transactions failed: check_transactions failed: {}",
-                    e.to_string()
-                );
-                return Err(StatusCodeEnum::CryptoServerNotReady);
-            }
-        }
+        check_transactions(&raw_txs).is_success()?;
 
         let mut hashes = Vec::new();
         {
@@ -543,7 +538,7 @@ impl Controller {
             .header
             .as_ref()
             .ok_or(StatusCodeEnum::NoneBlockHeader)?;
-        let block_hash = get_block_hash(crypto_client(), block.header.as_ref()).await?;
+        let block_hash = get_block_hash(block.header.as_ref())?;
         let block_height = header.height;
 
         //check height is consistent
@@ -680,7 +675,7 @@ impl Controller {
                     return Err(StatusCodeEnum::NoneRawTx);
                 }
 
-                let transactions_root = hash_data(crypto_client(), &transantion_data).await?;
+                let transactions_root = hash_data(&transantion_data);
                 if transactions_root != header.transactions_root {
                     warn!(
                         "check proposal({}) failed: header transactions_root: {}, controller calculate: {}",
@@ -1208,7 +1203,7 @@ impl Controller {
             chain_id: config.chain_id,
             height,
             hash: Some(Hash {
-                hash: get_block_hash(crypto_client(), compact_block.header.as_ref()).await?,
+                hash: get_block_hash(compact_block.header.as_ref())?,
             }),
             address: Some(self.local_address.clone()),
         })
@@ -1352,8 +1347,14 @@ impl Controller {
             warn!("make csi failed: encode ChainStatus failed");
             StatusCodeEnum::EncodeError
         })?;
-        let msg_hash = hash_data(crypto_client(), &chain_status_bytes).await?;
-        let signature = sign_message(crypto_client(), &msg_hash).await?;
+        let msg_hash = hash_data(&chain_status_bytes);
+
+        #[cfg(feature = "sm")]
+        let crypto = crypto_sm::crypto::Crypto::new(&self.private_key_path);
+        #[cfg(feature = "eth")]
+        let crypto = crypto_eth::crypto::Crypto::new(&self.private_key_path);
+
+        let signature = crypto.sign_message(&msg_hash)?;
 
         Ok(ChainStatusInit {
             chain_status: Some(own_status),

@@ -27,10 +27,8 @@ use cita_cloud_proto::{
 };
 
 use crate::{
-    grpc_client::{
-        crypto::{verify_tx_hash, verify_tx_signature},
-        storage::get_compact_block,
-    },
+    crypto::{verify_tx_hash, verify_tx_signature},
+    grpc_client::storage::get_compact_block,
     system_config::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
 };
 
