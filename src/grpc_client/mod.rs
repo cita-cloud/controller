@@ -22,7 +22,6 @@ use tokio::sync::OnceCell;
 use cita_cloud_proto::{
     client::{ClientOptions, InterceptedSvc},
     consensus::consensus_service_client::ConsensusServiceClient,
-    crypto::crypto_service_client::CryptoServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
     network::network_service_client::NetworkServiceClient,
     retry::RetryClient,
@@ -38,8 +37,6 @@ pub static STORAGE_CLIENT: OnceCell<RetryClient<StorageServiceClient<Intercepted
 pub static EXECUTOR_CLIENT: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 pub static NETWORK_CLIENT: OnceCell<RetryClient<NetworkServiceClient<InterceptedSvc>>> =
-    OnceCell::const_new();
-pub static CRYPTO_CLIENT: OnceCell<RetryClient<CryptoServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 
 const CLIENT_NAME: &str = "controller";
@@ -89,18 +86,6 @@ pub fn init_grpc_client(config: &ControllerConfig) {
                 format!("http://127.0.0.1:{}", config.network_port),
             );
             match client_options.connect_network() {
-                Ok(retry_client) => retry_client,
-                Err(e) => panic!("client init error: {:?}", &e),
-            }
-        })
-        .unwrap();
-    CRYPTO_CLIENT
-        .set({
-            let client_options = ClientOptions::new(
-                CLIENT_NAME.to_string(),
-                format!("http://127.0.0.1:{}", config.crypto_port),
-            );
-            match client_options.connect_crypto() {
                 Ok(retry_client) => retry_client,
                 Err(e) => panic!("client init error: {:?}", &e),
             }
