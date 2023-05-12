@@ -40,8 +40,6 @@ pub struct ControllerConfig {
     pub consensus_port: u16,
     /// storage service port
     pub storage_port: u16,
-    /// crypto service port
-    pub crypto_port: u16,
     /// executor service port
     pub executor_port: u16,
     /// self node address file path
@@ -106,7 +104,6 @@ impl Default for ControllerConfig {
             network_port: 50000,
             consensus_port: 50001,
             storage_port: 50003,
-            crypto_port: 50005,
             executor_port: 50002,
             node_address: "".to_string(),
             validator_address: "".to_string(),
@@ -163,7 +160,6 @@ mod tests {
         assert_eq!(config.network_port, 50000);
         assert_eq!(config.consensus_port, 50001);
         assert_eq!(config.storage_port, 50003);
-        assert_eq!(config.crypto_port, 50005);
         assert_eq!(config.executor_port, 50002);
         assert_eq!(config.controller_port, 50004);
         assert_eq!(

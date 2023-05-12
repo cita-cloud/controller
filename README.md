@@ -54,7 +54,6 @@ OPTIONS:
     * `consensus_port` 共识微服务的gRPC端口
     * `controller_port` 控制器微服务的gRPC端口
     * `executor_port` 执行器微服务的gRPC端口
-    * `crypto_port` crypto微服务的gRPC端口
     * `network_port` 网络微服务的gRPC端口
     * `storage_port` 存储微服务的gRPC端口
     * `validator_address_len` 是共识使用的地址的长度
