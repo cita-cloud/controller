@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use cita_cloud_proto::{
-    blockchain::Block, client::ExecutorClientTrait, status_code::StatusCodeEnum,
+    blockchain::Block, client::EVMClientTrait, client::ExecutorClientTrait, common::Hash,
+    evm::ReceiptProof, status_code::StatusCodeEnum,
 };
 
-use crate::grpc_client::executor_client;
+use crate::grpc_client::{evm_client, executor_client};
 
 pub async fn exec_block(block: Block) -> (StatusCodeEnum, Vec<u8>) {
     match executor_client().exec(block).await {
@@ -26,14 +27,18 @@ pub async fn exec_block(block: Block) -> (StatusCodeEnum, Vec<u8>) {
                     .status
                     .unwrap_or_else(|| StatusCodeEnum::NoneStatusCode.into()),
             ),
-            hash_respond
-                .hash
-                .unwrap_or(cita_cloud_proto::common::Hash { hash: vec![] })
-                .hash,
+            hash_respond.hash.unwrap_or(Hash { hash: vec![] }).hash,
         ),
         Err(e) => {
             warn!("execute block failed: {}", e.to_string());
             (StatusCodeEnum::ExecuteServerNotReady, vec![])
         }
     }
+}
+
+pub async fn get_receipt_proof(hash: Hash) -> Result<ReceiptProof, StatusCodeEnum> {
+    evm_client().get_receipt_proof(hash).await.map_err(|e| {
+        warn!("get evm receipt proof failed: {}", e.to_string());
+        StatusCodeEnum::NoReceiptProof
+    })
 }

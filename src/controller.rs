@@ -26,7 +26,7 @@ use cita_cloud_proto::{
         Address, ConsensusConfiguration, Empty, Hash, Hashes, NodeNetInfo, NodeStatus, PeerStatus,
         Proof, ProposalInner, StateRoot,
     },
-    controller::BlockNumber,
+    controller::{BlockNumber, CrossChainProof},
     network::NetworkMsg,
     status_code::StatusCodeEnum,
     storage::Regions,
@@ -46,6 +46,7 @@ use crate::{
     event::EventTask,
     grpc_client::{
         consensus::reconfigure,
+        executor::get_receipt_proof,
         network::{get_network_status, get_peers_info},
         network_client,
         storage::{
@@ -504,6 +505,34 @@ impl Controller {
             init_block_number: self.init_block_number,
         };
         Ok(node_status)
+    }
+
+    pub async fn rpc_get_cross_chain_proof(
+        &self,
+        hash: Hash,
+    ) -> Result<CrossChainProof, StatusCodeEnum> {
+        let receipt_proof = get_receipt_proof(hash).await?;
+        if receipt_proof.receipt.is_empty() || receipt_proof.roots_info.is_none() {
+            warn!("not get receipt or roots_info");
+            return Err(StatusCodeEnum::NoReceiptProof);
+        }
+        let height = receipt_proof.roots_info.clone().unwrap().height;
+        let full_block = get_full_block(height).await?;
+        let compact_block = get_compact_block(height).await?;
+        let sys_con = self.rpc_get_system_config().await?;
+        let pre_state_root = get_state_root(height - 1).await?.state_root;
+        let proposal = ProposalInner {
+            pre_state_root,
+            proposal: Some(compact_block),
+        };
+        Ok(CrossChainProof {
+            version: sys_con.version,
+            chain_id: sys_con.chain_id,
+            proposal: Some(proposal),
+            receipt_proof: Some(receipt_proof),
+            proof: full_block.proof,
+            state_root: full_block.state_root,
+        })
     }
 
     pub async fn chain_get_proposal(&self) -> Result<(u64, Vec<u8>), StatusCodeEnum> {
