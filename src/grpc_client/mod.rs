@@ -17,24 +17,25 @@ pub(crate) mod executor;
 pub(crate) mod network;
 pub(crate) mod storage;
 
-use tokio::sync::OnceCell;
-
+use crate::config::ControllerConfig;
 use cita_cloud_proto::{
     client::{ClientOptions, InterceptedSvc},
     consensus::consensus_service_client::ConsensusServiceClient,
+    evm::rpc_service_client::RpcServiceClient as EvmServiceClient,
     executor::executor_service_client::ExecutorServiceClient,
     network::network_service_client::NetworkServiceClient,
     retry::RetryClient,
     storage::storage_service_client::StorageServiceClient,
 };
-
-use crate::config::ControllerConfig;
+use tokio::sync::OnceCell;
 
 pub static CONSENSUS_CLIENT: OnceCell<RetryClient<ConsensusServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 pub static STORAGE_CLIENT: OnceCell<RetryClient<StorageServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 pub static EXECUTOR_CLIENT: OnceCell<RetryClient<ExecutorServiceClient<InterceptedSvc>>> =
+    OnceCell::const_new();
+pub static EVM_CLIENT: OnceCell<RetryClient<EvmServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
 pub static NETWORK_CLIENT: OnceCell<RetryClient<NetworkServiceClient<InterceptedSvc>>> =
     OnceCell::const_new();
@@ -79,6 +80,18 @@ pub fn init_grpc_client(config: &ControllerConfig) {
             }
         })
         .unwrap();
+    EVM_CLIENT
+        .set({
+            let client_options = ClientOptions::new(
+                CLIENT_NAME.to_string(),
+                format!("http://127.0.0.1:{}", config.executor_port),
+            );
+            match client_options.connect_evm() {
+                Ok(retry_client) => retry_client,
+                Err(e) => panic!("client init error: {:?}", &e),
+            }
+        })
+        .unwrap();
     NETWORK_CLIENT
         .set({
             let client_options = ClientOptions::new(
@@ -103,6 +116,10 @@ pub fn storage_client() -> RetryClient<StorageServiceClient<InterceptedSvc>> {
 
 pub fn executor_client() -> RetryClient<ExecutorServiceClient<InterceptedSvc>> {
     EXECUTOR_CLIENT.get().cloned().unwrap()
+}
+
+pub fn evm_client() -> RetryClient<EvmServiceClient<InterceptedSvc>> {
+    EVM_CLIENT.get().cloned().unwrap()
 }
 
 pub fn network_client() -> RetryClient<NetworkServiceClient<InterceptedSvc>> {

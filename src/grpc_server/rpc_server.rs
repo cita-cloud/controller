@@ -14,6 +14,7 @@
 
 use tonic::{Request, Response, Status};
 
+use cita_cloud_proto::controller::CrossChainProof;
 use cita_cloud_proto::{
     blockchain::{Block, CompactBlock, RawTransaction, RawTransactions},
     common::{Empty, Hash, Hashes, NodeNetInfo, NodeStatus, Proof, StateRoot},
@@ -411,6 +412,19 @@ impl RpcService for RPCServer {
         Ok(Response::new(
             self.controller
                 .rpc_get_node_status(request.into_inner())
+                .await
+                .map_err(|e| Status::invalid_argument(e.to_string()))?,
+        ))
+    }
+
+    #[instrument(skip_all)]
+    async fn get_cross_chain_proof(
+        &self,
+        request: Request<Hash>,
+    ) -> Result<Response<CrossChainProof>, Status> {
+        Ok(Response::new(
+            self.controller
+                .rpc_get_cross_chain_proof(request.into_inner())
                 .await
                 .map_err(|e| Status::invalid_argument(e.to_string()))?,
         ))
