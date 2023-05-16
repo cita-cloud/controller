@@ -517,7 +517,6 @@ impl Controller {
             return Err(StatusCodeEnum::NoReceiptProof);
         }
         let height = receipt_proof.roots_info.clone().unwrap().height;
-        let full_block = get_full_block(height).await?;
         let compact_block = get_compact_block(height).await?;
         let sys_con = self.rpc_get_system_config().await?;
         let pre_state_root = get_state_root(height - 1).await?.state_root;
@@ -530,8 +529,8 @@ impl Controller {
             chain_id: sys_con.chain_id,
             proposal: Some(proposal),
             receipt_proof: Some(receipt_proof),
-            proof: full_block.proof,
-            state_root: full_block.state_root,
+            proof: get_proof(height).await?.proof,
+            state_root: get_state_root(height).await?.state_root,
         })
     }
 
