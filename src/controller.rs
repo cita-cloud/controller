@@ -983,6 +983,7 @@ impl Controller {
                         // todo check origin
                         Some(Respond::MissBlock(node)) => {
                             let node_orign = NodeAddress::from(&node);
+                            warn!("misbehavior: MissBlock({})", node_orign);
                             controller_clone.delete_global_status(&node_orign).await;
                             controller_clone
                                 .node_manager
@@ -1076,6 +1077,7 @@ impl Controller {
                 match sync_tx_respond.respond {
                     Some(Respond::MissTx(node)) => {
                         let node_orign = NodeAddress::from(&node);
+                        warn!("misbehavior: MissTx({})", node_orign);
                         self.node_manager.set_misbehavior_node(&node_orign).await?;
                         self.delete_global_status(&node_orign).await;
                     }
