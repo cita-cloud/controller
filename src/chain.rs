@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use prost::Message;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{cmp::Ordering, collections::HashSet, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
 
 use cita_cloud_proto::{
@@ -103,7 +103,7 @@ impl Chain {
                     warn!("executor service not ready: retrying...")
                 }
                 Err(e) => {
-                    panic!("check executor service failed: {e:?}");
+                    panic!("finalize genesis_block failed: {e:?}");
                 }
             }
         }
@@ -163,12 +163,7 @@ impl Chain {
                 ret
             };
             let tx_count = tx_hash_list.len();
-
-            let mut transantion_data = Vec::new();
-            for tx_hash in tx_hash_list.iter() {
-                transantion_data.extend_from_slice(tx_hash);
-            }
-            let transactions_root = hash_data(&transantion_data);
+            let transactions_root = hash_data(&tx_hash_list.concat());
 
             let header = BlockHeader {
                 prevhash: prevhash.clone(),
@@ -383,11 +378,10 @@ impl Chain {
                 height,
                 self.block_number + 1
             );
-            if height < self.block_number + 1 {
-                return Err(StatusCodeEnum::ProposalTooLow);
-            }
-            if height > self.block_number + 1 {
-                return Err(StatusCodeEnum::ProposalTooHigh);
+            match height.cmp(&(self.block_number + 1)) {
+                Ordering::Less => return Err(StatusCodeEnum::ProposalTooLow),
+                Ordering::Greater => return Err(StatusCodeEnum::ProposalTooHigh),
+                Ordering::Equal => (),
             }
         }
 
@@ -489,11 +483,10 @@ impl Chain {
                 height,
                 self.block_number + 1
             );
-            if height < self.block_number + 1 {
-                return Err(StatusCodeEnum::ProposalTooLow);
-            }
-            if height > self.block_number + 1 {
-                return Err(StatusCodeEnum::ProposalTooHigh);
+            match height.cmp(&(self.block_number + 1)) {
+                Ordering::Less => return Err(StatusCodeEnum::ProposalTooLow),
+                Ordering::Greater => return Err(StatusCodeEnum::ProposalTooHigh),
+                Ordering::Equal => (),
             }
         }
 
@@ -511,10 +504,9 @@ impl Chain {
         let compact_blk = extract_compact(block.clone());
         let proposal_bytes_for_check = assemble_proposal(&compact_blk, height).await?;
 
-        let status = check_block(height, proposal_bytes_for_check, block.proof.clone()).await;
-        if status != StatusCodeEnum::Success {
-            return Err(status);
-        }
+        check_block(height, proposal_bytes_for_check, block.proof.clone())
+            .await
+            .is_success()?;
 
         {
             let auth = self.auth.read().await;

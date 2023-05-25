@@ -44,24 +44,23 @@ impl NetworkMsgHandlerService for NetworkMsgHandlerServer {
 
         let msg = request.into_inner();
         if msg.module != "controller" {
-            Ok(Response::new(StatusCodeEnum::ModuleNotController.into()))
-        } else {
-            let msg_type = msg.r#type.clone();
-            let msg_origin = msg.origin;
-            self.controller.process_network_msg(msg).await.map_or_else(
-                |e| {
-                    if e != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 {
-                        warn!(
-                            "rpc process network msg failed: {}. from: {:x}, type: {}",
-                            e.to_string(),
-                            msg_origin,
-                            msg_type
-                        );
-                    }
-                    Ok(Response::new(e.into()))
-                },
-                |_| Ok(Response::new(StatusCodeEnum::Success.into())),
-            )
+            return Ok(Response::new(StatusCodeEnum::ModuleNotController.into()));
+        }
+
+        let msg_type = msg.r#type.clone();
+        let msg_origin = msg.origin;
+        match self.controller.process_network_msg(msg).await {
+            Ok(_) => Ok(Response::new(StatusCodeEnum::Success.into())),
+            Err(e) if e != StatusCodeEnum::HistoryDupTx || rand::random::<u16>() < 8 => {
+                warn!(
+                    "rpc process network msg failed: {}. from: {:x}, type: {}",
+                    e.to_string(),
+                    msg_origin,
+                    msg_type
+                );
+                Ok(Response::new(e.into()))
+            }
+            Err(e) => Ok(Response::new(e.into())),
         }
     }
 }
