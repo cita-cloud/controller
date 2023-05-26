@@ -67,25 +67,23 @@ pub async fn get_last_stateroot(h: u64) -> Result<Vec<u8>, StatusCodeEnum> {
 }
 
 pub async fn load_data_maybe_empty(region: u32, key: Vec<u8>) -> Result<Vec<u8>, StatusCodeEnum> {
-    storage_client()
-        .load(ExtKey { region, key })
-        .await
-        .map_or_else(
-            |e| {
-                warn!(
-                    "load data maybe empty failed: {:?}. region: {}",
-                    e.to_string(),
-                    region
-                );
-                Err(StatusCodeEnum::StorageServerNotReady)
-            },
-            |value| match StatusCodeEnum::from(value.status.ok_or(StatusCodeEnum::NoneStatusCode)?)
-            {
+    match storage_client().load(ExtKey { region, key }).await {
+        Ok(value) => {
+            match StatusCodeEnum::from(value.status.ok_or(StatusCodeEnum::NoneStatusCode)?) {
                 StatusCodeEnum::Success => Ok(value.value),
                 StatusCodeEnum::NotFound => Ok(vec![]),
                 statue => Err(statue),
-            },
-        )
+            }
+        }
+        Err(e) => {
+            warn!(
+                "load data maybe empty failed: {:?}. region: {}",
+                e.to_string(),
+                region
+            );
+            Err(StatusCodeEnum::StorageServerNotReady)
+        }
+    }
 }
 
 pub async fn get_full_block(height: u64) -> Result<Block, StatusCodeEnum> {

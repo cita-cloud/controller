@@ -22,7 +22,11 @@ use cita_cloud_proto::{
     status_code::StatusCodeEnum,
     storage::Regions,
 };
-use cloud_util::{clean_0x, common::read_toml, storage::load_data};
+use cloud_util::{
+    clean_0x,
+    common::read_toml,
+    storage::{load_data, store_data},
+};
 
 use crate::{
     config::ControllerConfig,
@@ -108,6 +112,143 @@ impl SystemConfig {
             validator_address_len: config.validator_address.len() / 2,
             is_danger: config.is_danger,
         }
+    }
+
+    pub async fn init(&mut self, config: &ControllerConfig) -> Result<(), StatusCodeEnum> {
+        for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
+            // region 0 global
+            match load_data(
+                storage_client(),
+                i32::from(Regions::Global) as u32,
+                lock_id.to_be_bytes().to_vec(),
+            )
+            .await
+            {
+                Ok(data_or_tx_hash) => {
+                    //data or tx_hash stored at this lock_id, read to update sys_config
+                    // region 1: tx_hash - tx
+                    if data_or_tx_hash.len() == config.hash_len as usize
+                        && lock_id != LOCK_ID_CHAIN_ID
+                    {
+                        info!(
+                            "update system config by utxo_tx hash: lock_id: {}, utxo_tx hash: 0x{}",
+                            lock_id,
+                            hex::encode(data_or_tx_hash.clone())
+                        );
+                        if self
+                            .modify_sys_config_by_utxotx_hash(data_or_tx_hash.clone())
+                            .await
+                            != StatusCodeEnum::Success
+                        {
+                            panic!("update system config by utxo_tx hash failed: lock_id: {}, utxo_tx hash: 0x{}", lock_id, hex::encode(data_or_tx_hash))
+                        }
+                    } else {
+                        info!("update system config by data: lock_id: {}", lock_id);
+                        if !self.match_data(lock_id, data_or_tx_hash, true) {
+                            panic!("match data failed: lock_id: {lock_id}");
+                        }
+                    }
+                }
+                Err(StatusCodeEnum::NotFound) => {
+                    //this lock_id is empty in local, store data from sys_config to local
+                    info!("update system config by file: lock_id: {}", lock_id);
+                    match lock_id {
+                        LOCK_ID_VERSION => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.version.to_be_bytes().to_vec(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_CHAIN_ID => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.chain_id.clone(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_ADMIN => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.admin.clone(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_BLOCK_INTERVAL => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.block_interval.to_be_bytes().to_vec(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_VALIDATORS => {
+                            let mut validators = Vec::new();
+                            for validator in self.validators.iter() {
+                                validators.append(&mut validator.clone());
+                            }
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                validators,
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_EMERGENCY_BRAKE => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                vec![],
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_BLOCK_LIMIT => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.block_limit.to_be_bytes().to_vec(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        LOCK_ID_QUOTA_LIMIT => {
+                            store_data(
+                                storage_client(),
+                                i32::from(Regions::Global) as u32,
+                                lock_id.to_be_bytes().to_vec(),
+                                self.quota_limit.to_be_bytes().to_vec(),
+                            )
+                            .await
+                            .is_success()?;
+                        }
+                        _ => {
+                            warn!(
+                                "update system config by file failed: unexpected lock_id: {}",
+                                lock_id
+                            );
+                        }
+                    };
+                }
+                Err(e) => panic!("load data failed: {e}. lock_id: {lock_id}"),
+            }
+        }
+        Ok(())
     }
 
     pub fn match_data(&mut self, lock_id: u64, data: Vec<u8>, is_init: bool) -> bool {

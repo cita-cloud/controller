@@ -46,22 +46,22 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         cloud_util::tracer::set_parent(&request);
         debug!("get_proposal request: {:?}", request);
 
-        self.controller.chain_get_proposal().await.map_or_else(
-            |e| {
-                warn!("rpc get proposal failed: {}", e.to_string());
-                Ok(Response::new(ProposalResponse {
-                    status: Some(e.into()),
-                    proposal: None,
-                }))
-            },
-            |(height, data)| {
+        match self.controller.chain_get_proposal().await {
+            Ok((height, data)) => {
                 let proposal = Proposal { height, data };
                 Ok(Response::new(ProposalResponse {
                     status: Some(StatusCodeEnum::Success.into()),
                     proposal: Some(proposal),
                 }))
-            },
-        )
+            }
+            Err(e) => {
+                warn!("rpc get proposal failed: {}", e.to_string());
+                Ok(Response::new(ProposalResponse {
+                    status: Some(e.into()),
+                    proposal: None,
+                }))
+            }
+        }
     }
 
     #[instrument(skip_all)]
@@ -95,7 +95,9 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
         debug!("commit_block request: {:?}", request);
 
         let proposal_with_proof = request.into_inner();
-        let proposal = proposal_with_proof.proposal.unwrap();
+        let proposal = proposal_with_proof
+            .proposal
+            .ok_or_else(|| Status::internal("missing proposal in ProposalWithProof request"))?;
         let height = proposal.height;
         let data = proposal.data;
         let proof = proposal_with_proof.proof;
@@ -105,41 +107,37 @@ impl Consensus2ControllerService for Consensus2ControllerServer {
             rd.get_system_config()
         };
 
-        if height != u64::MAX {
+        let result = if height != u64::MAX {
             self.controller
                 .chain_commit_block(height, &data, &proof)
                 .await
-                .map_or_else(
-                    |e| {
-                        warn!("rpc commit block({}) failed: {}", height, e.to_string());
-
-                        let con_cfg = ConsensusConfiguration {
-                            height,
-                            block_interval: config.block_interval,
-                            validators: config.validators,
-                        };
-                        Ok(Response::new(ConsensusConfigurationResponse {
-                            status: Some(e.into()),
-                            config: Some(con_cfg),
-                        }))
-                    },
-                    |r| {
-                        Ok(Response::new(ConsensusConfigurationResponse {
-                            status: Some(StatusCodeEnum::Success.into()),
-                            config: Some(r),
-                        }))
-                    },
-                )
         } else {
-            let con_cfg = ConsensusConfiguration {
+            Ok(ConsensusConfiguration {
                 height: self.controller.get_status().await.height,
                 block_interval: config.block_interval,
-                validators: config.validators,
-            };
-            Ok(Response::new(ConsensusConfigurationResponse {
+                validators: config.validators.clone(),
+            })
+        };
+
+        let response = match result {
+            Ok(config) => Response::new(ConsensusConfigurationResponse {
                 status: Some(StatusCodeEnum::Success.into()),
-                config: Some(con_cfg),
-            }))
-        }
+                config: Some(config),
+            }),
+            Err(e) => {
+                warn!("rpc commit block({}) failed: {}", height, e);
+                let con_cfg = ConsensusConfiguration {
+                    height,
+                    block_interval: config.block_interval,
+                    validators: config.validators,
+                };
+                Response::new(ConsensusConfigurationResponse {
+                    status: Some(e.into()),
+                    config: Some(con_cfg),
+                })
+            }
+        };
+
+        Ok(response)
     }
 }

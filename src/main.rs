@@ -33,8 +33,7 @@ mod system_config;
 extern crate tracing as logger;
 
 use clap::Parser;
-use prost::Message;
-use std::{cmp::Ordering, collections::HashMap, net::AddrParseError, time::Duration};
+use std::{collections::HashMap, net::AddrParseError, time::Duration};
 use tokio::{sync::mpsc, time};
 use tonic::transport::Server;
 
@@ -48,34 +47,23 @@ use cloud_util::{
     metrics::{run_metrics_exporter, MiddlewareLayer},
     network::register_network_msg_handler,
     panic_hook::set_panic_handler,
-    storage::{load_data, store_data},
+    storage::load_data,
 };
 
 use crate::{
-    chain::ChainStep,
     config::ControllerConfig,
     controller::Controller,
-    crypto::hash_data,
     event::EventTask,
     genesis::GenesisBlock,
     grpc_client::{
-        consensus::reconfigure,
-        init_grpc_client, network_client,
-        storage::{get_full_block, load_data_maybe_empty},
-        storage_client,
+        init_grpc_client, network_client, storage::load_data_maybe_empty, storage_client,
     },
     grpc_server::{
         consensus_server::Consensus2ControllerServer, network_server::NetworkMsgHandlerServer,
         rpc_server::RPCServer,
     },
     health_check::HealthCheckServer,
-    node_manager::{ChainStatus, ChainStatusInit, NodeAddress},
-    protocol::sync_manager::{sync_block_respond::Respond, SyncBlockRespond, SyncBlocks},
-    system_config::{
-        LOCK_ID_ADMIN, LOCK_ID_BLOCK_INTERVAL, LOCK_ID_BLOCK_LIMIT, LOCK_ID_BUTTON,
-        LOCK_ID_CHAIN_ID, LOCK_ID_EMERGENCY_BRAKE, LOCK_ID_QUOTA_LIMIT, LOCK_ID_VALIDATORS,
-        LOCK_ID_VERSION,
-    },
+    node_manager::{ChainStatus, NodeAddress},
     util::{clap_about, u64_decode},
 };
 
@@ -213,138 +201,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
 
     let mut sys_config = system_config::SystemConfig::new(&opts.config_path);
     let initial_sys_config = sys_config.clone();
-    for lock_id in LOCK_ID_VERSION..LOCK_ID_BUTTON {
-        // region 0 global
-        match load_data(
-            storage_client(),
-            i32::from(Regions::Global) as u32,
-            lock_id.to_be_bytes().to_vec(),
-        )
-        .await
-        {
-            Ok(data_or_tx_hash) => {
-                //data or tx_hash stored at this lock_id, read to update sys_config
-                // region 1: tx_hash - tx
-                if data_or_tx_hash.len() == config.hash_len as usize && lock_id != LOCK_ID_CHAIN_ID
-                {
-                    info!(
-                        "update system config by utxo_tx hash: lock_id: {}, utxo_tx hash: 0x{}",
-                        lock_id,
-                        hex::encode(data_or_tx_hash.clone())
-                    );
-                    if sys_config
-                        .modify_sys_config_by_utxotx_hash(data_or_tx_hash.clone())
-                        .await
-                        != StatusCodeEnum::Success
-                    {
-                        panic!("update system config by utxo_tx hash failed: lock_id: {}, utxo_tx hash: 0x{}", lock_id, hex::encode(data_or_tx_hash))
-                    }
-                } else {
-                    info!("update system config by data: lock_id: {}", lock_id);
-                    if !sys_config.match_data(lock_id, data_or_tx_hash, true) {
-                        panic!("match data failed: lock_id: {lock_id}");
-                    }
-                }
-            }
-            Err(StatusCodeEnum::NotFound) => {
-                //this lock_id is empty in local, store data from sys_config to local
-                info!("update system config by file: lock_id: {}", lock_id);
-                match lock_id {
-                    LOCK_ID_VERSION => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.version.to_be_bytes().to_vec(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_CHAIN_ID => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.chain_id.clone(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_ADMIN => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.admin.clone(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_BLOCK_INTERVAL => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.block_interval.to_be_bytes().to_vec(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_VALIDATORS => {
-                        let mut validators = Vec::new();
-                        for validator in sys_config.validators.iter() {
-                            validators.append(&mut validator.clone());
-                        }
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            validators,
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_EMERGENCY_BRAKE => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            vec![],
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_BLOCK_LIMIT => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.block_limit.to_be_bytes().to_vec(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    LOCK_ID_QUOTA_LIMIT => {
-                        store_data(
-                            storage_client(),
-                            i32::from(Regions::Global) as u32,
-                            lock_id.to_be_bytes().to_vec(),
-                            sys_config.quota_limit.to_be_bytes().to_vec(),
-                        )
-                        .await
-                        .is_success()?;
-                    }
-                    _ => {
-                        warn!(
-                            "update system config by file failed: unexpected lock_id: {}",
-                            lock_id
-                        );
-                    }
-                };
-            }
-            Err(e) => panic!("load data failed: {e}. lock_id: {lock_id}"),
-        }
-    }
+    sys_config.init(&config).await?;
 
     // todo config
     let (task_sender, mut task_receiver) = mpsc::channel(64);
@@ -404,12 +261,11 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             short_interval.tick().await;
             {
                 tick += 1;
+                let height = controller_for_healthy.get_status().await.height;
                 if current_height == u64::MAX {
-                    current_height = controller_for_healthy.get_status().await.height;
+                    current_height = height;
                     tick = 0;
-                } else if controller_for_healthy.get_status().await.height == current_height
-                    && tick >= retry_limit
-                {
+                } else if height == current_height && tick >= retry_limit {
                     info!(
                         "inner healthy check: broadcast csi: height: {}, {}th time",
                         current_height, tick
@@ -423,17 +279,14 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                         .send(EventTask::BroadCastCSI)
                         .await
                         .unwrap();
-                    if controller_for_healthy.get_sync_state().await {
-                        controller_for_healthy.set_sync_state(false).await;
-                        controller_for_healthy.sync_manager.clear().await;
-                    }
+                    controller_for_healthy.set_sync_state(false).await;
                     retry_limit += tick;
                     tick = 0;
-                } else if controller_for_healthy.get_status().await.height < current_height {
+                } else if height < current_height {
                     unreachable!()
-                } else if controller_for_healthy.get_status().await.height > current_height {
+                } else if height > current_height {
                     // update current height
-                    current_height = controller_for_healthy.get_status().await.height;
+                    current_height = height;
                     tick = 0;
                     retry_limit = 0;
                 }
@@ -464,226 +317,9 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     tokio::spawn(async move {
         let mut old_status: HashMap<NodeAddress, ChainStatus> = HashMap::new();
         while let Some(event_task) = task_receiver.recv().await {
-            match event_task {
-                EventTask::SyncBlockReq(req, origin) => {
-                    let mut block_vec = Vec::new();
-
-                    for h in req.start_height..=req.end_height {
-                        if let Ok(block) = get_full_block(h).await {
-                            block_vec.push(block);
-                        } else {
-                            warn!("handle SyncBlockReq failed: get block({}) failed", h);
-                            break;
-                        }
-                    }
-
-                    if block_vec.len() as u64 != req.end_height - req.start_height + 1 {
-                        let sync_block_respond = SyncBlockRespond {
-                            respond: Some(Respond::MissBlock(
-                                controller_for_task.local_address.clone(),
-                            )),
-                        };
-                        controller_for_task
-                            .unicast_sync_block_respond(origin, sync_block_respond)
-                            .await;
-                    } else {
-                        info!(
-                            "send SyncBlockRespond: to origin: {:x}, height: {} - {}",
-                            origin, req.start_height, req.end_height
-                        );
-                        let sync_block = SyncBlocks {
-                            address: Some(controller_for_task.local_address.clone()),
-                            sync_blocks: block_vec,
-                        };
-                        let sync_block_respond = SyncBlockRespond {
-                            respond: Some(Respond::Ok(sync_block)),
-                        };
-                        controller_for_task
-                            .unicast_sync_block_respond(origin, sync_block_respond)
-                            .await;
-                    }
-                }
-                EventTask::SyncBlock => {
-                    debug!("receive SyncBlock event");
-                    let (global_address, global_status) =
-                        controller_for_task.get_global_status().await;
-                    let mut own_status = controller_for_task.get_status().await;
-                    // get chain lock means syncing
-                    controller_for_task.set_sync_state(true).await;
-                    {
-                        match {
-                            let chain = controller_for_task.chain.read().await;
-                            chain.next_step(&global_status).await
-                        } {
-                            ChainStep::SyncStep => {
-                                let mut syncing = false;
-                                {
-                                    let mut chain = controller_for_task.chain.write().await;
-                                    while let Some((addr, block)) = controller_for_task
-                                        .sync_manager
-                                        .remove_block(own_status.height + 1)
-                                        .await
-                                    {
-                                        chain.clear_candidate();
-                                        match chain.process_block(block).await {
-                                            Ok((consensus_config, mut status)) => {
-                                                reconfigure(consensus_config)
-                                                    .await
-                                                    .is_success()
-                                                    .unwrap();
-                                                status.address =
-                                                    Some(controller_for_task.local_address.clone());
-                                                controller_for_task
-                                                    .set_status(status.clone())
-                                                    .await;
-                                                own_status = status.clone();
-                                                if status.height
-                                                    % controller_for_task
-                                                        .config
-                                                        .send_chain_status_interval_sync
-                                                    == 0
-                                                {
-                                                    controller_for_task
-                                                        .broadcast_chain_status(status)
-                                                        .await;
-                                                }
-                                                syncing = true;
-                                            }
-                                            Err(e) => {
-                                                if (e as u64) % 100 == 0 {
-                                                    warn!("sync block failed: {}", e.to_string());
-                                                    continue;
-                                                }
-                                                warn!("sync block failed: {}. set remote misbehavior. origin: {}", NodeAddress::from(&addr), e.to_string());
-                                                let del_node_addr = NodeAddress::from(&addr);
-                                                let _ = controller_for_task
-                                                    .node_manager
-                                                    .set_misbehavior_node(&del_node_addr)
-                                                    .await;
-                                                if global_address == del_node_addr {
-                                                    let (ex_addr, ex_status) = controller_for_task
-                                                        .node_manager
-                                                        .pick_node()
-                                                        .await;
-                                                    controller_for_task
-                                                        .update_global_status(ex_addr, ex_status)
-                                                        .await;
-                                                }
-                                                if let Some(range_heights) = controller_for_task
-                                                    .sync_manager
-                                                    .clear_node_block(&addr, &own_status)
-                                                    .await
-                                                {
-                                                    let (global_address, global_status) =
-                                                        controller_for_task
-                                                            .get_global_status()
-                                                            .await;
-                                                    if global_address.0 != 0 {
-                                                        for range_height in range_heights {
-                                                            if let Some(reqs) = controller_for_task
-                                                                .sync_manager
-                                                                .re_sync_block_req(
-                                                                    range_height,
-                                                                    &global_status,
-                                                                )
-                                                            {
-                                                                for req in reqs {
-                                                                    controller_for_task
-                                                                        .unicast_sync_block(
-                                                                            global_address.0,
-                                                                            req,
-                                                                        )
-                                                                        .await;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    syncing = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if syncing {
-                                    controller_for_task.sync_block().await.unwrap();
-                                }
-                            }
-                            ChainStep::OnlineStep => {
-                                controller_for_task.set_sync_state(false).await;
-                                controller_for_task.sync_manager.clear().await;
-                            }
-                            ChainStep::BusyState => unreachable!(),
-                        }
-                    }
-                }
-                EventTask::BroadCastCSI => {
-                    info!("receive BroadCastCSI event");
-                    let status = controller_for_task.get_status().await;
-
-                    let mut chain_status_bytes = Vec::new();
-                    status
-                        .encode(&mut chain_status_bytes)
-                        .map_err(|_| {
-                            warn!("process BroadCastCSI failed: encode ChainStatus failed");
-                            StatusCodeEnum::EncodeError
-                        })
-                        .unwrap();
-                    let msg_hash = hash_data(&chain_status_bytes);
-
-                    #[cfg(feature = "sm")]
-                    let crypto = crypto_sm::crypto::Crypto::new(&opts.private_key_path);
-                    #[cfg(feature = "eth")]
-                    let crypto = crypto_eth::crypto::Crypto::new(&opts.private_key_path);
-
-                    let signature = crypto.sign_message(&msg_hash).unwrap();
-
-                    controller_for_task
-                        .broadcast_chain_status_init(ChainStatusInit {
-                            chain_status: Some(status),
-                            signature,
-                        })
-                        .await
-                        .await
-                        .unwrap();
-                }
-                EventTask::RecordAllNode => {
-                    let nodes = controller_for_task.node_manager.nodes.read().await.clone();
-                    for (na, current_cs) in nodes.iter() {
-                        if let Some(old_cs) = old_status.get(na) {
-                            match old_cs.height.cmp(&current_cs.height) {
-                                Ordering::Greater => {
-                                    error!(
-                                        "node status rollbacked: old height: {}, current height: {}. set it misbehavior. origin: {}",
-                                        old_cs.height,
-                                        current_cs.height,
-                                        &na
-                                    );
-                                    let _ = controller_for_task
-                                        .node_manager
-                                        .set_misbehavior_node(na)
-                                        .await;
-                                }
-                                Ordering::Equal => {
-                                    warn!(
-                                        "node status stale: height: {}. delete it. origin: {}",
-                                        old_cs.height, &na
-                                    );
-                                    if controller_for_task.node_manager.in_node(na).await {
-                                        controller_for_task.node_manager.delete_node(na).await;
-                                    }
-                                }
-                                Ordering::Less => {
-                                    // update node in old status
-                                    old_status.insert(*na, current_cs.clone());
-                                }
-                            }
-                        } else {
-                            old_status.insert(*na, current_cs.clone());
-                        }
-                    }
-                }
-            }
+            controller_for_task
+                .handle_event(event_task, &mut old_status)
+                .await;
         }
     });
 
