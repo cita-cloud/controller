@@ -717,13 +717,22 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
             .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
             .layer(layer)
-            .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
-            .add_service(Consensus2ControllerServiceServer::new(
-                Consensus2ControllerServer::new(controller.clone()),
-            ))
-            .add_service(NetworkMsgHandlerServiceServer::new(
-                NetworkMsgHandlerServer::new(controller.clone()),
-            ))
+            .add_service(
+                RpcServiceServer::new(RPCServer::new(controller.clone()))
+                    .max_decoding_message_size(usize::MAX),
+            )
+            .add_service(
+                Consensus2ControllerServiceServer::new(Consensus2ControllerServer::new(
+                    controller.clone(),
+                ))
+                .max_decoding_message_size(usize::MAX),
+            )
+            .add_service(
+                NetworkMsgHandlerServiceServer::new(NetworkMsgHandlerServer::new(
+                    controller.clone(),
+                ))
+                .max_decoding_message_size(usize::MAX),
+            )
             .add_service(HealthServer::new(HealthCheckServer::new(
                 controller,
                 config.health_check_timeout,
@@ -739,13 +748,22 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
             .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
-            .add_service(RpcServiceServer::new(RPCServer::new(controller.clone())))
-            .add_service(Consensus2ControllerServiceServer::new(
-                Consensus2ControllerServer::new(controller.clone()),
-            ))
-            .add_service(NetworkMsgHandlerServiceServer::new(
-                NetworkMsgHandlerServer::new(controller.clone()),
-            ))
+            .add_service(
+                RpcServiceServer::new(RPCServer::new(controller.clone()))
+                    .max_decoding_message_size(usize::MAX),
+            )
+            .add_service(
+                Consensus2ControllerServiceServer::new(Consensus2ControllerServer::new(
+                    controller.clone(),
+                ))
+                .max_decoding_message_size(usize::MAX),
+            )
+            .add_service(
+                NetworkMsgHandlerServiceServer::new(NetworkMsgHandlerServer::new(
+                    controller.clone(),
+                ))
+                .max_decoding_message_size(usize::MAX),
+            )
             .add_service(HealthServer::new(HealthCheckServer::new(
                 controller,
                 config.health_check_timeout,
