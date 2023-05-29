@@ -12,7 +12,7 @@ docker build -t citacloud/controller .
 
 ```shell
 $ controller -h
-controller 6.6.5
+controller 6.7.0
 Rivtower Technologies <contact@rivtower.com>
 
 Usage: controller <COMMAND>
