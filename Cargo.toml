@@ -1,43 +1,51 @@
 [package]
-name = "controller"
-version = "6.7.0"
-authors = ["Rivtower Technologies <contact@rivtower.com>"]
-license = "Apache-2.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+name = 'controller'
+version = '6.7.0-beta2'
+license = 'Apache-2.0'
+edition = '2021'
+authors = ['Rivtower Technologies <contact@rivtower.com>']
 
 [dependencies]
-clap = { version = "4.2", features = ["derive"] }
-tonic = "0.9"
-prost = "0.11"
-tokio = { version = "1.27", features = ["full"] }
-rand = "0.8"
-toml = "0.7"
-serde = "1.0"
-serde_derive = "1.0"
-hex = "0.4"
-tower = "0.4"
-tracing = "0.1"
+tonic = '0.9'
+prost = '0.11'
+rand = '0.8'
+toml = '0.7'
+serde = '1.0'
+serde_derive = '1.0'
+hex = '0.4'
+tower = '0.4'
+tracing = '0.1'
+cloud-util = '=0.7.0-beta2'
+cita_cloud_proto = '=6.7.0-beta2'
 
-cloud-util = { package = "cloud-util", git = "https://github.com/cita-cloud/cloud-common-rs" }
-cita_cloud_proto = { package = "cita_cloud_proto", git = "https://github.com/cita-cloud/cloud-common-rs" }
+[dependencies.clap]
+version = '4.2'
+features = ['derive']
 
-crypto_sm = { git = "https://github.com/cita-cloud/crypto_sm", package = "crypto", optional = true }
-crypto_eth = { git = "https://github.com/cita-cloud/crypto_eth", package = "crypto", optional = true }
+[dependencies.tokio]
+version = '1.27'
+features = ['full']
+
+[dependencies.crypto_sm]
+git = 'https://github.com/cita-cloud/crypto_sm'
+package = 'crypto'
+optional = true
+branch = 'v6.7.0-beta2'
+
+[dependencies.crypto_eth]
+git = 'https://github.com/cita-cloud/crypto_eth'
+package = 'crypto'
+optional = true
+branch = 'v6.7.0-beta2'
 
 [build-dependencies]
-tonic-build = "0.9"
-
+tonic-build = '0.9'
+[profile.release]
+debug = 1
 [profile.release.package."*"]
-# Set the default for dependencies.
 debug = 0
 
-[profile.release]
-# Add debug info -- line tables only
-debug = 1
-
 [features]
-default = ["sm"]
-sm = ["crypto_sm"]
-eth = ["crypto_eth"]
+default = ['sm']
+sm = ['crypto_sm']
+eth = ['crypto_eth']
