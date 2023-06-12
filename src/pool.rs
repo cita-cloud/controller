@@ -66,7 +66,7 @@ impl Pool {
     pub fn new(block_limit: u64, quota_limit: u64) -> Self {
         Pool {
             txns: HashSet::new(),
-            pool_quota: 0,
+            pool_quota: 1000,
             block_limit,
             quota_limit,
         }
