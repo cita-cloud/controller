@@ -73,8 +73,23 @@ impl Pool {
     }
 
     pub fn insert(&mut self, raw_tx: RawTransaction) -> bool {
-        let tx_quota = get_tx_quota(&raw_tx).unwrap();
-        let ret = self.txns.insert(Txn(raw_tx));
+        let tx_quota = match get_tx_quota(&raw_tx) {
+            Ok(tx_quota) => tx_quota,
+            Err(_) => panic!("Error getting tx_quota"),
+        };
+        let mut ret = false;
+        for existing_tx in &self.txns {
+            if *existing_tx == Txn(raw_tx.clone()) {
+                ret = true;
+                break;
+            }
+        }
+        if ret == false {
+            self.txns.insert(Txn(raw_tx.clone()));
+            ret = true;
+        } else {
+            ret = false;
+        }
         if ret {
             self.pool_quota += tx_quota;
         }
