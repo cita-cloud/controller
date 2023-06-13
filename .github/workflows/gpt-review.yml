@@ -66,7 +66,7 @@ jobs:
         run: |
           source .env/bin/activate
 
-          gpt github review --debug \
+          gpt github review \
             --access-token $GITHUB_TOKEN \
             --pull-request $PR_NUMBER \
             --repository $REPOSITORY_NAME
