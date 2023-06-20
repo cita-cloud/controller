@@ -36,12 +36,14 @@ use clap::Parser;
 use std::{collections::HashMap, net::AddrParseError, time::Duration};
 use tokio::{sync::mpsc, time};
 use tonic::transport::Server;
+use tonic_web::GrpcWebLayer;
 
 use cita_cloud_proto::{
     controller::consensus2_controller_service_server::Consensus2ControllerServiceServer,
     controller::rpc_service_server::RpcServiceServer, health_check::health_server::HealthServer,
     network::network_msg_handler_service_server::NetworkMsgHandlerServiceServer,
     network::RegisterInfo, status_code::StatusCodeEnum, storage::Regions,
+    CONTROLLER_DESCRIPTOR_SET,
 };
 use cloud_util::{
     metrics::{run_metrics_exporter, MiddlewareLayer},
@@ -343,16 +345,24 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
         None
     };
 
+    let reflection = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(CONTROLLER_DESCRIPTOR_SET)
+        .build()
+        .unwrap();
+
     info!("start controller grpc server");
     let http2_keepalive_interval = config.http2_keepalive_interval;
     let http2_keepalive_timeout = config.http2_keepalive_timeout;
     let tcp_keepalive = config.tcp_keepalive;
     if let Some(layer) = layer {
         Server::builder()
+            .accept_http1(true)
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
             .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
             .layer(layer)
+            .layer(GrpcWebLayer::new())
+            .add_service(reflection)
             .add_service(
                 RpcServiceServer::new(RPCServer::new(controller.clone()))
                     .max_decoding_message_size(usize::MAX),
@@ -381,9 +391,12 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
             })?;
     } else {
         Server::builder()
+            .accept_http1(true)
             .http2_keepalive_interval(Some(Duration::from_secs(http2_keepalive_interval)))
             .http2_keepalive_timeout(Some(Duration::from_secs(http2_keepalive_timeout)))
             .tcp_keepalive(Some(Duration::from_secs(tcp_keepalive)))
+            .layer(GrpcWebLayer::new())
+            .add_service(reflection)
             .add_service(
                 RpcServiceServer::new(RPCServer::new(controller.clone()))
                     .max_decoding_message_size(usize::MAX),
