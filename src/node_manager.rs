@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use prost::Message;
-use rand::{seq::SliceRandom, thread_rng};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -178,17 +177,6 @@ impl MisbehaviorStatus {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct NodeConfig {
-    grab_node_num: usize,
-}
-
-impl Default for NodeConfig {
-    fn default() -> Self {
-        NodeConfig { grab_node_num: 5 }
-    }
-}
-
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct NodeAddress(pub u64);
 
@@ -220,8 +208,6 @@ pub struct NodeManager {
     pub misbehavior_nodes: Arc<RwLock<HashMap<NodeAddress, MisbehaviorStatus>>>,
 
     pub ban_nodes: Arc<RwLock<HashSet<NodeAddress>>>,
-
-    pub node_config: NodeConfig,
 }
 
 impl NodeManager {
@@ -278,18 +264,6 @@ impl NodeManager {
         } else {
             Err(StatusCodeEnum::EarlyStatus)
         }
-    }
-
-    pub async fn grab_node(&self) -> Vec<NodeAddress> {
-        let mut keys: Vec<NodeAddress> = {
-            let rd = self.nodes.read().await;
-            rd.keys().copied().collect()
-        };
-
-        keys.shuffle(&mut thread_rng());
-
-        keys.truncate(self.node_config.grab_node_num);
-        keys
     }
 
     pub async fn pick_node(&self) -> (NodeAddress, ChainStatus) {
