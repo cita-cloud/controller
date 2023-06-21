@@ -66,7 +66,7 @@ use crate::{
     },
     system_config::SystemConfig,
     util::*,
-    GenesisBlock, {impl_broadcast, impl_multicast, impl_unicast},
+    GenesisBlock, {impl_broadcast, impl_unicast},
 };
 
 #[derive(Debug)]
@@ -1124,7 +1124,7 @@ impl Controller {
         ChainStatusInit,
         "chain_status_init"
     );
-    impl_multicast!(broadcast_chain_status, ChainStatus, "chain_status");
+    impl_broadcast!(broadcast_chain_status, ChainStatus, "chain_status");
 
     // impl_multicast!(multicast_chain_status, ChainStatus, "chain_status");
     // impl_multicast!(multicast_send_tx, RawTransaction, "send_tx");
