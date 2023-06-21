@@ -22,8 +22,8 @@ hex = "0.4"
 backtrace = "0.3"
 tower = "0.4"
 
-cloud-util = "0.6.0"
-cita_cloud_proto = "6.6.3"
+cloud-util = "=0.6.0"
+cita_cloud_proto = "=6.6.3"
 
 [build-dependencies]
 tonic-build = "0.8"
