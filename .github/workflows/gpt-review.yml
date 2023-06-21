@@ -1,0 +1,67 @@
+name: GPT Review
+
+on:
+  pull_request:
+
+jobs:
+  add_pr_comment:
+    name:  Azure OpenAI PR Review
+    runs-on: [ self-hosted, Linux, alibaba-cloud ]
+
+    env:
+      GIT_COMMIT_HASH: ${{ github.event.pull_request.head.sha }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      REPOSITORY_NAME: ${{ github.repository }}
+      AZURE_OPENAI_API: ${{ secrets.AZURE_OPENAI_API }}
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      AZURE_GPT_NAME: ${{ secrets.AZURE_GPT_NAME }}
+      AZURE_EMBEDDING_NAME: ${{ secrets.AZURE_EMBEDDING_NAME }}
+      LINK: "https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+      FULL_SUMMARY: true
+      FILE_SUMMARY: false
+      TEST_SUMMARY: false
+      BUG_SUMMARY: true
+      RISK_SUMMARY: true
+      RISK_BREAKING: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Check deps
+        run: |
+          pwd
+          echo "generating azure.yaml..."
+          echo "azure_model_map:
+            turbo_llm_model_deployment_id: $AZURE_GPT_NAME
+            smart_llm_model_deployment_id: $AZURE_GPT_NAME
+            large_llm_model_deployment_id: $AZURE_GPT_NAME
+            embedding_model_deployment_id: $AZURE_EMBEDDING_NAME
+            " > azure.yaml
+          cat azure.yaml
+
+          echo "installing gpt-review..."
+          sudo apt-get update
+          python3 -m venv .env
+          source .env/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install gpt-review
+
+          echo "install done!"
+          gpt ask "hello"
+      
+      - name: Gpt review
+        run: |
+          source .env/bin/activate
+
+          gpt github review \
+            --access-token $GITHUB_TOKEN \
+            --pull-request $PR_NUMBER \
+            --repository $REPOSITORY_NAME
