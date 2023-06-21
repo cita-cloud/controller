@@ -44,5 +44,5 @@ jobs:
               --output "type=image,push=true" \
               --file "Dockerfile" \
               --tag "${image}:${tag}" \
-              --platform "linux/amd64" \
+              --platform "linux/amd64,linux/arm64" \
               "."
