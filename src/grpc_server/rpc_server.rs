@@ -73,7 +73,6 @@ impl RpcService for RPCServer {
         debug!("send_raw_transaction request: {:?}", request);
 
         let raw_tx = request.into_inner();
-
         self.controller
             .rpc_send_raw_transaction(raw_tx, self.controller.config.enable_forward)
             .await
