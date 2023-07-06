@@ -48,7 +48,6 @@ use cita_cloud_proto::{
 use cloud_util::{
     metrics::{run_metrics_exporter, MiddlewareLayer},
     network::register_network_msg_handler,
-    panic_hook::set_panic_handler,
     storage::load_data,
 };
 
@@ -96,7 +95,6 @@ struct RunOpts {
 
 fn main() {
     ::std::env::set_var("RUST_BACKTRACE", "full");
-    set_panic_handler();
 
     let opts: Opts = Opts::parse();
 
@@ -105,15 +103,16 @@ fn main() {
     match opts.subcmd {
         SubCommand::Run(opts) => {
             let fin = run(opts);
-            warn!("unreachable: {:?}", fin);
+            if let Err(e) = fin {
+                warn!("unreachable: {:?}", e);
+            }
         }
     }
 }
 
 #[tokio::main]
 async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
-    #[cfg(not(windows))]
-    tokio::spawn(cloud_util::signal::handle_signals());
+    let rx_signal = cloud_util::graceful_shutdown::graceful_shutdown();
 
     // read consensus-config.toml
     let config = ControllerConfig::new(&opts.config_path);
@@ -185,8 +184,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                             i32::from(Regions::Global) as u32,
                             1u64.to_be_bytes().to_vec(),
                         )
-                        .await
-                        .unwrap();
+                        .await?;
                     }
                     break;
                 }
@@ -332,9 +330,7 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     })?;
 
     let layer = if config.enable_metrics {
-        tokio::spawn(async move {
-            run_metrics_exporter(config.metrics_port).await.unwrap();
-        });
+        tokio::spawn(run_metrics_exporter(config.metrics_port));
 
         Some(
             tower::ServiceBuilder::new()
@@ -348,12 +344,16 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(CONTROLLER_DESCRIPTOR_SET)
         .build()
-        .unwrap();
+        .map_err(|e| {
+            warn!("register grpc reflection failed: {:?} ", e);
+            StatusCodeEnum::FatalError
+        })?;
 
     info!("start controller grpc server");
     let http2_keepalive_interval = config.http2_keepalive_interval;
     let http2_keepalive_timeout = config.http2_keepalive_timeout;
     let tcp_keepalive = config.tcp_keepalive;
+    let rx_for_grpc = rx_signal.clone();
     if let Some(layer) = layer {
         Server::builder()
             .accept_http1(true)
@@ -383,7 +383,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 controller,
                 config.health_check_timeout,
             )))
-            .serve(addr)
+            .serve_with_shutdown(
+                addr,
+                cloud_util::graceful_shutdown::grpc_serve_listen_term(rx_for_grpc),
+            )
             .await
             .map_err(|e| {
                 warn!("start controller grpc server failed: {:?} ", e);
@@ -417,7 +420,10 @@ async fn run(opts: RunOpts) -> Result<(), StatusCodeEnum> {
                 controller,
                 config.health_check_timeout,
             )))
-            .serve(addr)
+            .serve_with_shutdown(
+                addr,
+                cloud_util::graceful_shutdown::grpc_serve_listen_term(rx_for_grpc),
+            )
             .await
             .map_err(|e| {
                 warn!("start controller grpc server failed: {:?} ", e);
