@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use prost::Message;
 use std::{
     collections::{HashMap, HashSet},
     iter::FromIterator,
@@ -27,7 +26,6 @@ use cita_cloud_proto::{
 };
 
 use crate::{
-    crypto::{verify_tx_hash, verify_tx_signature},
     grpc_client::storage::get_compact_block,
     system_config::{SystemConfig, LOCK_ID_BUTTON, LOCK_ID_VERSION},
 };
@@ -39,6 +37,7 @@ pub struct Authentication {
     sys_config: SystemConfig,
 }
 
+// basic method
 impl Authentication {
     pub fn new(sys_config: SystemConfig) -> Self {
         Authentication {
@@ -82,8 +81,19 @@ impl Authentication {
             self.current_block_number = h;
         }
     }
+}
 
-    fn check_tx_hash(&self, tx_hash: &[u8]) -> Result<(), StatusCodeEnum> {
+// tx check method
+impl Authentication {
+    fn check_chain_availability(&self) -> Result<(), StatusCodeEnum> {
+        if self.sys_config.emergency_brake {
+            Err(StatusCodeEnum::EmergencyBrake)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn check_tx_duplication(&self, tx_hash: &[u8]) -> Result<(), StatusCodeEnum> {
         for (_h, hash_list) in self.history_hashes.iter() {
             if hash_list.contains(tx_hash) {
                 return Err(StatusCodeEnum::HistoryDupTx);
@@ -92,7 +102,7 @@ impl Authentication {
         Ok(())
     }
 
-    fn check_transaction(&self, tx: &Transaction) -> Result<(), StatusCodeEnum> {
+    fn check_normal_tx_fields(&self, tx: &Transaction) -> Result<(), StatusCodeEnum> {
         if tx.version != self.sys_config.version {
             Err(StatusCodeEnum::InvalidVersion)
         } else if tx.to.len() != 20 && !tx.to.is_empty() {
@@ -114,7 +124,7 @@ impl Authentication {
         }
     }
 
-    fn check_utxo_transaction(&self, utxo_tx: &UtxoTransaction) -> Result<(), StatusCodeEnum> {
+    fn check_utxo_tx_fields(&self, utxo_tx: &UtxoTransaction) -> Result<(), StatusCodeEnum> {
         if utxo_tx.version != self.sys_config.version {
             return Err(StatusCodeEnum::InvalidVersion);
         }
@@ -129,127 +139,44 @@ impl Authentication {
         Ok(())
     }
 
-    pub fn check_transactions(&self, raw_txs: &RawTransactions) -> Result<(), StatusCodeEnum> {
-        for raw_tx in raw_txs.body.as_slice() {
-            match raw_tx.tx.as_ref() {
-                Some(NormalTx(normal_tx)) => {
-                    if self.sys_config.emergency_brake {
-                        return Err(StatusCodeEnum::EmergencyBrake);
-                    }
-
-                    self.check_transaction(
-                        normal_tx
-                            .transaction
-                            .as_ref()
-                            .ok_or(StatusCodeEnum::NoneTransaction)?,
-                    )?;
-
-                    let tx_hash = &normal_tx.transaction_hash;
-
-                    self.check_tx_hash(tx_hash)?;
-                }
-                Some(UtxoTx(utxo_tx)) => {
-                    let witnesses = &utxo_tx.witnesses;
-
-                    // limit witnesses length is 1
-                    if witnesses.len() != 1 {
-                        return Err(StatusCodeEnum::InvalidWitness);
-                    }
-
-                    // only admin can send utxo tx
-                    if witnesses[0].sender != self.sys_config.admin {
-                        return Err(StatusCodeEnum::AdminCheckError);
-                    }
-
-                    self.check_utxo_transaction(
-                        utxo_tx
-                            .transaction
-                            .as_ref()
-                            .ok_or(StatusCodeEnum::NoneUtxo)?,
-                    )?;
-                }
-                None => return Err(StatusCodeEnum::NoneRawTx),
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn check_raw_tx(&self, raw_tx: &RawTransaction) -> Result<Vec<u8>, StatusCodeEnum> {
+    pub fn auth_check(&self, raw_tx: &RawTransaction) -> Result<(), StatusCodeEnum> {
         match raw_tx.tx.as_ref() {
             Some(NormalTx(normal_tx)) => {
-                if normal_tx.witness.is_none() {
-                    return Err(StatusCodeEnum::NoneWitness);
-                }
+                self.check_chain_availability()?;
 
-                let witness = normal_tx.witness.as_ref().unwrap();
-                let signature = &witness.signature;
-                let sender = &witness.sender;
+                let tx_hash = &normal_tx.transaction_hash;
+                self.check_tx_duplication(tx_hash)?;
 
-                if self.sys_config.emergency_brake {
-                    return Err(StatusCodeEnum::EmergencyBrake);
-                }
-
-                let mut tx_bytes: Vec<u8> = Vec::new();
                 if let Some(tx) = &normal_tx.transaction {
-                    self.check_transaction(tx)?;
-                    tx.encode(&mut tx_bytes).map_err(|_| {
-                        warn!("check raw_tx failed: encode Transaction failed");
-                        StatusCodeEnum::EncodeError
-                    })?;
+                    self.check_normal_tx_fields(tx)?;
                 } else {
                     return Err(StatusCodeEnum::NoneTransaction);
                 }
 
-                let tx_hash = &normal_tx.transaction_hash;
-
-                self.check_tx_hash(tx_hash)?;
-
-                verify_tx_hash(tx_hash, &tx_bytes).await?;
-
-                if &verify_tx_signature(tx_hash, signature).await? == sender {
-                    Ok(tx_hash.clone())
-                } else {
-                    Err(StatusCodeEnum::SigCheckError)
-                }
+                Ok(())
             }
             Some(UtxoTx(utxo_tx)) => {
-                let witnesses = &utxo_tx.witnesses;
-
-                // limit witnesses length is 1
-                if witnesses.len() != 1 {
-                    return Err(StatusCodeEnum::InvalidWitness);
-                }
-
-                // only admin can send utxo tx
-                if witnesses[0].sender != self.sys_config.admin {
+                // check utxo tx sender
+                if utxo_tx.witnesses[0].sender != self.sys_config.admin {
                     return Err(StatusCodeEnum::AdminCheckError);
                 }
 
-                let mut tx_bytes: Vec<u8> = Vec::new();
                 if let Some(tx) = utxo_tx.transaction.as_ref() {
-                    self.check_utxo_transaction(tx)?;
-                    tx.encode(&mut tx_bytes).map_err(|_| {
-                        warn!("check raw_tx failed: encode UtxoTransaction failed");
-                        StatusCodeEnum::EncodeError
-                    })?;
+                    self.check_utxo_tx_fields(tx)?;
                 } else {
                     return Err(StatusCodeEnum::NoneUtxo);
                 }
 
-                let tx_hash = &utxo_tx.transaction_hash;
-                verify_tx_hash(tx_hash, &tx_bytes).await?;
-
-                for (_i, w) in witnesses.iter().enumerate() {
-                    let signature = &w.signature;
-                    let sender = &w.sender;
-
-                    if &verify_tx_signature(tx_hash, signature).await? != sender {
-                        return Err(StatusCodeEnum::SigCheckError);
-                    }
-                }
-                Ok(tx_hash.clone())
+                Ok(())
             }
             None => Err(StatusCodeEnum::NoneRawTx),
         }
+    }
+
+    pub fn auth_check_batch(&self, raw_txs: &RawTransactions) -> Result<(), StatusCodeEnum> {
+        for raw_tx in raw_txs.body.as_slice() {
+            self.auth_check(raw_tx)?;
+        }
+        Ok(())
     }
 }

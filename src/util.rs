@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::crypto::hash_data;
 use cita_cloud_proto::{
-    blockchain::{raw_transaction::Tx, RawTransaction, RawTransactions},
+    blockchain::{raw_transaction::Tx, BlockHeader, RawTransaction, RawTransactions},
     status_code::StatusCodeEnum,
 };
 use cloud_util::common::get_tx_hash;
+use prost::Message;
 
 pub fn get_tx_hash_list(raw_txs: &RawTransactions) -> Result<Vec<Vec<u8>>, StatusCodeEnum> {
     let mut hashes = Vec::new();
@@ -48,6 +50,21 @@ pub fn get_tx_quota(raw_tx: &RawTransaction) -> Result<u64, StatusCodeEnum> {
             warn!("get tx quota failed: NoneRawTx");
             Err(StatusCodeEnum::NoneRawTx)
         }
+    }
+}
+
+pub fn get_block_hash(header: Option<&BlockHeader>) -> Result<Vec<u8>, StatusCodeEnum> {
+    match header {
+        Some(header) => {
+            let mut block_header_bytes = Vec::with_capacity(header.encoded_len());
+            header.encode(&mut block_header_bytes).map_err(|_| {
+                warn!("get_block_hash: encode block header failed");
+                StatusCodeEnum::EncodeError
+            })?;
+            let block_hash = hash_data(&block_header_bytes);
+            Ok(block_hash)
+        }
+        None => Err(StatusCodeEnum::NoneBlockHeader),
     }
 }
 

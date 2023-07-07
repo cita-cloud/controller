@@ -42,7 +42,7 @@ use crate::{
     auth::Authentication,
     chain::{Chain, ChainStep},
     config::ControllerConfig,
-    crypto::{check_transactions, get_block_hash, hash_data},
+    crypto::{crypto_check_async, crypto_check_batch_async, hash_data},
     event::EventTask,
     grpc_client::{
         consensus::reconfigure,
@@ -256,6 +256,7 @@ impl Controller {
         // send configuration to consensus
         let mut server_retry_interval =
             time::interval(Duration::from_secs(self.config.server_retry_interval));
+        // don't block at here
         tokio::spawn(async move {
             loop {
                 server_retry_interval.tick().await;
@@ -289,8 +290,10 @@ impl Controller {
 
         {
             let auth = self.auth.read().await;
-            auth.check_raw_tx(&raw_tx).await?;
+            auth.auth_check(&raw_tx)?;
         }
+
+        crypto_check_async(raw_tx.clone()).await?;
 
         let res = {
             let mut pool = self.pool.write().await;
@@ -320,13 +323,13 @@ impl Controller {
         raw_txs: RawTransactions,
         broadcast: bool,
     ) -> Result<Hashes, StatusCodeEnum> {
-        check_transactions(&raw_txs).is_success()?;
+        crypto_check_batch_async(raw_txs.clone()).await?;
 
         let mut hashes = Vec::new();
         {
             let auth = self.auth.read().await;
             let mut pool = self.pool.write().await;
-            auth.check_transactions(&raw_txs)?;
+            auth.auth_check_batch(&raw_txs)?;
             for raw_tx in raw_txs.body.clone() {
                 let hash = get_tx_hash(&raw_tx)?.to_vec();
                 if pool.insert(raw_tx) {

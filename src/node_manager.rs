@@ -28,9 +28,9 @@ use cita_cloud_proto::{
 use cloud_util::common::h160_address_check;
 
 use crate::{
-    crypto::{check_sig, get_block_hash, hash_data},
+    crypto::{hash_data, recover_signature_async},
     grpc_client::storage::get_compact_block,
-    util::u64_decode,
+    util::{get_block_hash, u64_decode},
 };
 
 #[derive(Debug)]
@@ -109,18 +109,18 @@ impl ChainStatusInit {
         })?;
 
         let msg_hash = hash_data(&chain_status_bytes);
-        check_sig(
-            &self.signature,
-            &msg_hash,
-            &self
-                .chain_status
-                .as_ref()
-                .ok_or(StatusCodeEnum::NoneChainStatus)?
-                .address
-                .as_ref()
-                .ok_or(StatusCodeEnum::NoProvideAddress)?
-                .address,
-        )?;
+        let recover_address = recover_signature_async(msg_hash, self.signature.clone()).await?;
+        let address = &self
+            .chain_status
+            .as_ref()
+            .ok_or(StatusCodeEnum::NoneChainStatus)?
+            .address
+            .as_ref()
+            .ok_or(StatusCodeEnum::NoProvideAddress)?
+            .address;
+        if !recover_address.eq(address) {
+            return Err(StatusCodeEnum::SigCheckError);
+        }
 
         chain_status.check(own_status).await?;
 
