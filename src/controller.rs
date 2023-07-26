@@ -293,7 +293,7 @@ impl Controller {
             auth.auth_check(&raw_tx)?;
         }
 
-        crypto_check_async(raw_tx.clone()).await?;
+        crypto_check_async(Arc::new(raw_tx.clone())).await?;
 
         let res = {
             let mut pool = self.pool.write().await;
@@ -323,7 +323,7 @@ impl Controller {
         raw_txs: RawTransactions,
         broadcast: bool,
     ) -> Result<Hashes, StatusCodeEnum> {
-        crypto_check_batch_async(raw_txs.clone()).await?;
+        crypto_check_batch_async(Arc::new(raw_txs.clone())).await?;
 
         let mut hashes = Vec::new();
         {
