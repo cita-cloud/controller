@@ -515,7 +515,10 @@ impl Chain {
             auth.auth_check_batch(block.body.as_ref().ok_or(StatusCodeEnum::NoneBlockBody)?)?
         }
 
-        crypto_check_batch_async(block.body.clone().ok_or(StatusCodeEnum::NoneBlockBody)?).await?;
+        crypto_check_batch_async(Arc::new(
+            block.body.clone().ok_or(StatusCodeEnum::NoneBlockBody)?,
+        ))
+        .await?;
 
         self.finalize_block(block, block_hash.clone()).await?;
 
